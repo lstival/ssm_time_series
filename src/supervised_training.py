@@ -14,6 +14,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 
 from models.mamba_encoder import MambaEncoder
+from tqdm import tqdm
 from training_utils import (
     build_encoder_from_config,
     build_optimizer,
@@ -80,8 +81,10 @@ def train_one_epoch(
     model.train()
     running = 0.0
     count = 0
-    for batch in loader:
+    pbar = tqdm(loader, desc="Training", leave=False)
+    for batch in pbar:
         loss, _ = _step(model, batch, criterion, device=device, pred_len=pred_len, use_amp=use_amp)
+        loss_value = loss.item()
         optimizer.zero_grad(set_to_none=True)
         if use_amp:
             scaler.scale(loss).backward()
@@ -95,8 +98,9 @@ def train_one_epoch(
             if max_grad_norm is not None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
             optimizer.step()
-        running += loss.item()
+        running += loss_value
         count += 1
+        pbar.set_postfix({"loss": f"{loss_value:.4f}"})
     return running / max(1, count)
 
 

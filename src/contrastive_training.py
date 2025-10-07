@@ -195,7 +195,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         help="Path to the YAML configuration file.",
     )
     parser.add_argument("--epochs", type=int, default=None, help="Override epoch count")
-    parser.add_argument("--temperature", type=float, default=0.2, help="InfoNCE temperature")
+    parser.add_argument("--temperature", type=float, default=None, help="InfoNCE temperature override")
     parser.add_argument("--checkpoint-dir", type=Path, default=None, help="Optional checkpoint directory override")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -217,6 +217,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     training_cfg = config.training
     epochs = int(args.epochs) if args.epochs is not None else int(training_cfg.get("epochs", 100))
+    temperature = float(args.temperature) if args.temperature is not None else float(training_cfg.get("temperature", 0.2))
     optimizer = build_optimizer(model, training_cfg)
     scheduler = build_scheduler(optimizer, training_cfg, epochs)
 
@@ -233,7 +234,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         optimizer,
         scheduler,
         device=device,
-        temperature=float(args.temperature),
+    temperature=temperature,
         use_amp=bool(training_cfg.get("use_amp", False)),
         max_grad_norm=float(training_cfg.get("max_grad_norm", 0.0)) or None,
         checkpoint_dir=checkpoint_dir,

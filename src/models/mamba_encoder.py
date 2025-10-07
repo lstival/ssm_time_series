@@ -178,6 +178,11 @@ class MambaEncoder(nn.Module):
         """Return a fixed-size embedding for a `(batch, seq, features)` tensor."""
         if x.ndim != 3:
             raise ValueError("Expected input of shape (batch, seq, features)")
+        seq_len = x.size(2)
+        if seq_len < self.input_dim:
+            raise ValueError(
+                f"Sequence length ({seq_len}) must be at least as large as the encoder token size ({self.input_dim})."
+            )
         # if x.size(-1) != self.input_dim:
         #     raise ValueError(f"Expected final dimension {self.input_dim}, got {x.size(-1)}")
 
@@ -191,7 +196,7 @@ class MambaEncoder(nn.Module):
         if tokens.ndim == 4:
             batch, windows, window_len, feat_dim = tokens.shape
             tokens = tokens.reshape(batch, windows * window_len, feat_dim)
-        x = self.input_proj(tokens)
+        x = self.input_proj(tokens) # Change here to use pre_trained model to feature exctration
         for block in self.blocks:
             x = block(x)
         return self.final_norm(x)

@@ -8,15 +8,15 @@ device: "auto"  # auto, cpu, cuda
 # Model architecture configuration
 model:
   model_name: "ts_encoder"
-  patch_size: 16  
-  embed_dim: 192
-  depth: 12
-  d_state: 16
-  d_conv: 4
-  num_heads: 3
-  mlp_ratio: 4.0
-  dropout: 0.1
-  use_cls_token: true
+  input_dim: 32            # token size used by the encoder tokenizer
+  model_dim: 768
+  embedding_dim: 128
+  depth: 6
+  state_dim: 16
+  conv_kernel: 3
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
 
 # Dataset configuration
 data:
@@ -37,6 +37,8 @@ data:
 # Training configuration
 training:
   epochs: 200
+  pred_len: 96            # used by supervised forecasting
+  temperature: 0.2        # used by contrastive training
   learning_rate: 0.001
   weight_decay: 0.0001
   optimizer: "adamw"  # adam, adamw, sgd

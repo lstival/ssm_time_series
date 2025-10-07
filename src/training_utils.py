@@ -69,20 +69,23 @@ def prepare_device(device_request: str) -> torch.device:
 
 
 def build_encoder_from_config(model_cfg: Dict[str, Any]) -> MambaEncoder:
-    model_dim = int(model_cfg.get("embed_dim", 128))
-    depth = int(model_cfg.get("depth", 2))
-    state_dim = int(model_cfg.get("d_state", 16))
-    conv_kernel = int(model_cfg.get("d_conv", 3))
-    expand_factor = float(model_cfg.get("mlp_ratio", 1.5))
+    input_dim = int(model_cfg.get("input_dim", 32))
+    model_dim = int(model_cfg.get("model_dim", 768))
+    embedding_dim = int(model_cfg.get("embedding_dim", 128))
+    depth = int(model_cfg.get("depth", 6))
+    state_dim = int(model_cfg.get("state_dim", model_cfg.get("d_state", 16)))
+    conv_kernel = int(model_cfg.get("conv_kernel", model_cfg.get("d_conv", 3)))
+    expand_factor = float(model_cfg.get("expand_factor", model_cfg.get("mlp_ratio", 1.5)))
     dropout = float(model_cfg.get("dropout", 0.05))
-    embedding_dim = int(model_cfg.get("embed_dim", model_dim))
-    use_cls = bool(model_cfg.get("use_cls_token", False))
+    pooling = str(model_cfg.get("pooling", "mean")).lower()
 
-    pooling = "cls" if use_cls else "mean"
-    expand_factor = max(1.2, min(expand_factor, 2.0))
+    if pooling not in {"mean", "last", "cls"}:
+        raise ValueError(f"Unsupported pooling mode: {pooling}")
+
+    expand_factor = max(1.0, float(expand_factor))
 
     return MambaEncoder(
-        input_dim=384,
+        input_dim=input_dim,
         model_dim=model_dim,
         depth=depth,
         state_dim=state_dim,

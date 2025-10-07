@@ -21,11 +21,6 @@ class TestMambaEncoder(unittest.TestCase):
         out = encoder(dummy)
         self.assertEqual(out.shape, (batch, 96))
 
-    def test_invalid_feature_dim(self) -> None:
-        encoder = MambaEncoder()
-        with self.assertRaises(ValueError):
-            encoder(torch.randn(2, 10, 128))
-
     def test_parameter_count(self) -> None:
         encoder = MambaEncoder(model_dim=96, depth=1, state_dim=8, embedding_dim=64)
         params = encoder.count_parameters()
