@@ -1,0 +1,83 @@
+# Vision Mamba CIFAR-10 Tiny Configuration
+# This configuration defines a lightweight Vision Mamba model for CIFAR-10
+
+experiment_name: "ts_encoder"
+seed: 42
+device: "auto"  # auto, cpu, cuda
+
+# Model architecture configuration
+model:
+  model_name: "ts_encoder"
+  patch_size: 16  
+  embed_dim: 192
+  depth: 12
+  d_state: 16
+  d_conv: 4
+  num_heads: 3
+  mlp_ratio: 4.0
+  dropout: 0.1
+  use_cls_token: true
+
+# Dataset configuration
+data:
+  dataset_name: "ETTh1.csv"
+  data_dir: "../../ICML_datasets/ETT-small"
+  batch_size: 128
+  val_batch_size: 256
+  num_workers: 4
+  pin_memory: true
+  
+  # Data augmentation
+  normalize: true
+  
+  # Dataset split (for validation if needed)
+  train_ratio: 0.8
+  val_ratio: 0.2
+
+# Training configuration
+training:
+  epochs: 200
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: "adamw"  # adam, adamw, sgd
+  scheduler: "cosine"  # cosine, step, plateau
+  
+  # Learning rate scheduler parameters
+  min_lr: 0.000001
+  warmup_epochs: 10
+  step_size: 30
+  gamma: 0.1
+  
+  # Early stopping
+  patience: 15
+  min_delta: 0.0001
+  
+  # Gradient clipping
+  max_grad_norm: 1.0
+  
+  # Loss function
+  label_smoothing: 0.1
+  
+  # Mixed precision training
+  use_amp: true
+
+# Logging and checkpointing configuration
+logging:
+  log_dir: "../../logs"
+  checkpoint_dir: "../../checkpoints"
+  tensorboard_dir: "../../tensorboard"
+  
+  # Logging frequency
+  log_interval: 10  # Log every N batches
+  val_interval: 1   # Validate every N epochs
+  save_interval: 5  # Save checkpoint every N epochs
+  
+  # What to save
+  save_best_only: true
+  save_last: true
+  monitor_metric: "val_acc"  # Metric to monitor for best model
+  
+  # Visualization
+  plot_training_curves: true
+  plot_confusion_matrix: true
+  save_predictions: true
