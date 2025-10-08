@@ -9,8 +9,8 @@ device: "auto"  # auto, cpu, cuda
 model:
   model_name: "ts_encoder"
   input_dim: 32            # token size used by the encoder tokenizer
-  model_dim: 512
-  embedding_dim: 128
+  model_dim: 128
+  embedding_dim: 768
   depth: 8
   state_dim: 16
   conv_kernel: 4

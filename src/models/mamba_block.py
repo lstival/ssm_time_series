@@ -62,6 +62,7 @@ class MambaBlock(nn.Module):
         conv_kernel: int = 3,
         expand_factor: float = 1.5,
         dropout: float = 0.0,
+        input_dim: int = 32,
     ) -> None:
         super().__init__()
         if d_model <= 0:
@@ -71,12 +72,16 @@ class MambaBlock(nn.Module):
         if expand_factor <= 1.0:
             raise ValueError("expand_factor must be greater than 1.0")
 
+        self.hidden_model = 128
+        self.input_dim = input_dim
         self.d_model = d_model
         self.state_dim = state_dim
         self.inner_dim = math.ceil(d_model * expand_factor)
         kernel_size = _canonical_kernel_size(conv_kernel)
 
         self.norm = nn.LayerNorm(d_model)
+        # project from d_model to 2 * inner_dim
+        # so that projected.chunk(2, dim=-1) yields tensors with last dim == inner_dim
         self.in_proj = nn.Linear(d_model, self.inner_dim * 2, bias=False)
         self.depthwise_conv = nn.Conv1d(
             self.inner_dim,
@@ -118,6 +123,7 @@ class MambaBlock(nn.Module):
         data_conv = self.conv_activation(data_conv)
 
         selective = self._selective_scan(data_conv)
+        # gated = torch.sigmoid(gate) * selective
         gated = torch.sigmoid(gate) * selective
         out = self.out_proj(gated)
         out = self.dropout(out)
@@ -136,7 +142,9 @@ class MambaBlock(nn.Module):
             state = state + torch.matmul(state, A_t) + torch.matmul(u_t, B_t)
             y_t = torch.matmul(state, C_t)
             outputs.append(y_t.unsqueeze(1))
-        return torch.cat(outputs, dim=1)
+        selective = torch.cat(outputs, dim=1)
+        selective = torch.sigmoid(selective)
+        return selective
     
 if __name__ == '__main__':
     # Example of use (model dim = 128)
