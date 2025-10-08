@@ -1,4 +1,4 @@
-"""Simple regression training script for MambaVisualEncoder."""
+"""Simple forecasting training script for MambaVisualEncoder."""
 
 import argparse
 from pathlib import Path
@@ -13,29 +13,31 @@ from models.mamba_visual_encoder import MambaVisualEncoder
 from time_series_loader import TimeSeriesDataModule
 
 
-class RegressionModel(nn.Module):
-    """Simple regression model using MambaVisualEncoder as backbone."""
+class ForecastModel(nn.Module):
+    """Forecasting model using MambaVisualEncoder as backbone."""
     
     def __init__(
         self,
         encoder: MambaVisualEncoder,
-        output_dim: int = 1,
+        forecast_len: int = 192,
     ):
         super().__init__()
         self.encoder = encoder
-        self.head = nn.Linear(encoder.embedding_dim, output_dim)
+        self.forecast_len = forecast_len
+        # Project from embedding_dim to forecast_len
+        self.forecast_head = nn.Linear(encoder.embedding_dim, forecast_len)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass through encoder and regression head.
+        """Forward pass through encoder and forecast head.
         
         Args:
             x: Input tensor of shape (batch, channels, seq_len)
         
         Returns:
-            Predictions of shape (batch, output_dim)
+            Forecasts of shape (batch, forecast_len)
         """
         embeddings = self.encoder(x)
-        return self.head(embeddings)
+        return self.forecast_head(embeddings)
 
 
 def train_epoch(model, dataloader, criterion, optimizer, device):
@@ -46,23 +48,28 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
     
     pbar = tqdm(dataloader, desc="Training")
     for batch in pbar:
-        # Assuming batch is a tuple (data, target) or just data
-        if isinstance(batch, (list, tuple)):
-            data = batch[0].to(device).float()
-            # For regression, we'll predict the mean of the last timestep
-            target = data[:, :, -1].mean(dim=1, keepdim=True)
-        else:
-            data = batch.to(device).float()
-            target = data[:, :, -1].mean(dim=1, keepdim=True)
+        # batch = (seq_x, seq_y, seq_x_mark, seq_y_mark)
+        # seq_x: (batch, seq_len, features)
+        # seq_y: (batch, label_len + pred_len, features)
+        seq_x, seq_y, _, _ = batch
+        
+        # Move to device and transpose for encoder (expects batch, channels, seq_len)
+        seq_x = seq_x.to(device).float().transpose(1, 2)  # (batch, features, seq_len)
+        seq_y = seq_y.to(device).float()  # (batch, label_len + pred_len, features)
+        
+        # Extract forecast target - flatten to (batch, total_timesteps)
+        # Assuming we want to predict all features across all future timesteps
+        target = seq_y.reshape(seq_y.size(0), -1)  # (batch, forecast_len)
         
         optimizer.zero_grad()
         
         # Forward pass
-        predictions = model(data)
+        predictions = model(seq_x)
         loss = criterion(predictions, target)
         
         # Backward pass
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         
         total_loss += loss.item()
@@ -81,14 +88,14 @@ def validate(model, dataloader, criterion, device):
     with torch.no_grad():
         pbar = tqdm(dataloader, desc="Validation")
         for batch in pbar:
-            if isinstance(batch, (list, tuple)):
-                data = batch[0].to(device).float()
-                target = data[:, :, -1].mean(dim=1, keepdim=True)
-            else:
-                data = batch.to(device).float()
-                target = data[:, :, -1].mean(dim=1, keepdim=True)
+            seq_x, seq_y, _, _ = batch
             
-            predictions = model(data)
+            seq_x = seq_x.to(device).float().transpose(1, 2)
+            seq_y = seq_y.to(device).float()
+            
+            target = seq_y.reshape(seq_y.size(0), -1)
+            
+            predictions = model(seq_x)
             loss = criterion(predictions, target)
             
             total_loss += loss.item()
@@ -99,7 +106,7 @@ def validate(model, dataloader, criterion, device):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train MambaVisualEncoder for regression")
+    parser = argparse.ArgumentParser(description="Train MambaVisualEncoder for forecasting")
     parser.add_argument("--data_dir", type=str, default="../ICML_datasets",
                         help="Path to dataset directory")
     parser.add_argument("--dataset_name", type=str, default="",
@@ -120,8 +127,8 @@ def main():
                         help="Output embedding dimension")
     parser.add_argument("--depth", type=int, default=6,
                         help="Number of Mamba blocks")
-    parser.add_argument("--output_dim", type=int, default=1,
-                        help="Regression output dimension")
+    parser.add_argument("--forecast_len", type=int, default=192,
+                        help="Forecast output length (should match label_len + pred_len * features)")
     parser.add_argument("--checkpoint_dir", type=str, default="../checkpoints",
                         help="Directory to save checkpoints")
     parser.add_argument("--num_workers", type=int, default=4,
@@ -153,6 +160,16 @@ def main():
     train_loader, val_loader = data_module.get_dataloaders()
     print(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
     
+    # Get a sample to determine actual forecast_len
+    sample_batch = next(iter(train_loader))
+    seq_x_sample, seq_y_sample = sample_batch[0], sample_batch[1]
+    actual_forecast_len = seq_y_sample.size(1) * seq_y_sample.size(2)
+    print(f"Sample shapes - seq_x: {seq_x_sample.shape}, seq_y: {seq_y_sample.shape}")
+    print(f"Actual forecast length: {actual_forecast_len}")
+    
+    # Override forecast_len with actual value
+    args.forecast_len = actual_forecast_len
+    
     # Create model
     print("Building model...")
     encoder = MambaVisualEncoder(
@@ -164,9 +181,9 @@ def main():
         dropout=0.1,
     )
     
-    model = RegressionModel(
+    model = ForecastModel(
         encoder=encoder,
-        output_dim=args.output_dim,
+        forecast_len=args.forecast_len,
     ).to(device)
     
     # Count parameters
@@ -182,7 +199,7 @@ def main():
     # Create checkpoint directory
     checkpoint_dir = Path(args.checkpoint_dir)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    run_dir = checkpoint_dir / f"visual_encoder_{timestamp}"
+    run_dir = checkpoint_dir / f"forecast_encoder_{timestamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"Checkpoint directory: {run_dir}")
     
