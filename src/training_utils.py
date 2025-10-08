@@ -136,7 +136,7 @@ def prepare_dataloaders(config: ExperimentConfig, root: Path) -> Tuple[DataLoade
         data_dir = (root / data_dir).resolve()
 
     module = TimeSeriesDataModule(
-        dataset_name=data_cfg.get("dataset_name", "ETTh1.csv"),
+        # dataset_name=data_cfg.get("dataset_name", "ETTh1.csv"),
         data_dir=str(data_dir),
         batch_size=int(data_cfg.get("batch_size", 128)),
         val_batch_size=int(data_cfg.get("val_batch_size", 256)),

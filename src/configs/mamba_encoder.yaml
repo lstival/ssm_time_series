@@ -9,18 +9,18 @@ device: "auto"  # auto, cpu, cuda
 model:
   model_name: "ts_encoder"
   input_dim: 32            # token size used by the encoder tokenizer
-  model_dim: 768
+  model_dim: 512
   embedding_dim: 128
-  depth: 6
+  depth: 8
   state_dim: 16
-  conv_kernel: 3
+  conv_kernel: 4
   expand_factor: 1.5
   dropout: 0.05
   pooling: "mean"
 
 # Dataset configuration
 data:
-  dataset_name: "ETTh1.csv"
+  # dataset_name: "ETTh1.csv"
   data_dir: "../../ICML_datasets/ETT-small"
   batch_size: 128
   val_batch_size: 256

@@ -8,8 +8,8 @@ from dataloaders.utils import discover_dataset_files
 class TimeSeriesDataModule:
     def __init__(
         self,
-        dataset_name: str,
-        data_dir: str,
+        dataset_name: str = "",
+        data_dir: str = "",
         batch_size: int = 128,
         val_batch_size: int = 256,
         num_workers: int = 4,
@@ -65,7 +65,7 @@ class TimeSeriesDataModule:
             include_train=self.train,
             include_val=self.val,
             include_test=self.test,
-            dataset_files=dataset_files,
+            # dataset_files=dataset_files,
         )
 
         self.train_loader = train_loader
