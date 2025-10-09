@@ -130,20 +130,38 @@ class MambaBlock(nn.Module):
         return residual + out
 
     def _selective_scan(self, x: torch.Tensor) -> torch.Tensor:
-        """Selective scan driven by HiPPO-initialised SSM (A, B, C)."""
+        """Selective scan driven by HiPPO-initialised SSM (A, B, C).
+        Numerical stabilisations added to avoid NaNs/Infs:
+        - small integration step (dt)
+        - clamp and nan_to_num on state and outputs
+        """
         batch, seq_len, _ = x.shape
         state = x.new_zeros(batch, self.state_dim)
+
         outputs = []
         A_t = self.A.transpose(-1, -2)
         B_t = self.B.transpose(-1, -2)
         C_t = self.C.transpose(-1, -2)
+
+        dt = 0.1  # small step to stabilise the explicit update
+        clip_val = 1e6
+
         for t in range(seq_len):
-            u_t = x[:, t, :]
-            state = state + torch.matmul(state, A_t) + torch.matmul(u_t, B_t)
-            y_t = torch.matmul(state, C_t)
+            u_t = x[:, t, :]  # (batch, inner_dim)
+
+            # compute derivative and integrate with small step
+            state_dot = torch.matmul(state, A_t) + torch.matmul(u_t, B_t)
+            state = state + dt * state_dot
+
+            # guard against NaN/Inf and extremely large values
+            state = torch.nan_to_num(state, nan=0.0, posinf=clip_val, neginf=-clip_val)
+            state = state.clamp(min=-clip_val, max=clip_val)
+
+            y_t = torch.matmul(state, C_t)  # (batch, inner_dim)
+            y_t = torch.nan_to_num(y_t, nan=0.0, posinf=clip_val, neginf=-clip_val)
             outputs.append(y_t.unsqueeze(1))
-        selective = torch.cat(outputs, dim=1)
-        selective = torch.sigmoid(selective)
+
+        selective = torch.cat(outputs, dim=1)  # (batch, seq, inner_dim)
         return selective
     
 if __name__ == '__main__':
