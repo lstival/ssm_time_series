@@ -17,6 +17,7 @@ class TimeSeriesDataModule:
         normalize: bool = True,
         train_ratio: float = 0.8,
         val_ratio: float = 0.2,
+        filename: Optional[str] = None,
         # new flags to request specific splits from Dataset_Custom
         train: bool = True,
         val: bool = True,
@@ -36,6 +37,7 @@ class TimeSeriesDataModule:
         self.val = val
         self.test = test
         self._built = False
+        self.filename = filename
         self.train_loader: Optional[DataLoader] = None
         self.val_loader: Optional[DataLoader] = None
         self.test_loader: Optional[DataLoader] = None
@@ -65,6 +67,7 @@ class TimeSeriesDataModule:
             include_train=self.train,
             include_val=self.val,
             include_test=self.test,
+            filename=self.filename,
             # dataset_files=dataset_files,
         )
 
@@ -86,41 +89,46 @@ class TimeSeriesDataModule:
 if __name__ == '__main__':
     # Example usage with the requested settings
     data_root = "../ICML_datasets"
-    dataset_files = discover_dataset_files(data_root)
+    filename = "/electricity/electricity.csv"
+    # dataset_files = discover_dataset_files(data_root, filename=filename)
 
-    if not dataset_files:
-        print(f"No dataset files found under {data_root}.")
-    else:
-        print("Datasets discovered:", list(dataset_files.keys()))
+    # if not dataset_files:
+    #     print(f"No dataset files found under {data_root}.")
+    # else:
+    #     print("Datasets discovered:", list(dataset_files.keys()))
 
-        batch_size = 128
-        val_batch_size = 256
-        num_workers = 4
-        pin_memory = True
-        normalize = True
-        train_ratio = 0.8
-        val_ratio = 0.2
-        include_train = True
-        include_val = True
-        include_test = False
+    #     batch_size = 128
+    #     val_batch_size = 256
+    #     num_workers = 4
+    #     pin_memory = True
+    #     normalize = True
+    #     train_ratio = 0.8
+    #     val_ratio = 0.2
+    #     include_train = True
+    #     include_val = True
+    #     include_test = False
 
-        train_loader, val_loader, test_loader = build_concat_dataloaders(
-            data_root,
-            batch_size=batch_size,
-            val_batch_size=val_batch_size,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            normalize=normalize,
-            train_ratio=train_ratio,
-            val_ratio=val_ratio,
-            include_train=include_train,
-            include_val=include_val,
-            include_test=include_test,
-        )
+    #     train_loader, val_loader, test_loader = build_concat_dataloaders(
+    #         data_root,
+    #         filename=filename,
+    #         batch_size=batch_size,
+    #         val_batch_size=val_batch_size,
+    #         num_workers=num_workers,
+    #         pin_memory=pin_memory,
+    #         normalize=normalize,
+    #         train_ratio=train_ratio,
+    #         val_ratio=val_ratio,
+    #         include_train=include_train,
+    #         include_val=include_val,
+    #         include_test=include_test,
+    #     )
 
-        if train_loader is not None:
-            print("Combined train batches:", len(train_loader))
-        if val_loader is not None:
-            print("Combined val batches:", len(val_loader))
-        if test_loader is not None:
-            print("Combined test batches:", len(test_loader))
+    #     if train_loader is not None:
+    #         print("Combined train batches:", len(train_loader))
+    #     if val_loader is not None:
+    #         print("Combined val batches:", len(val_loader))
+    #     if test_loader is not None:
+    #         print("Combined test batches:", len(test_loader))
+
+    aa = TimeSeriesDataModule(data_dir=data_root, filename=filename)
+    aa.setup()

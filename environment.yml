@@ -1,0 +1,22 @@
+name: ssm_time_series
+channels:
+  - defaults
+  - conda-forge
+  - pytorch
+  - nvidia
+dependencies:
+  - python=3.11.3
+  - pip
+  - pytorch>=2.5.1+cu121
+  - pytorch-cuda=12.1
+  - pip:
+    - numpy==1.25.2
+    - pandas==2.3.2
+    - scikit-learn==1.7.2
+    - PyYAML==6.0.2
+    - tqdm==4.67.1
+    - lightly==1.5.22
+    - pytorch-lightning==2.5.5
+    - pyts==0.13.0
+    - matplotlib==3.10.6
+    - pytest==8.4.2

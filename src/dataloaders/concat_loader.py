@@ -50,6 +50,7 @@ def build_concat_dataloaders(
     include_train: bool = True,
     include_val: bool = True,
     include_test: bool = False,
+    filename: Optional[str] = None,
     dataset_files: Optional[Dict[str, str]] = None,
 ) -> Tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
     """Create dataloaders that concatenate every dataset discovered under ``root_path``.
@@ -76,7 +77,7 @@ def build_concat_dataloaders(
 
     effective_val_batch = val_batch_size or batch_size
 
-    discovered_files = dataset_files or discover_dataset_files(root_path)
+    discovered_files = dataset_files or discover_dataset_files(root_path, filename=filename)
     if not discovered_files:
         raise FileNotFoundError(f"No dataset files discovered under '{root_path}'.")
 

@@ -109,9 +109,11 @@ def main():
     parser = argparse.ArgumentParser(description="Train MambaVisualEncoder for forecasting")
     parser.add_argument("--data_dir", type=str, default="../ICML_datasets",
                         help="Path to dataset directory")
+    parser.add_argument("--filename", type=str, default=None,
+                        help="Name for use a single dataset from 'data_dir/filename'")
     parser.add_argument("--dataset_name", type=str, default="",
                         help="Specific dataset name (empty for all datasets)")
-    parser.add_argument("--batch_size", type=int, default=512,
+    parser.add_argument("--batch_size", type=int, default=64,
                         help="Training batch size")
     parser.add_argument("--val_batch_size", type=int, default=64,
                         help="Validation batch size")
@@ -144,6 +146,7 @@ def main():
     print("Setting up data loaders...")
     data_module = TimeSeriesDataModule(
         dataset_name=args.dataset_name,
+        filename=args.filename,
         data_dir=args.data_dir,
         batch_size=args.batch_size,
         val_batch_size=args.val_batch_size,

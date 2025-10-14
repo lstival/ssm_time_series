@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import math
 from typing import Optional
 
@@ -80,9 +81,9 @@ class MambaBlock(nn.Module):
         kernel_size = _canonical_kernel_size(conv_kernel)
 
         self.norm = nn.LayerNorm(d_model)
-        # project from d_model to 2 * inner_dim
-        # so that projected.chunk(2, dim=-1) yields tensors with last dim == inner_dim
-        self.in_proj = nn.Linear(d_model, self.inner_dim * 2, bias=False)
+        # project from d_model to 3 * inner_dim
+        # so that projected.chunk(3, dim=-1) yields tensors with last dim == inner_dim
+        self.in_proj = nn.Linear(d_model, self.inner_dim * 3, bias=False)
         self.depthwise_conv = nn.Conv1d(
             self.inner_dim,
             self.inner_dim,
@@ -102,6 +103,9 @@ class MambaBlock(nn.Module):
 
         self.out_proj = nn.Linear(self.inner_dim, d_model, bias=False)
         self.dropout = nn.Dropout(dropout)
+        self.delta_min = 1e-4
+        self.delta_max = 3.0
+        self.register_buffer("eye_state", torch.eye(state_dim), persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply the block to a `(batch, seq, channels)` tensor."""
@@ -111,7 +115,7 @@ class MambaBlock(nn.Module):
         residual = x
         x = self.norm(x)
         projected = self.in_proj(x)
-        data, gate = projected.chunk(2, dim=-1)
+        data, gate, delta_raw = projected.chunk(3, dim=-1)
 
         # Depth-wise conv expects (batch, channels, seq)
         data_conv = data.transpose(1, 2)
@@ -122,52 +126,53 @@ class MambaBlock(nn.Module):
         data_conv = data_conv.transpose(1, 2)
         data_conv = self.conv_activation(data_conv)
 
-        selective = self._selective_scan(data_conv)
-        # gated = torch.sigmoid(gate) * selective
+        delta = F.softplus(delta_raw).mean(dim=-1, keepdim=True) + self.delta_min
+        delta = delta.clamp(max=self.delta_max)
+
+        selective = self._selective_scan(data_conv, delta)
         gated = torch.sigmoid(gate) * selective
         out = self.out_proj(gated)
         out = self.dropout(out)
         return residual + out
 
-    def _selective_scan(self, x: torch.Tensor) -> torch.Tensor:
+    def _selective_scan(self, x: torch.Tensor, delta: torch.Tensor) -> torch.Tensor:
         """Selective scan driven by HiPPO-initialised SSM (A, B, C).
-        Numerical stabilisations added to avoid NaNs/Infs:
-        - small integration step (dt)
-        - clamp and nan_to_num on state and outputs
+        Uses a zero-order hold discretisation per time step based on a
+        data-dependent positive step size ``delta``.
         """
         batch, seq_len, _ = x.shape
-        state = x.new_zeros(batch, self.state_dim)
+        if delta.shape[0] != batch or delta.shape[1] != seq_len or delta.shape[2] != 1:
+            raise ValueError("delta must have shape (batch, seq_len, 1)")
 
-        outputs = []
-        A_t = self.A.transpose(-1, -2)
-        B_t = self.B.transpose(-1, -2)
-        C_t = self.C.transpose(-1, -2)
+        state = x.new_zeros(batch, self.state_dim, 1)
+        outputs = x.new_empty(batch, seq_len, self.inner_dim)
 
-        dt = 0.1  # small step to stabilise the explicit update
-        clip_val = 1e6
+        A_expand = self.A.unsqueeze(0).expand(batch, -1, -1)
+        B_expand = self.B.unsqueeze(0).expand(batch, -1, -1)
+        C_expand = self.C.unsqueeze(0).expand(batch, -1, -1)
+        eye = self.eye_state.unsqueeze(0).expand(batch, -1, -1).to(device=x.device, dtype=x.dtype)
 
         for t in range(seq_len):
-            u_t = x[:, t, :]  # (batch, inner_dim)
+            u_t = x[:, t, :]
+            delta_t = delta[:, t, :]
 
-            # compute derivative and integrate with small step
-            state_dot = torch.matmul(state, A_t) + torch.matmul(u_t, B_t)
-            state = state + dt * state_dot
+            scaled_A = delta_t.view(batch, 1, 1) * A_expand
+            A_expm = torch.matrix_exp(scaled_A)
+            integral = torch.linalg.solve(A_expand, A_expm - eye)
+            B_disc = torch.bmm(integral, B_expand)
 
-            # guard against NaN/Inf and extremely large values
-            state = torch.nan_to_num(state, nan=0.0, posinf=clip_val, neginf=-clip_val)
-            state = state.clamp(min=-clip_val, max=clip_val)
+            state = torch.bmm(A_expm, state)
+            state = state + torch.bmm(B_disc, u_t.unsqueeze(-1))
 
-            y_t = torch.matmul(state, C_t)  # (batch, inner_dim)
-            y_t = torch.nan_to_num(y_t, nan=0.0, posinf=clip_val, neginf=-clip_val)
-            outputs.append(y_t.unsqueeze(1))
+            outputs[:, t, :] = torch.bmm(C_expand, state).squeeze(-1)
 
-        selective = torch.cat(outputs, dim=1)  # (batch, seq, inner_dim)
-        return selective
+        return outputs
     
 if __name__ == '__main__':
     # Example of use (model dim = 128)
-    x = torch.randn(4,1,384)
-    projection = nn.Linear(384, 128)(x)
+    b,f,t = 4,1,384
+    x = torch.randn(b,f,t)
+    projection = nn.Linear(t, 128)(x)
     mamba_block = MambaBlock()
     out = mamba_block(projection)
     print(out.shape)

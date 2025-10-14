@@ -4,3 +4,4 @@
 /ICML_datasets
 **/__pycache__/
 .pytest_cache
+/_enviroment
