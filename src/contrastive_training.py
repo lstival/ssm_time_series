@@ -1,250 +1,158 @@
-"""Contrastive self-supervised training for the lightweight Mamba encoder."""
-
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, Optional
 
-import torch
-import torch.nn.functional as F
-from torch import nn
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import DataLoader
+import torch.nn as nn
 
+import training_utils as tu
+import util as u
 from models.mamba_encoder import MambaEncoder
-from training_utils import (
-    build_encoder_from_config,
-    build_optimizer,
-    build_scheduler,
-    infer_feature_dim,
-    load_config,
-    prepare_dataloaders,
-    prepare_device,
-    set_seed,
-)
 
 
 class ContrastiveModel(nn.Module):
-    """Wrap the encoder with an adapter so any feature dimension is accepted."""
+    """Wrap the encoder so any input feature dimension is accepted."""
 
     def __init__(self, encoder: MambaEncoder, input_dim: int) -> None:
         super().__init__()
         self.encoder = encoder
-        if input_dim != encoder.input_dim:
-            self.adapter: nn.Module = nn.Linear(input_dim, encoder.input_dim, bias=False)
-        else:
-            self.adapter = nn.Identity()
+        self.adapter: nn.Module = (
+            nn.Linear(input_dim, encoder.input_dim, bias=False)
+            if input_dim != encoder.input_dim
+            else nn.Identity()
+        )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.adapter(x)
-        return self.encoder(x)
-
-
-def _random_time_mask(x: torch.Tensor, drop_prob: float = 0.1) -> torch.Tensor:
-    if drop_prob <= 0.0:
-        return x
-    mask = torch.rand(x.shape[:2], device=x.device).unsqueeze(-1)
-    keep = (mask > drop_prob).float()
-    return x * keep
+    def forward(self, x):
+        return self.encoder(self.adapter(x))
 
 
-def _random_jitter(x: torch.Tensor, sigma: float = 0.02) -> torch.Tensor:
-    if sigma <= 0.0:
-        return x
-    return x + torch.randn_like(x) * sigma
+def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Contrastive training for the Mamba encoder")
+    p.add_argument("--config", type=Path, default=Path(__file__).resolve().parent / "configs" / "mamba_encoder.yaml")
+    p.add_argument("--epochs", type=int, default=None)
+    p.add_argument("--temperature", type=float, default=None)
+    p.add_argument("--checkpoint-dir", type=Path, default=None)
+    p.add_argument("--data_dir", type=str, default=None)
+    p.add_argument("--filename", type=str, default=None)
+    p.add_argument("--dataset_name", type=str, default=None)
+    p.add_argument("--batch_size", type=int, default=None)
+    p.add_argument("--val_batch_size", type=int, default=None)
+    p.add_argument("--num_workers", type=int, default=None)
+    p.add_argument("--dataset_type", type=str, default=None)
+    p.add_argument("--datasets", type=str, nargs="*", default=None)
+    p.add_argument("--val_split", type=float, default=None)
+    return p.parse_args(list(argv) if argv is not None else None)
 
 
-def _random_scaling(x: torch.Tensor, low: float = 0.9, high: float = 1.1) -> torch.Tensor:
-    scales = torch.empty(x.size(0), 1, 1, device=x.device).uniform_(low, high)
-    return x * scales
+def resolve_config_path(cfg_arg: Path) -> Path:
+    cfg_path = cfg_arg if cfg_arg.is_absolute() else (Path(__file__).resolve().parent / cfg_arg).resolve()
+    if not cfg_path.exists():
+        raise FileNotFoundError(f"Configuration file not found: {cfg_path}")
+    return cfg_path
 
 
-def create_contrastive_views(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-    view1 = _random_scaling(_random_time_mask(_random_jitter(x.clone())))
-    view2 = _random_scaling(_random_time_mask(_random_jitter(x.clone())))
-    return view1, view2
+def prepare_data_loaders(config, args, root_dir):
+    data_cfg = config.data
+    data_dir_arg = args.data_dir if args.data_dir is not None else data_cfg.get("data_dir", "")
+    data_dir = Path(data_dir_arg)
+    if not data_dir.is_absolute():
+        data_dir = (root_dir / data_dir).resolve()
 
+    dataset_type = (args.dataset_type or str(data_cfg.get("dataset_type", "icml"))).lower()
+    dataset_name = args.dataset_name if args.dataset_name is not None else data_cfg.get("dataset_name")
+    filename = args.filename if args.filename is not None else data_cfg.get("filename")
+    batch_size = args.batch_size if args.batch_size is not None else int(data_cfg.get("batch_size", 128))
+    val_batch_size = args.val_batch_size if args.val_batch_size is not None else int(data_cfg.get("val_batch_size", 256))
+    num_workers = args.num_workers if args.num_workers is not None else int(data_cfg.get("num_workers", 4))
+    pin_memory = bool(data_cfg.get("pin_memory", True))
+    normalize = bool(data_cfg.get("normalize", True))
+    train_ratio = float(data_cfg.get("train_ratio", 0.8))
+    val_ratio = float(data_cfg.get("val_ratio", 0.2))
+    datasets = args.datasets if args.datasets else data_cfg.get("datasets")
+    val_split = args.val_split if args.val_split is not None else data_cfg.get("val_split")
+    cronos_opts = data_cfg.get("cronos", {}) or {}
 
-def info_nce_loss(z1: torch.Tensor, z2: torch.Tensor, temperature: float) -> torch.Tensor:
-    z1 = F.normalize(z1, dim=-1)
-    z2 = F.normalize(z2, dim=-1)
-    logits = torch.matmul(z1, z2.T) / temperature
-    labels = torch.arange(z1.size(0), device=z1.device)
-    loss1 = F.cross_entropy(logits, labels)
-    loss2 = F.cross_entropy(logits.T, labels)
-    return 0.5 * (loss1 + loss2)
-
-
-class ContrastiveTrainer:
-    def __init__(
-        self,
-        model: ContrastiveModel,
-        optimizer: Optimizer,
-        scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
-        *,
-        device: torch.device,
-        temperature: float = 0.2,
-        use_amp: bool = False,
-        max_grad_norm: Optional[float] = None,
-        checkpoint_dir: Optional[Path] = None,
-        save_best_only: bool = True,
-        save_last: bool = True,
-    ) -> None:
-        self.model = model.to(device)
-        self.optimizer = optimizer
-        self.scheduler = scheduler
-        self.device = device
-        self.temperature = temperature
-        self.use_amp = use_amp and device.type == "cuda"
-        self.max_grad_norm = max_grad_norm
-        self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
-        self.checkpoint_dir = checkpoint_dir
-        self.save_best_only = save_best_only
-        self.save_last = save_last
-        self.best_val = float("inf")
-        if checkpoint_dir is not None:
-            checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
-    def _forward_batch(self, batch: Tuple[torch.Tensor, ...]) -> torch.Tensor:
-        seq_x = batch[0].to(self.device).float()
-        if seq_x.ndim == 2:
-            seq_x = seq_x.unsqueeze(0)
-        view1, view2 = create_contrastive_views(seq_x)
-        with torch.cuda.amp.autocast(enabled=self.use_amp):
-            z1 = self.model(view1)
-            z2 = self.model(view2)
-            loss = info_nce_loss(z1, z2, self.temperature)
-        return loss
-
-    def fit(self, train_loader: DataLoader, val_loader: Optional[DataLoader], epochs: int) -> None:
-        for epoch in range(epochs):
-            train_loss = self._run_epoch(train_loader, train=True)
-            if val_loader is not None:
-                val_loss = self._run_epoch(val_loader, train=False)
-                print(f"Epoch {epoch+1}/{epochs} | train={train_loss:.4f} | val={val_loss:.4f}")
-                self._step_scheduler(val_loss)
-                self._save(epoch, val_loss)
-            else:
-                print(f"Epoch {epoch+1}/{epochs} | train={train_loss:.4f}")
-                self._step_scheduler(train_loss)
-                self._save(epoch, train_loss)
-
-    def _run_epoch(self, loader: DataLoader, *, train: bool) -> float:
-        if train:
-            self.model.train()
-        else:
-            self.model.eval()
-        running = 0.0
-        count = 0
-        for batch in loader:
-            loss = self._forward_batch(batch)
-            if train:
-                self.optimizer.zero_grad(set_to_none=True)
-                if self.use_amp:
-                    self.scaler.scale(loss).backward()
-                    if self.max_grad_norm is not None:
-                        self.scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-                else:
-                    loss.backward()
-                    if self.max_grad_norm is not None:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                    self.optimizer.step()
-            running += loss.item()
-            count += 1
-        return running / max(1, count)
-
-    def _step_scheduler(self, metric: float) -> None:
-        if self.scheduler is None:
-            return
-        if isinstance(self.scheduler, ReduceLROnPlateau):
-            self.scheduler.step(metric)
-        else:
-            self.scheduler.step()
-
-    def _save(self, epoch: int, metric: float) -> None:
-        if self.checkpoint_dir is None:
-            return
-        state = {
-            "epoch": epoch + 1,
-            "model_state": self.model.state_dict(),
-            "optimizer_state": self.optimizer.state_dict(),
-            "metric": metric,
-        }
-        if self.save_best_only:
-            if metric < self.best_val:
-                self.best_val = metric
-                torch.save(state, self.checkpoint_dir / "best.pt")
-        else:
-            torch.save(state, self.checkpoint_dir / f"epoch_{epoch+1}.pt")
-        if self.save_last:
-            torch.save(state, self.checkpoint_dir / "last.pt")
-
-
-def main(argv: Optional[Iterable[str]] = None) -> None:
-    parser = argparse.ArgumentParser(description="Contrastive training for the Mamba encoder")
-    parser.add_argument(
-        "--config",
-        type=Path,
-        default=Path(__file__).resolve().parent / "configs" / "mamba_encoder.yaml",
-        help="Path to the YAML configuration file.",
+    train_loader, val_loader = u.build_time_series_dataloaders(
+        data_dir=data_dir,
+        filename=filename,
+        dataset_name=dataset_name,
+        batch_size=batch_size,
+        val_batch_size=val_batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        normalize=normalize,
+        train_ratio=train_ratio,
+        val_ratio=val_ratio,
+        dataset_type=dataset_type,
+        datasets=datasets,
+        val_split=val_split,
+        seed=config.seed,
+        cronos_kwargs=cronos_opts,
     )
-    parser.add_argument("--epochs", type=int, default=None, help="Override epoch count")
-    parser.add_argument("--temperature", type=float, default=None, help="InfoNCE temperature override")
-    parser.add_argument("--checkpoint-dir", type=Path, default=None, help="Optional checkpoint directory override")
-    args = parser.parse_args(list(argv) if argv is not None else None)
 
-    config_path = args.config if args.config.is_absolute() else (Path(__file__).resolve().parent / args.config).resolve()
-    if not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    sample_batch = next(iter(train_loader))
+    sample_seq = u.prepare_sequence(u.extract_sequence(sample_batch))
+    feature_dim = sample_seq.shape[-1]
 
-    config = load_config(config_path)
-    set_seed(config.seed)
-    device = prepare_device(config.device)
-    print(f"Using device: {device}")
+    return train_loader, val_loader, feature_dim
 
-    root_dir = config_path.parent
-    train_loader, val_loader = prepare_dataloaders(config, root_dir)
-    feature_dim = infer_feature_dim(train_loader)
 
-    encoder = build_encoder_from_config(config.model)
+def build_model_and_optim(config, feature_dim, args):
+    encoder = tu.build_encoder_from_config(config.model)
     model = ContrastiveModel(encoder, input_dim=feature_dim)
 
     training_cfg = config.training
     epochs = int(args.epochs) if args.epochs is not None else int(training_cfg.get("epochs", 100))
     temperature = float(args.temperature) if args.temperature is not None else float(training_cfg.get("temperature", 0.2))
-    optimizer = build_optimizer(model, training_cfg)
-    scheduler = build_scheduler(optimizer, training_cfg, epochs)
+    optimizer = tu.build_optimizer(model, training_cfg)
+    scheduler = tu.build_scheduler(optimizer, training_cfg, epochs)
 
+    return model, optimizer, scheduler, epochs, temperature
+
+
+def prepare_checkpoint_dir(config, config_path: Path, args):
     logging_cfg = config.logging
-    checkpoint_dir = args.checkpoint_dir or Path(logging_cfg.get("checkpoint_dir", "./checkpoints"))
-    if not checkpoint_dir.is_absolute():
-        checkpoint_dir = (root_dir / checkpoint_dir).resolve()
-    run_id = f"{config.experiment_name}_{datetime.now().strftime('%Y%m%d_%H%M')}"
-    checkpoint_dir = checkpoint_dir / run_id
-    print(f"Checkpoints: {checkpoint_dir}")
+    root = args.checkpoint_dir if args.checkpoint_dir is not None else Path(logging_cfg.get("checkpoint_dir", "./checkpoints"))
+    if not root.is_absolute():
+        root = (config_path.parent / root).resolve()
 
-    trainer = ContrastiveTrainer(
-        model,
-        optimizer,
-        scheduler,
-        device=device,
-    temperature=temperature,
-        use_amp=bool(training_cfg.get("use_amp", False)),
-        max_grad_norm=float(training_cfg.get("max_grad_norm", 0.0)) or None,
-        checkpoint_dir=checkpoint_dir,
-        save_best_only=bool(logging_cfg.get("save_best_only", True)),
-        save_last=bool(logging_cfg.get("save_last", True)),
-    )
-
-    val_loader = val_loader if val_loader is not None and len(val_loader) > 0 else None
-    trainer.fit(train_loader, val_loader, epochs=epochs)
+    # Create and return a run-specific checkpoint directory (avoid calling missing util function)
+    run_dir = root / config.experiment_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    config_path = resolve_config_path(args.config)
+    config = tu.load_config(config_path)
+
+    tu.set_seed(config.seed)
+    device = tu.prepare_device(config.device)
+    print(f"Using device: {device}")
+
+    root_dir = config_path.parent
+    train_loader, val_loader, feature_dim = prepare_data_loaders(config, args, root_dir)
+
+    model, optimizer, scheduler, epochs, temperature = build_model_and_optim(config, feature_dim, args)
+    checkpoint_dir = prepare_checkpoint_dir(config, config_path, args)
+    print(f"Checkpoints: {checkpoint_dir}")
+
+    val_loader = val_loader if val_loader is not None and len(val_loader) > 0 else None
+
+    u.run_contrastive_training(
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        epochs=epochs,
+        temperature=temperature,
+        device=device,
+        use_amp=bool(config.training.get("use_amp", False)),
+        max_grad_norm=float(config.training.get("max_grad_norm", 0.0)) or None,
+        checkpoint_dir=checkpoint_dir,
+        save_best_only=bool(config.logging.get("save_best_only", True)),
+        save_last=bool(config.logging.get("save_last", True)),
+    )

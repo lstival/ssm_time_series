@@ -2,7 +2,6 @@
 
 import argparse
 from pathlib import Path
-from datetime import datetime
 
 import torch
 import torch.nn as nn
@@ -10,7 +9,7 @@ from torch.optim import AdamW
 from tqdm import tqdm
 
 from models.mamba_visual_encoder import MambaVisualEncoder
-from time_series_loader import TimeSeriesDataModule
+from util import build_time_series_dataloaders, default_device, prepare_run_directory
 
 
 class ForecastModel(nn.Module):
@@ -113,17 +112,17 @@ def main():
                         help="Name for use a single dataset from 'data_dir/filename'")
     parser.add_argument("--dataset_name", type=str, default="",
                         help="Specific dataset name (empty for all datasets)")
-    parser.add_argument("--batch_size", type=int, default=64,
+    parser.add_argument("--batch_size", type=int, default=12,
                         help="Training batch size")
-    parser.add_argument("--val_batch_size", type=int, default=64,
+    parser.add_argument("--val_batch_size", type=int, default=12,
                         help="Validation batch size")
-    parser.add_argument("--epochs", type=int, default=50,
+    parser.add_argument("--epochs", type=int, default=10,
                         help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=1e-4,
                         help="Learning rate")
     parser.add_argument("--token_size", type=int, default=32,
                         help="Token size for encoder")
-    parser.add_argument("--model_dim", type=int, default=768,
+    parser.add_argument("--model_dim", type=int, default=256,
                         help="Model dimension")
     parser.add_argument("--embedding_dim", type=int, default=128,
                         help="Output embedding dimension")
@@ -139,28 +138,19 @@ def main():
     args = parser.parse_args()
     
     # Setup device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = default_device()
     print(f"Using device: {device}")
     
-    # Create data module
+    # Create data loaders
     print("Setting up data loaders...")
-    data_module = TimeSeriesDataModule(
-        dataset_name=args.dataset_name,
-        filename=args.filename,
+    train_loader, val_loader = build_time_series_dataloaders(
         data_dir=args.data_dir,
+        filename=args.filename,
+        dataset_name=args.dataset_name,
         batch_size=args.batch_size,
         val_batch_size=args.val_batch_size,
         num_workers=args.num_workers,
-        pin_memory=True,
-        normalize=True,
-        train_ratio=0.8,
-        val_ratio=0.2,
-        train=True,
-        val=True,
-        test=False,
     )
-    
-    train_loader, val_loader = data_module.get_dataloaders()
     print(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
     
     # Get a sample to determine actual forecast_len
@@ -200,10 +190,7 @@ def main():
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
     
     # Create checkpoint directory
-    checkpoint_dir = Path(args.checkpoint_dir)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    run_dir = checkpoint_dir / f"forecast_encoder_{timestamp}"
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = prepare_run_directory(Path(args.checkpoint_dir), "forecast_encoder")
     print(f"Checkpoint directory: {run_dir}")
     
     # Training loop

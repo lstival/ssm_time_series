@@ -89,7 +89,7 @@ class TimeSeriesDataModule:
 if __name__ == '__main__':
     # Example usage with the requested settings
     data_root = "../ICML_datasets"
-    filename = "/electricity/electricity.csv"
+    # filename = "/ETT-small/ETTh1.csv"
     # dataset_files = discover_dataset_files(data_root, filename=filename)
 
     # if not dataset_files:
@@ -130,5 +130,7 @@ if __name__ == '__main__':
     #     if test_loader is not None:
     #         print("Combined test batches:", len(test_loader))
 
-    aa = TimeSeriesDataModule(data_dir=data_root, filename=filename)
+    aa = TimeSeriesDataModule(data_dir=data_root)
     aa.setup()
+    b,c = aa.get_dataloaders()
+    print(b.__len__())
