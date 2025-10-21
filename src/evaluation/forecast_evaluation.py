@@ -2,6 +2,8 @@
 
 import argparse
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -9,11 +11,16 @@ import numpy as np
 import torch
 import torch.nn as nn
 from tqdm import tqdm
+import yaml
+
+# Ensure sibling packages under src are importable when running as a script from subdirectories
+SRC_ROOT = Path(__file__).resolve().parents[1]
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from data_provider.utils.metrics import metric as compute_metric_values
 from models.mamba_visual_encoder import MambaVisualEncoder
 from util import build_time_series_dataloaders, default_device, prepare_run_directory
-import yaml
 
 
 class ForecastModel(nn.Module):
@@ -117,9 +124,21 @@ def load_checkpoint(model: nn.Module, checkpoint_path: Path, device: torch.devic
 def main() -> None:
     # First parse only --config to locate the YAML schema
     pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--config", type=str, default="configs/forecast_evaluation.yaml", help="Path to YAML config describing CLI args")
+    pre_parser.add_argument(
+        "--config",
+        type=str,
+        # default="configs/forecast_evaluation.yaml",
+        default=r"C:\WUR\ssm_time_series\src\configs\forecast_evaluation.yaml",
+        help="Path to YAML config describing CLI args",
+    )
+    # pre_parser.add_argument(
+    #     "----checkpoint_path"
+    # )
     known, _ = pre_parser.parse_known_args()
-    config_path = Path(known.config).expanduser().resolve()
+    # Normalize windows backslashes, expand ~ and env vars, then resolve to an absolute Path
+    config_str = os.path.expanduser(os.path.expandvars(known.config))
+    config_norm = os.path.normpath(config_str)
+    config_path = Path(config_norm).resolve()
 
     # Load YAML schema
 

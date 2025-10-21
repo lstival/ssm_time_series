@@ -70,7 +70,7 @@ def prepare_device(device_request: str) -> torch.device:
 
 def build_encoder_from_config(model_cfg: Dict[str, Any]) -> MambaEncoder:
     input_dim = int(model_cfg.get("input_dim", 32))
-    model_dim = int(model_cfg.get("model_dim", 768))
+    model_dim = int(model_cfg.get("model_dim", 128))
     embedding_dim = int(model_cfg.get("embedding_dim", 128))
     depth = int(model_cfg.get("depth", 6))
     state_dim = int(model_cfg.get("state_dim", model_cfg.get("d_state", 16)))
