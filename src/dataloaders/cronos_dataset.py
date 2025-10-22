@@ -1,6 +1,7 @@
 import datasets
 import numpy as np
 import pandas as pd
+import os
 from datasets import Dataset, Sequence, Value
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -44,42 +45,99 @@ def load_chronos_datasets(
     repo_id: str = "autogluon/chronos_datasets",
     set_numpy_format: bool = True,
     target_dtype: Optional[str] = "float64",
+    offline_cache_dir: Optional[str] = "/data",
     **load_kwargs,
 ) -> datasets.Dataset:
-    """Load and concatenate Chronos datasets from Hugging Face."""
+    """Load and concatenate Chronos datasets from Hugging Face.
+    
+    Args:
+        dataset_names: Sequence of dataset names to load
+        split: Dataset split to load (default: "train")
+        repo_id: Hugging Face repository ID (default: "autogluon/chronos_datasets")
+        set_numpy_format: Whether to set numpy format for sequences (default: True)
+        target_dtype: Target data type for casting (default: "float64")
+        offline_cache_dir: Optional path to offline cache directory. If provided,
+                          will try to load from this directory first before falling back
+                          to Hugging Face. If None, uses default HF cache or environment
+                          variable HF_DATASETS_CACHE.
+        **load_kwargs: Additional arguments passed to datasets.load_dataset
+        
+    Returns:
+        Combined dataset from all specified dataset names
+    """
     if not dataset_names:
         raise ValueError("dataset_names must be a non-empty sequence.")
 
-    loaded_datasets: List[Tuple[str, datasets.Dataset]] = []
-    for name in dataset_names:
-        ds = datasets.load_dataset(repo_id, name, split=split, **load_kwargs)
-        if "target" not in ds.column_names:
-            # Rename common consumption columns to target for downstream compatibility
-            for candidate in ("consumption_kW", "power_mw"):
-                if candidate in ds.column_names:
-                    ds = ds.rename_column(candidate, "target")
-                    break
+    # Handle offline cache directory
+    original_cache = None
+    if offline_cache_dir is not None:
+        original_cache = os.environ.get('HF_DATASETS_CACHE')
+        os.environ['HF_DATASETS_CACHE'] = offline_cache_dir
+        print(f"Using offline cache directory: {offline_cache_dir}")
 
-        # Convert the data for float64 (allow concat)
-        if target_dtype is not None:
-            ds = _cast_target_dtype(ds, target_dtype)
+    try:
+        loaded_datasets: List[Tuple[str, datasets.Dataset]] = []
+        for name in dataset_names:
+            try:
+                ds = datasets.load_dataset(repo_id, name, split=split, **load_kwargs)
+                print(f"Successfully loaded '{name}' from cache")
+            except (FileNotFoundError, ConnectionError, OSError) as e:
+                if offline_cache_dir is not None:
+                    # If offline cache was specified but dataset not found, try online
+                    print(f"Dataset '{name}' not found in offline cache, trying online...")
+                    # Temporarily restore online access
+                    if original_cache:
+                        os.environ['HF_DATASETS_CACHE'] = original_cache
+                    else:
+                        os.environ.pop('HF_DATASETS_CACHE', None)
+                    
+                    try:
+                        ds = datasets.load_dataset(repo_id, name, split=split, **load_kwargs)
+                        print(f"Successfully downloaded '{name}' from Hugging Face")
+                        # Restore offline cache setting for next dataset
+                        os.environ['HF_DATASETS_CACHE'] = offline_cache_dir
+                    except Exception as online_error:
+                        print(f"Failed to load '{name}' both offline and online: {online_error}")
+                        continue
+                else:
+                    print(f"Failed to load '{name}': {e}")
+                    continue
 
-        # Check if the dataset have the "target" colummn
-        if "target" not in ds.column_names:
-            print(f"Skipping dataset '{name}': missing 'target' column.")
-            continue
+            if "target" not in ds.column_names:
+                # Rename common consumption columns to target for downstream compatibility
+                for candidate in ("consumption_kW", "power_mw"):
+                    if candidate in ds.column_names:
+                        ds = ds.rename_column(candidate, "target")
+                        break
 
-        if len(ds.column_names) > 1:
-            ds = ds.select_columns(["target"])
+            # Convert the data for float64 (allow concat)
+            if target_dtype is not None:
+                ds = _cast_target_dtype(ds, target_dtype)
 
-        loaded_datasets.append((name, ds))
+            # Check if the dataset have the "target" colummn
+            if "target" not in ds.column_names:
+                print(f"Skipping dataset '{name}': missing 'target' column.")
+                continue
 
-    combined, _ = _concatenate_with_reporting(loaded_datasets)
+            if len(ds.column_names) > 1:
+                ds = ds.select_columns(["target"])
 
-    if set_numpy_format:
-        combined.set_format("numpy")  # sequences returned as numpy arrays
+            loaded_datasets.append((name, ds))
 
-    return combined
+        combined, _ = _concatenate_with_reporting(loaded_datasets)
+
+        if set_numpy_format:
+            combined.set_format("numpy")  # sequences returned as numpy arrays
+
+        return combined
+
+    finally:
+        # Restore original cache setting
+        if offline_cache_dir is not None:
+            if original_cache:
+                os.environ['HF_DATASETS_CACHE'] = original_cache
+            else:
+                os.environ.pop('HF_DATASETS_CACHE', None)
 
 
 def to_pandas(ds: datasets.Dataset) -> "pd.DataFrame":
@@ -247,6 +305,20 @@ if __name__ == "__main__":
         # "ercot", # 8 rows with 158k length time series
     ]
 
+    # Example 1: Load from default cache (online if needed)
+    print("Loading from default cache...")
     dataset = load_chronos_datasets(datasets_to_load, target_dtype="float64")
     print(to_pandas(dataset).head())
     print(dataset)
+    
+    # # Example 2: Load from offline cache directory (falls back to online if needed)
+    # # Uncomment and adjust path as needed:
+    # print("\nLoading from offline cache...")
+    # offline_cache_path = r"D:\my_datasets"  # Adjust this path
+    # dataset_offline = load_chronos_datasets(
+    #     datasets_to_load, 
+    #     target_dtype="float64",
+    #     offline_cache_dir=offline_cache_path
+    # )
+    # print(to_pandas(dataset_offline).head())
+    # print(dataset_offline)

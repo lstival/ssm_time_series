@@ -6,3 +6,4 @@
 .pytest_cache
 /_enviroment
 /eval_runs
+/data
