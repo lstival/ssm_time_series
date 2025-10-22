@@ -93,6 +93,13 @@ def prepare_dataset(
     if load_kwargs_override:
         load_kwargs.update(load_kwargs_override)
 
+    # Set offline cache directory to the local data directory
+    data_dir = config_path.parent.parent / "data"
+    load_kwargs.setdefault("offline_cache_dir", str(data_dir))
+    load_kwargs.setdefault("force_offline", True)
+    
+    print(f"Using local data directory: {data_dir}")
+
     dataset = load_cronos_time_series_dataset(
         str(cronos_config),
         split=split,

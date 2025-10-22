@@ -46,6 +46,7 @@ def load_chronos_datasets(
     set_numpy_format: bool = True,
     target_dtype: Optional[str] = "float64",
     offline_cache_dir: Optional[str] = "/data",
+    force_offline: bool = True,
     **load_kwargs,
 ) -> datasets.Dataset:
     """Load and concatenate Chronos datasets from Hugging Face.
@@ -60,6 +61,7 @@ def load_chronos_datasets(
                           will try to load from this directory first before falling back
                           to Hugging Face. If None, uses default HF cache or environment
                           variable HF_DATASETS_CACHE.
+        force_offline: If True, only use cached datasets and don't attempt online access (default: True)
         **load_kwargs: Additional arguments passed to datasets.load_dataset
         
     Returns:
@@ -72,17 +74,36 @@ def load_chronos_datasets(
     original_cache = None
     if offline_cache_dir is not None:
         original_cache = os.environ.get('HF_DATASETS_CACHE')
+        # Expand relative paths and ensure absolute path
+        if not os.path.isabs(offline_cache_dir):
+            offline_cache_dir = os.path.abspath(offline_cache_dir)
         os.environ['HF_DATASETS_CACHE'] = offline_cache_dir
         print(f"Using offline cache directory: {offline_cache_dir}")
+
+    # Force offline mode if requested
+    original_offline = None
+    original_transformers_offline = None
+    if force_offline:
+        original_offline = os.environ.get('HF_DATASETS_OFFLINE')
+        os.environ['HF_DATASETS_OFFLINE'] = '1'
+        print("Forcing offline mode - no network access will be attempted")
+        # Also set TRANSFORMERS_OFFLINE for safety
+        original_transformers_offline = os.environ.get('TRANSFORMERS_OFFLINE')
+        os.environ['TRANSFORMERS_OFFLINE'] = '1'
 
     try:
         loaded_datasets: List[Tuple[str, datasets.Dataset]] = []
         for name in dataset_names:
             try:
-                ds = datasets.load_dataset(repo_id, name, split=split, **load_kwargs)
+                # Force offline mode by setting download_mode
+                offline_load_kwargs = load_kwargs.copy()
+                if force_offline:
+                    offline_load_kwargs['download_mode'] = 'reuse_cache_if_exists'
+                
+                ds = datasets.load_dataset(repo_id, name, split=split, **offline_load_kwargs)
                 print(f"Successfully loaded '{name}' from cache")
             except (FileNotFoundError, ConnectionError, OSError) as e:
-                if offline_cache_dir is not None:
+                if not force_offline and offline_cache_dir is not None:
                     # If offline cache was specified but dataset not found, try online
                     print(f"Dataset '{name}' not found in offline cache, trying online...")
                     # Temporarily restore online access
@@ -91,16 +112,20 @@ def load_chronos_datasets(
                     else:
                         os.environ.pop('HF_DATASETS_CACHE', None)
                     
+                    if original_offline is not None:
+                        os.environ.pop('HF_DATASETS_OFFLINE', None)
+                    
                     try:
                         ds = datasets.load_dataset(repo_id, name, split=split, **load_kwargs)
                         print(f"Successfully downloaded '{name}' from Hugging Face")
                         # Restore offline cache setting for next dataset
                         os.environ['HF_DATASETS_CACHE'] = offline_cache_dir
+                        os.environ['HF_DATASETS_OFFLINE'] = '1'
                     except Exception as online_error:
                         print(f"Failed to load '{name}' both offline and online: {online_error}")
                         continue
                 else:
-                    print(f"Failed to load '{name}': {e}")
+                    print(f"Failed to load '{name}' (offline mode): {e}")
                     continue
 
             if "target" not in ds.column_names:
@@ -138,6 +163,18 @@ def load_chronos_datasets(
                 os.environ['HF_DATASETS_CACHE'] = original_cache
             else:
                 os.environ.pop('HF_DATASETS_CACHE', None)
+        
+        # Restore original offline setting
+        if force_offline:
+            if original_offline is not None:
+                os.environ['HF_DATASETS_OFFLINE'] = original_offline
+            else:
+                os.environ.pop('HF_DATASETS_OFFLINE', None)
+            # Restore TRANSFORMERS_OFFLINE
+            if original_transformers_offline is not None:
+                os.environ['TRANSFORMERS_OFFLINE'] = original_transformers_offline
+            else:
+                os.environ.pop('TRANSFORMERS_OFFLINE', None)
 
 
 def to_pandas(ds: datasets.Dataset) -> "pd.DataFrame":
