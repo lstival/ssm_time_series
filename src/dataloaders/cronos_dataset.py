@@ -1,7 +1,11 @@
+import os
+os.environ['HF_DATASETS_OFFLINE ']= '1'
+
 import datasets
+datasets.config.HF_DATASETS_OFFLINE = True
+
 import numpy as np
 import pandas as pd
-import os
 from datasets import Dataset, Sequence, Value
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -83,6 +87,7 @@ def load_chronos_datasets(
     # Force offline mode if requested
     original_offline = None
     original_transformers_offline = None
+    original_hub_offline = None
     if force_offline:
         original_offline = os.environ.get('HF_DATASETS_OFFLINE')
         os.environ['HF_DATASETS_OFFLINE'] = '1'
@@ -90,6 +95,9 @@ def load_chronos_datasets(
         # Also set TRANSFORMERS_OFFLINE for safety
         original_transformers_offline = os.environ.get('TRANSFORMERS_OFFLINE')
         os.environ['TRANSFORMERS_OFFLINE'] = '1'
+        # Set HF_HUB_OFFLINE to force Hugging Face Hub offline mode
+        original_hub_offline = os.environ.get('HF_HUB_OFFLINE')
+        os.environ['HF_HUB_OFFLINE'] = '1'
 
     try:
         loaded_datasets: List[Tuple[str, datasets.Dataset]] = []
@@ -114,6 +122,8 @@ def load_chronos_datasets(
                     
                     if original_offline is not None:
                         os.environ.pop('HF_DATASETS_OFFLINE', None)
+                    if original_hub_offline is not None:
+                        os.environ.pop('HF_HUB_OFFLINE', None)
                     
                     try:
                         ds = datasets.load_dataset(repo_id, name, split=split, **load_kwargs)
@@ -121,6 +131,7 @@ def load_chronos_datasets(
                         # Restore offline cache setting for next dataset
                         os.environ['HF_DATASETS_CACHE'] = offline_cache_dir
                         os.environ['HF_DATASETS_OFFLINE'] = '1'
+                        os.environ['HF_HUB_OFFLINE'] = '1'
                     except Exception as online_error:
                         print(f"Failed to load '{name}' both offline and online: {online_error}")
                         continue
@@ -175,6 +186,11 @@ def load_chronos_datasets(
                 os.environ['TRANSFORMERS_OFFLINE'] = original_transformers_offline
             else:
                 os.environ.pop('TRANSFORMERS_OFFLINE', None)
+            # Restore HF_HUB_OFFLINE
+            if original_hub_offline is not None:
+                os.environ['HF_HUB_OFFLINE'] = original_hub_offline
+            else:
+                os.environ.pop('HF_HUB_OFFLINE', None)
 
 
 def to_pandas(ds: datasets.Dataset) -> "pd.DataFrame":
