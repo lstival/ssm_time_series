@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import argparse
 import copy
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, Optional
 
 import torch
 import torch.nn as nn
@@ -35,29 +34,28 @@ class MoCoProjectionHead(nn.Module):
 class MoCoModel(nn.Module):
     """MoCo model with momentum-updated key encoder and queue."""
     
-    def __init__(self, encoder: nn.Module, input_dim: int, queue_size: int = 65536, momentum: float = 0.999, temperature: float = 0.07):
+    def __init__(self, encoder: nn.Module, input_dim: int, queue_size: int = 1280, momentum: float = 0.999, temperature: float = 0.07):
         super().__init__()
         
-        # Create query encoder with adapter if needed
+        # Create query encoder
         self.encoder_q = encoder
-        # For 3D inputs, we need to apply the linear layer to the last dimension
-        if hasattr(encoder, "input_dim") and input_dim != encoder.input_dim:
-            self.adapter_q = nn.Linear(input_dim, encoder.input_dim, bias=False)
-        else:
-            self.adapter_q = nn.Identity()
         
         # Create momentum key encoder
         self.encoder_k = copy.deepcopy(encoder)
-        self.adapter_k = copy.deepcopy(self.adapter_q)
         
         # Disable gradients for key encoder
         for param in self.encoder_k.parameters():
             param.requires_grad = False
-        for param in self.adapter_k.parameters():
-            param.requires_grad = False
-            
+
+        min_seq_len = getattr(self.encoder_q, "token_size", None)
+        if min_seq_len is None:
+            min_seq_len = getattr(self.encoder_q, "patch_length", None)
+        if not isinstance(min_seq_len, int) or min_seq_len <= 0:
+            min_seq_len = 1
+        self.min_seq_len = min_seq_len
+
         # Infer encoder output dimension by doing a forward pass
-        encoder_output_dim = self._infer_encoder_output_dim(input_dim)
+        encoder_output_dim = self.encoder_k.final_norm._parameters["weight"].shape[0]
         
         # Projection heads
         self.projection_head_q = MoCoProjectionHead(encoder_output_dim, encoder_output_dim, 128)
@@ -76,45 +74,7 @@ class MoCoModel(nn.Module):
         self.register_buffer("queue", torch.randn(128, queue_size))
         self.queue = nn.functional.normalize(self.queue, dim=0)
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
-    
-    def _infer_encoder_output_dim(self, input_dim: int) -> int:
-        """Infer the output dimension of the encoder by doing a forward pass."""
-        self.encoder_q.eval()
-        with torch.no_grad():
-            # Create a dummy input with the expected shape (batch, seq, features)
-            # Use a reasonable sequence length for inference
-            seq_length = 64  # Adjust based on your typical sequence length
-            dummy_input = torch.randn(1, seq_length, input_dim)
-            adapted_input = self.adapter_q(dummy_input)
-            output = self.encoder_q(adapted_input)
-            return output.shape[-1]
-    
-    @torch.no_grad()
-    def _momentum_update_key_encoder(self):
-        """Momentum update of the key encoder."""
-        for param_q, param_k in zip(self.encoder_q.parameters(), self.encoder_k.parameters()):
-            param_k.data = param_k.data * self.momentum + param_q.data * (1.0 - self.momentum)
-        
-        for param_q, param_k in zip(self.adapter_q.parameters(), self.adapter_k.parameters()):
-            param_k.data = param_k.data * self.momentum + param_q.data * (1.0 - self.momentum)
-            
-        for param_q, param_k in zip(self.projection_head_q.parameters(), self.projection_head_k.parameters()):
-            param_k.data = param_k.data * self.momentum + param_q.data * (1.0 - self.momentum)
-    
-    @torch.no_grad()
-    def _dequeue_and_enqueue(self, keys):
-        """Update the queue with new keys."""
-        batch_size = keys.shape[0]
-        
-        ptr = int(self.queue_ptr)
-        assert self.queue_size % batch_size == 0, "Queue size should be divisible by batch size"
-        
-        # Replace keys at ptr
-        self.queue[:, ptr:ptr + batch_size] = keys.T
-        ptr = (ptr + batch_size) % self.queue_size
-        
-        self.queue_ptr[0] = ptr
-    
+
     def forward(self, x_q: torch.Tensor, x_k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass through MoCo model.
         
@@ -127,15 +87,9 @@ class MoCoModel(nn.Module):
             targets: Target labels (zeros for positive pairs)
             loss: InfoNCE loss
         """
-        # Ensure inputs have the right shape (batch, seq, features)
-        if x_q.dim() == 2:
-            x_q = x_q.unsqueeze(1)  # Add sequence dimension
-        if x_k.dim() == 2:
-            x_k = x_k.unsqueeze(1)  # Add sequence dimension
             
         # Query forward pass
-        q_adapted = self.adapter_q(x_q)
-        q_encoded = self.encoder_q(q_adapted)
+        q_encoded = self.encoder_q(x_q)
         q = self.projection_head_q(q_encoded)
         q = nn.functional.normalize(q, dim=1)
         
@@ -143,8 +97,7 @@ class MoCoModel(nn.Module):
         with torch.no_grad():
             self._momentum_update_key_encoder()
             
-            k_adapted = self.adapter_k(x_k)
-            k_encoded = self.encoder_k(k_adapted)
+            k_encoded = self.encoder_k(x_k)
             k = self.projection_head_k(k_encoded)
             k = nn.functional.normalize(k, dim=1)
         
@@ -172,27 +125,49 @@ class MoCoModel(nn.Module):
         
         return logits, labels, loss
 
+    @torch.no_grad()
+    def _momentum_update_key_encoder(self) -> None:
+        """Exponential moving average for encoder and projection head."""
+        for param_q, param_k in zip(self.encoder_q.parameters(), self.encoder_k.parameters()):
+            param_k.data.mul_(self.momentum).add_(param_q.data, alpha=1.0 - self.momentum)
 
-def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="MoCo training using Chronos patched loader")
-    default_cfg = Path(__file__).resolve().parent / "configs" / "mamba_encoder.yaml"
-    parser.add_argument("--config", type=Path, default=default_cfg)
-    parser.add_argument("--cronos-config", type=Path, default=None)
-    parser.add_argument("--split", type=str, default=None)
-    parser.add_argument("--patch-length", type=int, default=None)
-    parser.add_argument("--batch-size", type=int, default=None)
-    parser.add_argument("--val-batch-size", type=int, default=None)
-    parser.add_argument("--val-ratio", type=float, default=None, help="Validation fraction (0-1).")
-    parser.add_argument("--num-workers", type=int, default=None)
-    parser.add_argument("--pin-memory", type=int, default=None, choices=[0, 1])
-    parser.add_argument("--epochs", type=int, default=None)
-    parser.add_argument("--temperature", type=float, default=None)
-    parser.add_argument("--queue-size", type=int, default=None, help="Size of the negative sample queue")
-    parser.add_argument("--momentum", type=float, default=None, help="Momentum for key encoder update")
-    parser.add_argument("--checkpoint-dir", type=Path, default=None)
-    parser.add_argument("--load-kwargs", type=str, nargs="*", default=None,
-                        help="Optional key=value overrides forwarded to the dataset loader.")
-    return parser.parse_args(list(argv) if argv is not None else None)
+        for buffer_q, buffer_k in zip(self.encoder_q.buffers(), self.encoder_k.buffers()):
+            buffer_k.data.copy_(buffer_q.data)
+
+        for param_q, param_k in zip(self.projection_head_q.parameters(), self.projection_head_k.parameters()):
+            param_k.data.mul_(self.momentum).add_(param_q.data, alpha=1.0 - self.momentum)
+
+        for buffer_q, buffer_k in zip(self.projection_head_q.buffers(), self.projection_head_k.buffers()):
+            buffer_k.data.copy_(buffer_q.data)
+
+    @torch.no_grad()
+    def _dequeue_and_enqueue(self, keys: torch.Tensor) -> None:
+        """Maintain the negative sample queue used for contrastive training."""
+        keys = nn.functional.normalize(keys, dim=1)
+        batch_size = keys.shape[0]
+        if batch_size == 0:
+            return
+
+        ptr = int(self.queue_ptr.item())
+        keys_t = keys.transpose(0, 1).contiguous()
+
+        if batch_size >= self.queue_size:
+            keys_t = keys_t[:, -self.queue_size :]
+            batch_size = keys_t.shape[1]
+
+        end_ptr = ptr + batch_size
+        if end_ptr <= self.queue_size:
+            self.queue[:, ptr:end_ptr] = keys_t
+            ptr = end_ptr % self.queue_size
+        else:
+            first_part = self.queue_size - ptr
+            self.queue[:, ptr:] = keys_t[:, :first_part]
+            remaining = batch_size - first_part
+            if remaining > 0:
+                self.queue[:, :remaining] = keys_t[:, first_part:first_part + remaining]
+            ptr = remaining % self.queue_size
+
+        self.queue_ptr[0] = ptr
 
 
 def resolve_path(base: Path, candidate: Optional[Path | str]) -> Optional[Path]:
@@ -202,40 +177,21 @@ def resolve_path(base: Path, candidate: Optional[Path | str]) -> Optional[Path]:
     return candidate if candidate.is_absolute() else (base / candidate).resolve()
 
 
-def parse_key_value_pairs(pairs: Optional[Sequence[str]]) -> dict:
-    if not pairs:
-        return {}
-    result: dict[str, str] = {}
-    for item in pairs:
-        if "=" not in item:
-            raise ValueError(f"Expected key=value format, got: {item}")
-        key, value = item.split("=", maxsplit=1)
-        result[key.strip()] = value.strip()
-    return result
-
-
 def prepare_dataset(
     config_path: Path,
-    cronos_config_arg: Optional[Path],
     config_data: dict,
-    *,
-    split_override: Optional[str],
-    patch_length_override: Optional[int],
-    load_kwargs_override: Optional[dict],
 ) -> Dataset:
-    cronos_config = cronos_config_arg or config_data.get("cronos_config")
+    cronos_config = config_data.get("cronos_config")
     if cronos_config is None:
         cronos_config = config_path.parent / "cronos_loader_example.yaml"
     cronos_config = resolve_path(config_path.parent, cronos_config)
     if cronos_config is None or not cronos_config.exists():
         raise FileNotFoundError(f"Cronos loader config not found: {cronos_config}")
 
-    split = split_override or config_data.get("split")
-    patch_length = patch_length_override or config_data.get("patch_length")
-    load_kwargs = {}
-    load_kwargs.update(config_data.get("load_kwargs", {}) or {})
-    if load_kwargs_override:
-        load_kwargs.update(load_kwargs_override)
+    split = config_data.get("split")
+    patch_length = config_data.get("patch_length")
+    load_kwargs = dict(config_data.get("load_kwargs", {}) or {})
+    normalize = config_data.get("normalize", True)
 
     # Set offline cache directory to the local data directory
     data_dir = config_path.parent.parent / "data"
@@ -249,6 +205,7 @@ def prepare_dataset(
         split=split,
         patch_length=patch_length,
         load_kwargs=load_kwargs,
+        normalize=normalize,
     )
     return dataset
 
@@ -318,12 +275,6 @@ def resolve_checkpoint_dir(config: tu.ExperimentConfig, cfg_path: Path, override
     return u.prepare_run_directory(base_dir, config.experiment_name)
 
 
-def coalesce_bool(value: Optional[int], default: bool) -> bool:
-    if value is None:
-        return default
-    return bool(int(value))
-
-
 def run_moco_training(
     model: MoCoModel,
     optimizer: torch.optim.Optimizer,
@@ -341,7 +292,8 @@ def run_moco_training(
     """Run MoCo training loop."""
     
     model.to(device)
-    scaler = torch.cuda.amp.GradScaler() if use_amp else None
+    scaler = torch.amp.GradScaler(enabled=use_amp, device=device)
+    autocast_device = device.type if device.type in {"cuda", "cpu", "hip", "xpu"} else "cuda"
     
     best_loss = float('inf')
     
@@ -361,28 +313,21 @@ def run_moco_training(
             # For MoCo, we need query and key samples
             # Simple approach: use the same sequence as both query and key (self-supervised)
             # In practice, you might want to apply different augmentations
-            x_q = seq
-            x_k = seq  # You could apply different augmentations here
-            
-            if use_amp:
-                with torch.amp.autocast(device_type="cuda"):
-                    logits, labels, loss = model(x_q, x_k)
-                scaler.scale(loss).backward()
-            
-            if max_grad_norm is not None:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-            
-                scaler.step(optimizer)
-                scaler.update()
-            else:
+            x_q = seq.swapaxes(1,2)
+            x_k = seq.swapaxes(1,2)
+
+            with torch.amp.autocast(device_type=autocast_device, enabled=scaler.is_enabled()):
                 logits, labels, loss = model(x_q, x_k)
-                loss.backward()
-            
+
+            scaler.scale(loss).backward()
+
             if max_grad_norm is not None:
+                if scaler.is_enabled():
+                    scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-            
-            optimizer.step()
+
+            scaler.step(optimizer)
+            scaler.update()
             
             train_loss += loss.item()
             num_batches += 1
@@ -402,13 +347,10 @@ def run_moco_training(
             with torch.no_grad():
                 for batch in val_loader:
                     seq = u.prepare_sequence(u.extract_sequence(batch)).to(device)
-                    x_q = seq
-                    x_k = seq
+                    x_q = seq.swapaxes(1,2)
+                    x_k = seq.swapaxes(1,2)
                     
-                    if use_amp:
-                        with torch.cuda.amp.autocast():
-                            logits, labels, loss = model(x_q, x_k)
-                    else:
+                    with torch.amp.autocast(device_type=autocast_device, enabled=scaler.is_enabled()):
                         logits, labels, loss = model(x_q, x_k)
                     
                     val_loss += loss.item()
@@ -456,10 +398,10 @@ def run_moco_training(
 
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
-    args = parse_args(argv)
-    config_path = resolve_path(Path.cwd(), args.config)
+    default_cfg = Path(__file__).resolve().parent / "configs" / "mamba_encoder.yaml"
+    config_path = resolve_path(Path.cwd(), default_cfg)
     if config_path is None or not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {args.config}")
+        raise FileNotFoundError(f"Configuration file not found: {default_cfg}")
 
     config = tu.load_config(config_path)
     tu.set_seed(config.seed)
@@ -467,25 +409,18 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     print(f"Using device: {device}")
 
     data_cfg = config.data
-    dataset = prepare_dataset(
-        config_path,
-        args.cronos_config,
-        data_cfg,
-        split_override=args.split,
-        patch_length_override=args.patch_length,
-        load_kwargs_override=parse_key_value_pairs(args.load_kwargs),
-    )
+    dataset = prepare_dataset(config_path, data_cfg)
 
-    val_ratio = args.val_ratio if args.val_ratio is not None else float(data_cfg.get("val_ratio", 0.1))
+    val_ratio = float(data_cfg.get("val_ratio", 0.1))
     train_dataset, val_dataset = split_dataset(dataset, val_ratio=val_ratio, seed=config.seed)
 
-    batch_size = args.batch_size if args.batch_size is not None else int(data_cfg.get("batch_size", 128))
-    val_batch_size = args.val_batch_size if args.val_batch_size is not None else int(data_cfg.get("val_batch_size", 256))
-    num_workers = args.num_workers if args.num_workers is not None else int(data_cfg.get("num_workers", 0))
-    pin_memory = coalesce_bool(args.pin_memory, bool(data_cfg.get("pin_memory", False)))
+    batch_size = int(data_cfg.get("batch_size", 128))
+    val_batch_size = int(data_cfg.get("val_batch_size", 256))
+    num_workers = int(data_cfg.get("num_workers", 0))
+    pin_memory = bool(data_cfg.get("pin_memory", False))
 
     # Ensure batch size is compatible with queue size
-    queue_size = args.queue_size if args.queue_size is not None else int(config.training.get("queue_size", 65536))
+    queue_size = int(config.training.get("queue_size", 65536))
     if queue_size % batch_size != 0:
         print(f"Warning: Queue size {queue_size} is not divisible by batch size {batch_size}. Adjusting queue size to {(queue_size // batch_size) * batch_size}")
         queue_size = (queue_size // batch_size) * batch_size
@@ -504,8 +439,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     encoder = tu.build_encoder_from_config(config.model)
     
     # MoCo specific parameters
-    temperature = args.temperature if args.temperature is not None else float(config.training.get("temperature", 0.07))
-    momentum = args.momentum if args.momentum is not None else float(config.training.get("momentum", 0.999))
+    temperature = float(config.training.get("temperature", 0.07))
+    momentum = float(config.training.get("momentum", 0.999))
     
     model = MoCoModel(
         encoder=encoder,
@@ -517,10 +452,10 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     
     optimizer = tu.build_optimizer(model, config.training)
 
-    epochs = args.epochs if args.epochs is not None else int(config.training.get("epochs", 100))
+    epochs = int(config.training.get("epochs", 100))
     scheduler = tu.build_scheduler(optimizer, config.training, epochs)
 
-    checkpoint_dir = resolve_checkpoint_dir(config, config_path, args.checkpoint_dir)
+    checkpoint_dir = resolve_checkpoint_dir(config, config_path, None)
     print(f"Checkpoints: {checkpoint_dir}")
 
     val_loader = val_loader if val_loader is not None and len(val_loader) > 0 else None

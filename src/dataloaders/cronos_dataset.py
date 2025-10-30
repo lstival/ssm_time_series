@@ -42,6 +42,57 @@ def _cast_target_dtype(ds: datasets.Dataset, dtype: str) -> datasets.Dataset:
         return ds
 
 
+def _normalize_per_series(
+    ds: datasets.Dataset,
+    *,
+    column: str = "target",
+    epsilon: float = 1e-12,
+) -> datasets.Dataset:
+    if column not in ds.column_names:
+        return ds
+
+    feature = ds.features[column]
+    if isinstance(feature, datasets.Sequence) and isinstance(feature.feature, datasets.Value):
+        target_dtype = np.dtype(feature.feature.dtype)
+    elif isinstance(feature, datasets.Value):
+        target_dtype = np.dtype(feature.dtype)
+    else:
+        target_dtype = np.dtype(np.float64)
+
+    if getattr(target_dtype, "kind", "f") not in ("f", "c"):
+        output_dtype = np.dtype(np.float64)
+    else:
+        output_dtype = target_dtype
+
+    def _normalize_batch(batch):
+        normalized = []
+        for seq in batch[column]:
+            arr = np.asarray(seq, dtype=np.float64)
+            if arr.size == 0:
+                normalized.append(arr.astype(output_dtype).tolist())
+                continue
+
+            seq_min = np.nanmin(arr)
+            seq_max = np.nanmax(arr)
+
+            if np.isnan(seq_min) or np.isnan(seq_max):
+                normalized.append(arr.astype(output_dtype).tolist())
+                continue
+
+            range_val = seq_max - seq_min
+            if abs(range_val) < epsilon:
+                normalized_arr = np.zeros_like(arr, dtype=np.float64)
+            else:
+                normalized_arr = (arr - seq_min) / range_val
+
+            normalized.append(normalized_arr.astype(output_dtype).tolist())
+
+        return {column: normalized}
+
+    # Use batched mapping for efficiency; keep original columns untouched.
+    return ds.map(_normalize_batch, batched=True, keep_in_memory=False)
+
+
 def load_chronos_datasets(
     dataset_names: Sequence[str],
     split: str = "train",
@@ -51,6 +102,8 @@ def load_chronos_datasets(
     target_dtype: Optional[str] = "float64",
     offline_cache_dir: Optional[str] = "/data",
     force_offline: bool = True,
+    normalize_per_series: bool = False,
+    normalization_epsilon: float = 1e-12,
     **load_kwargs,
 ) -> datasets.Dataset:
     """Load and concatenate Chronos datasets from Hugging Face.
@@ -66,6 +119,8 @@ def load_chronos_datasets(
                           to Hugging Face. If None, uses default HF cache or environment
                           variable HF_DATASETS_CACHE.
         force_offline: If True, only use cached datasets and don't attempt online access (default: True)
+    normalize_per_series: If True, scale each time series using its own min/max (default: False)
+    normalization_epsilon: Minimum range value before treating a series as constant (default: 1e-12)
         **load_kwargs: Additional arguments passed to datasets.load_dataset
         
     Returns:
@@ -149,6 +204,9 @@ def load_chronos_datasets(
             # Convert the data for float64 (allow concat)
             if target_dtype is not None:
                 ds = _cast_target_dtype(ds, target_dtype)
+
+            if normalize_per_series:
+                ds = _normalize_per_series(ds, column="target", epsilon=normalization_epsilon)
 
             # Check if the dataset have the "target" colummn
             if "target" not in ds.column_names:
@@ -360,7 +418,7 @@ if __name__ == "__main__":
 
     # Example 1: Load from default cache (online if needed)
     print("Loading from default cache...")
-    dataset = load_chronos_datasets(datasets_to_load, target_dtype="float64")
+    dataset = load_chronos_datasets(datasets_to_load, target_dtype="float64", normalize_per_series=True)
     print(to_pandas(dataset).head())
     print(dataset)
     

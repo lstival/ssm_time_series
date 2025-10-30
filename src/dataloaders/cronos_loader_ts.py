@@ -89,6 +89,7 @@ def load_cronos_time_series_dataset(
     split: Optional[str] = None,
     patch_length: Optional[int] = None,
     target_dtype: Optional[str] = None,
+    normalize: Optional[bool] = True,
     load_kwargs: Optional[Dict[str, Any]] = None,
 ) -> ChronosTimeSeriesDataset:
     """Load Chronos datasets and convert them into a patched torch dataset."""
@@ -120,6 +121,7 @@ def load_cronos_time_series_dataset(
         dataset_names,
         split=resolved_split,
         target_dtype=resolved_target_dtype,
+        normalize_per_series=normalize,
         **resolved_load_kwargs,
     )
 

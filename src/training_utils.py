@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 
 from models.mamba_encoder import MambaEncoder
 from time_series_loader import TimeSeriesDataModule
+from models.mamba_visual_encoder import MambaVisualEncoder
 
 
 @dataclass
@@ -96,6 +97,34 @@ def build_encoder_from_config(model_cfg: Dict[str, Any]) -> MambaEncoder:
         dropout=dropout,
     )
 
+def build_visual_encoder_from_config(model_cfg: Dict[str, Any]) -> MambaVisualEncoder:
+    cfg_get = model_cfg.get
+    input_channels = int(cfg_get("input_dim", 3))
+    model_dim = int(cfg_get("model_dim", 128))
+    embedding_dim = int(cfg_get("embedding_dim", model_dim))
+    depth = int(cfg_get("depth", 6))
+    state_dim = int(cfg_get("state_dim", cfg_get("d_state", 16)))
+    conv_kernel = max(1, int(cfg_get("conv_kernel", cfg_get("d_conv", 3))))
+    expand = float(cfg_get("expand_factor", cfg_get("mlp_ratio", 1.5)))
+    dropout = float(cfg_get("dropout", 0.05))
+    pooling = str(cfg_get("pooling", "cls")).lower()
+
+    if pooling not in {"mean", "last", "cls"}:
+        raise ValueError(f"Unsupported pooling mode: {pooling}")
+
+    expand = max(1.0, expand)
+
+    return MambaVisualEncoder(
+        input_dim=input_channels,
+        model_dim=model_dim,
+        depth=depth,
+        state_dim=state_dim,
+        conv_kernel=conv_kernel,
+        expand_factor=expand,
+        embedding_dim=embedding_dim,
+        pooling=pooling,
+        dropout=dropout,
+    )
 
 def build_optimizer(model: torch.nn.Module, training_cfg: Dict[str, Any]) -> Optimizer:
     lr = float(training_cfg.get("learning_rate", 1e-3))

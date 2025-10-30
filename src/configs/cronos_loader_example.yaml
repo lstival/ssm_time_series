@@ -27,7 +27,7 @@ datasets_to_load:
   # - uber_tlc_daily
   # - uber_tlc_hourly
   # - wind_farms_hourly
-  # - wind_farms_daily
+  - wind_farms_daily
   # - dominick
   # - electricity_15min
   # - solar_1h
@@ -35,3 +35,4 @@ datasets_to_load:
 split: train
 patch_length: 384
 target_dtype: float64
+normalize: true
