@@ -1,6 +1,6 @@
 # Minimal configuration for the Chronos loader example.
 datasets_to_load:
-  - m4_yearly
+  # - m4_yearly
   # - m4_hourly
   # - m4_monthly
   # - m4_yearly

@@ -16,21 +16,6 @@ from dataloaders.cronos_loader_ts import load_cronos_time_series_dataset
 from tqdm import tqdm
 
 
-class MoCoProjectionHead(nn.Module):
-    """Projection head for MoCo model."""
-    
-    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int):
-        super().__init__()
-        self.projection = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, output_dim)
-        )
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.projection(x)
-
-
 class MoCoModel(nn.Module):
     """MoCo model with momentum-updated key encoder and queue."""
     
@@ -58,7 +43,7 @@ class MoCoModel(nn.Module):
         encoder_output_dim = self.encoder_k.final_norm._parameters["weight"].shape[0]
         
         # Projection heads
-        self.projection_head_q = MoCoProjectionHead(encoder_output_dim, encoder_output_dim, 128)
+        self.projection_head_q = u.MoCoProjectionHead(encoder_output_dim, encoder_output_dim, 128)
         self.projection_head_k = copy.deepcopy(self.projection_head_q)
         
         # Disable gradients for key projection head

@@ -22,6 +22,20 @@ from time_series_loader import TimeSeriesDataModule
 
 BatchType = Union[Tuple[torch.Tensor, ...], Dict[str, torch.Tensor], torch.Tensor]
 
+class MoCoProjectionHead(nn.Module):
+    """Projection head for MoCo model."""
+    
+    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int):
+        super().__init__()
+        self.projection = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim)
+        )
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.projection(x)
+
 
 def default_device() -> torch.device:
     """Return CUDA if available, otherwise CPU."""
@@ -308,6 +322,135 @@ def prepare_run_directory(base_dir: str | Path, prefix: str) -> Path:
     return run_dir
 
 
+def mask_time_series(
+    x: torch.Tensor,
+    mask_prob: float = 0.75,
+    mask_value: float = 0.0,
+    exact_fraction: bool = False,
+    seed: Optional[int] = None,
+) -> torch.Tensor:
+    """Return a masked version of a batch of time-series shaped (B, 1, 384).
+
+    By default each element is independently masked with probability `mask_prob`
+    (so ~mask_prob fraction masked). If `exact_fraction` is True each sample
+    will have exactly floor(mask_prob * L) positions masked (randomly chosen).
+    """
+    if not torch.is_tensor(x):
+        raise TypeError("x must be a torch.Tensor")
+    if x.dim() != 3:
+        raise ValueError("x must have shape (B, C, L)")
+    B, C, L = x.shape
+    
+    device = x.device
+    if seed is not None:
+        # optional deterministic behavior
+        gen = torch.Generator(device=device)
+        gen.manual_seed(int(seed))
+    else:
+        gen = None
+
+    if exact_fraction:
+        k = max(1, int((mask_prob) * L))
+        mask = torch.zeros((B, L), dtype=torch.bool, device=device)
+        for i in range(B):
+            if gen is None:
+                perm = torch.randperm(L, device=device)
+            else:
+                perm = torch.randperm(L, generator=gen, device=device)
+            mask[i, perm[:k]] = True
+        mask = mask.unsqueeze(1)
+    else:
+        if gen is None:
+            mask = torch.rand((B, C, L), device=device) < float(mask_prob)
+        else:
+            mask = torch.rand((B, C, L), generator=gen, device=device) < float(mask_prob)
+
+    return x.masked_fill(mask, float(mask_value))
+
+
+def make_positive_view(
+    x: torch.Tensor,
+    *,
+    noise_std: float = 0.1,
+    jitter_std: float = 0.1,
+    mask_prob: float = 0.20,
+    scale_range: tuple[float, float] = (0.9, 1.1),
+    time_dropout_prob: float = 0.1,
+    max_dropout_ratio: float = 0.2,
+    permute_segments: int = 1,
+) -> torch.Tensor:
+    """Create an augmented positive view from input time-series tensor.
+
+    Expected input shape: (batch, channels, length).
+    Augmentations applied (in order):
+      - additive gaussian noise
+      - small jitter (additional gaussian)
+      - per-(sample,channel) scaling
+      - random element masking
+      - optional random temporal dropout (contiguous segment zeroed)
+      - optional permutation of contiguous segments
+
+    Returns a new tensor (does not modify input in-place).
+    """
+    if not torch.is_tensor(x):
+        raise TypeError("x must be a torch.Tensor")
+    if x.dim() != 3:
+        raise ValueError("x must have shape (batch, channels, length)")
+
+    out = x.clone()
+
+    # additive noise + jitter
+    if noise_std > 0:
+        out = out + noise_std * torch.randn_like(out)
+    if jitter_std > 0:
+        out = out + jitter_std * torch.randn_like(out)
+
+    # per-sample, per-channel scaling
+    b, c, L = out.shape
+    device = out.device
+    scale_min, scale_max = scale_range
+    if not (scale_min == 1.0 and scale_max == 1.0):
+        scales = torch.empty((b, c, 1), device=device).uniform_(scale_min, scale_max)
+        out = out * scales
+
+    # random element masking
+    if mask_prob > 0:
+        mask = torch.rand_like(out) < float(mask_prob)
+        out = out.masked_fill(mask, 0.0)
+
+    # time dropout: zero out a contiguous segment per sample with some probability
+    if time_dropout_prob > 0 and L > 0:
+        for i in range(b):
+            if torch.rand(1, device=device).item() < float(time_dropout_prob):
+                max_len = max(1, int(L * float(max_dropout_ratio)))
+                drop_len = torch.randint(1, max_len + 1, (1,), device=device).item()
+                start = torch.randint(0, L - drop_len + 1, (1,), device=device).item()
+                out[i, :, start : start + drop_len] = 0.0
+
+    # permutation of segments: split into K segments and shuffle their order
+    if permute_segments and L > 1:
+        K = int(permute_segments)
+        K = max(2, min(K, L))  # at least 2 segments, at most L
+        # compute segment boundaries (as even as possible)
+        sizes = [L // K] * K
+        for idx in range(L % K):
+            sizes[idx] += 1
+        boundaries = []
+        pos = 0
+        for s in sizes:
+            boundaries.append((pos, pos + s))
+            pos += s
+        perm = torch.randperm(K, device=device).tolist()
+        permuted = torch.empty_like(out)
+        for si, pj in enumerate(perm):
+            start_src, end_src = boundaries[pj]
+            start_dst, end_dst = boundaries[si]
+            permuted[:, :, start_dst:end_dst] = out[:, :, start_src:end_src]
+        out = permuted
+
+    return out
+
+
 if __name__ == "__main__":
     # Example usage for ICML and Chronos datasets.
     class SimpleEncoder(nn.Module):
@@ -389,5 +532,6 @@ if __name__ == "__main__":
             use_amp=False,
         )
 
-    example_icml()
-    example_cronos()
+    # example_icml()
+    # example_cronos()
+    

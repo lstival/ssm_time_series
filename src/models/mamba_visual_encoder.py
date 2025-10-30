@@ -110,7 +110,6 @@ class Tokenizer:
 
         return tokens
 
-# Backwards-compatible convenience: allow using tokenize_sequence(...) like before.
 def tokenize_sequence(
     x: torch.Tensor,
     *,
