@@ -1,16 +1,12 @@
-"""Lightweight cosine-similarity training loop using Chronos datasets."""
+"""Lightweight CLIP-style training loop using Chronos datasets."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable, Optional
 
-import torch
-import torch.nn as nn
-
 import training_utils as tu
 import util as u
-from tqdm.auto import tqdm
 from moco_training import (
     build_dataloaders,
     infer_feature_dim,
@@ -19,177 +15,6 @@ from moco_training import (
     split_dataset,
     resolve_checkpoint_dir
 )
-
-def clip_contrastive_loss(
-    xq: torch.Tensor, xk: torch.Tensor, *, temperature: float = 0.07
-) -> torch.Tensor:
-    """CLIP-style symmetric cross-entropy loss.
-
-    xq, xk: (batch, dim) feature tensors. The i-th row in xq should match the i-th row in xk.
-    Returns scalar loss = 0.5 * (CE(logits_qk, targets) + CE(logits_kq, targets))
-    where logits_qk = xq @ xk.T / temperature.
-    """
-    if not torch.is_tensor(xq) or not torch.is_tensor(xk):
-        raise TypeError("xq and xk must be torch.Tensors")
-    if xq.dim() != 2 or xk.dim() != 2:
-        raise ValueError("xq and xk must be 2D tensors of shape (batch, dim)")
-    if xq.shape[0] != xk.shape[0]:
-        raise ValueError("xq and xk must have the same batch size")
-
-    # normalize to unit length (important for cosine-similarity logits)
-    q = nn.functional.normalize(xq, dim=1)
-    k = nn.functional.normalize(xk, dim=1)
-
-    # logits: (batch, batch)
-    logits = torch.matmul(q, k.transpose(0, 1)) / float(temperature)
-
-    targets = torch.arange(logits.size(0), device=logits.device, dtype=torch.long).to(xq.device)
-
-    loss_q = nn.functional.cross_entropy(logits, targets)
-    loss_k = nn.functional.cross_entropy(logits.transpose(0, 1), targets)
-
-    return 0.5 * (loss_q + loss_k)
-
-
-def log_and_save(optimizer, val_loader, epoch, epochs, train_loss, val_loss, checkpoint_dir, model):
-        # Logging
-        current_lr = optimizer.param_groups[0]['lr']
-        if val_loader is not None:
-            print(f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, LR: {current_lr:.6f}")
-        else:
-            print(f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.4f}, LR: {current_lr:.6f}")
-        
-        # Save checkpoints
-        is_best = val_loss < best_loss if val_loader is not None else train_loss < best_loss
-        if is_best:
-            best_loss = val_loss if val_loader is not None else train_loss
-        
-        checkpoint_path = checkpoint_dir / "best.pt"
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': best_loss,
-        }, checkpoint_path)
-        print(f"Saved best checkpoint to {checkpoint_path}")
-    
-
-        checkpoint_path = checkpoint_dir / "last.pt"
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': val_loss if val_loader is not None else train_loss,
-        }, checkpoint_path)
-
-
-def run_cosine_training(
-    *,
-    encoder: nn.Module,
-    visual_encoder: nn.Module,
-    projection_head: nn.Module,
-    visual_projection_head: nn.Module,
-    train_loader,
-    val_loader,
-    device: torch.device,
-    checkpoint_dir,
-    epochs: int = 2,
-    noise_std: float = 0.01,
-) -> None:
-    """Training loop that maximizes cosine similarity between two noisy views.
-
-    Optimizer: AdamW with lr=1e-3.
-    Loss: 1 - mean(cosine_similarity(q_proj, k_proj))
-    """
-
-    encoder.to(device).train()
-    visual_encoder.to(device).train()
-    projection_head.to(device).train()
-    visual_projection_head.to(device).train()
-
-    optimizer = torch.optim.AdamW(
-        list(encoder.parameters()) + list(visual_encoder.parameters()) +
-        list(projection_head.parameters()) + list(visual_projection_head.parameters()),
-        lr=1e-3
-    )
-
-    for epoch in range(epochs):
-        epoch_loss = 0.0
-        batches = 0
-
-        total = len(train_loader) if hasattr(train_loader, "__len__") else None
-        desc = f"Epoch {epoch + 1}/{epochs}"
-        with tqdm(train_loader, desc=desc, total=total) as pbar:
-            for batch in pbar:
-                seq = u.prepare_sequence(u.extract_sequence(batch)).to(device)
-
-                x_q = seq.swapaxes(1, 2)
-                noise = noise_std * torch.randn_like(x_q)
-                x_k = x_q + noise
-                x_k = u.make_positive_view(x_k)
-
-                optimizer.zero_grad()
-
-                q_encoded = encoder(x_q)
-                k_encoded = visual_encoder(x_k)
-
-                q_proj = projection_head(q_encoded)
-                k_proj = visual_projection_head(k_encoded)
-
-                q_proj = nn.functional.normalize(q_proj, dim=1)
-                k_proj = nn.functional.normalize(k_proj, dim=1)
-
-                # cosine_sim = nn.functional.cosine_similarity(q_proj, k_proj, dim=1)
-                # loss = (1.0 - cosine_sim).mean()
-                train_loss = clip_contrastive_loss(q_proj, k_proj)
-
-                train_loss.backward()
-                optimizer.step()
-
-                batch_loss = train_loss.item()
-                epoch_loss += batch_loss
-                batches += 1
-
-                pbar.set_postfix(batch_loss=f"{batch_loss:.4f}", avg_loss=f"{(epoch_loss / batches):.4f}")
-
-        with torch.no_grad():
-            for batch in tqdm(val_loader):
-                seq = u.prepare_sequence(u.extract_sequence(batch)).to(device)
-                x_q = seq.swapaxes(1, 2)
-                noise = noise_std * torch.randn_like(x_q)
-                x_k = x_q + noise
-                x_k = u.make_positive_view(x_k)
-
-                optimizer.zero_grad()
-
-                q_encoded = encoder(x_q)
-                k_encoded = visual_encoder(x_k)
-
-                q_proj = projection_head(q_encoded)
-                k_proj = visual_projection_head(k_encoded)
-
-                q_proj = nn.functional.normalize(q_proj, dim=1)
-                k_proj = nn.functional.normalize(k_proj, dim=1)
-
-                # cosine_sim = nn.functional.cosine_similarity(q_proj, k_proj, dim=1)
-                # loss = (1.0 - cosine_sim).mean()
-                val_loss = clip_contrastive_loss(q_proj, k_proj)
-
-        avg_loss = epoch_loss / batches if batches > 0 else float("nan")
-        print(f"Epoch {epoch + 1}/{epochs} - Average loss: {avg_loss:.4f}")
-
-        log_and_save(optimizer, val_loader, epoch, epochs, val_loss, val_loss, checkpoint_dir, q_encoded)
-        log_and_save(optimizer, val_loader, epoch, epochs, val_loss, val_loss, checkpoint_dir, k_encoded)
-
-
-def build_projection_head(encoder: nn.Module) -> nn.Module:
-    """Infer encoder output dimension and create a projection head."""
-    try:
-        output_dim = encoder.final_norm._parameters["weight"].shape[0]
-    except AttributeError as exc:
-        raise RuntimeError("Encoder is expected to expose final_norm with learnable weight") from exc
-
-    return u.MoCoProjectionHead(output_dim, output_dim, 128)
 
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
@@ -231,10 +56,10 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     encoder = tu.build_encoder_from_config(config.model)
     visual_encoder = tu.build_visual_encoder_from_config(config.model)
 
-    projection_head = build_projection_head(encoder)
-    visual_projection_head = build_projection_head(visual_encoder)
+    projection_head = u.build_projection_head(encoder)
+    visual_projection_head = u.build_projection_head(visual_encoder)
 
-    run_cosine_training(
+    u.run_clip_training(
         encoder=encoder,
         visual_encoder=visual_encoder,
         projection_head=projection_head,
@@ -243,7 +68,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         val_loader=val_loader,
         device=device,
         checkpoint_dir=checkpoint_dir,
-        epochs=2,
+        epochs=100,
     )
 
 

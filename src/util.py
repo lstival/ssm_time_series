@@ -192,6 +192,29 @@ def info_nce_loss(z1: torch.Tensor, z2: torch.Tensor, temperature: float) -> tor
     return 0.5 * (loss1 + loss2)
 
 
+def clip_contrastive_loss(
+    xq: torch.Tensor, xk: torch.Tensor, *, temperature: float = 0.07
+) -> torch.Tensor:
+    """CLIP-style symmetric cross-entropy loss for aligned pairs."""
+
+    if not torch.is_tensor(xq) or not torch.is_tensor(xk):
+        raise TypeError("xq and xk must be torch.Tensors")
+    if xq.dim() != 2 or xk.dim() != 2:
+        raise ValueError("xq and xk must have shape (batch, dim)")
+    if xq.shape[0] != xk.shape[0]:
+        raise ValueError("xq and xk must share the same batch size")
+
+    q = F.normalize(xq, dim=1)
+    k = F.normalize(xk, dim=1)
+
+    logits = torch.matmul(q, k.transpose(0, 1)) / float(temperature)
+    targets = torch.arange(logits.size(0), device=logits.device, dtype=torch.long).to(xq.device)
+
+    loss_q = F.cross_entropy(logits, targets)
+    loss_k = F.cross_entropy(logits.transpose(0, 1), targets)
+    return 0.5 * (loss_q + loss_k)
+
+
 def forward_contrastive_batch(
     model: nn.Module,
     batch: BatchType,
@@ -320,6 +343,193 @@ def prepare_run_directory(base_dir: str | Path, prefix: str) -> Path:
     run_dir = root / f"{prefix}_{timestamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
+
+
+def log_and_save(
+    optimizer: Optimizer,
+    *,
+    models: Dict[str, nn.Module],
+    epoch: int,
+    epochs: int,
+    train_loss: float,
+    val_loss: Optional[float],
+    checkpoint_dir: Path,
+    best_loss: float,
+) -> float:
+    """Log metrics and persist checkpoints for the provided models."""
+
+    if checkpoint_dir is None:
+        return best_loss
+
+    current_lr = optimizer.param_groups[0].get("lr", float("nan"))
+    if val_loss is not None:
+        print(
+            f"Epoch {epoch + 1}/{epochs} - Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, LR: {current_lr:.6f}"
+        )
+        metric = val_loss
+    else:
+        print(f"Epoch {epoch + 1}/{epochs} - Train Loss: {train_loss:.4f}, LR: {current_lr:.6f}")
+        metric = train_loss
+
+    if metric != metric:  # NaN check
+        return best_loss
+
+    is_best = metric < best_loss
+    updated_best = metric if is_best else best_loss
+
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    for name, model in models.items():
+        state = {
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "loss": metric,
+        }
+
+        best_path = checkpoint_dir / f"{name}_best.pt"
+        last_path = checkpoint_dir / f"{name}_last.pt"
+
+        if is_best:
+            torch.save(state, best_path)
+            print(f"Saved best checkpoint to {best_path}")
+
+        torch.save(state, last_path)
+
+    return updated_best
+
+
+def run_clip_training(
+    *,
+    encoder: nn.Module,
+    visual_encoder: nn.Module,
+    projection_head: nn.Module,
+    visual_projection_head: nn.Module,
+    train_loader: DataLoader,
+    val_loader: Optional[DataLoader],
+    device: torch.device,
+    checkpoint_dir: Path,
+    epochs: int = 2,
+    noise_std: float = 0.01,
+) -> None:
+    """Training loop that optimizes a CLIP-style contrastive objective."""
+
+    encoder.to(device)
+    visual_encoder.to(device)
+    projection_head.to(device)
+    visual_projection_head.to(device)
+
+    params = list(encoder.parameters())
+    params += list(visual_encoder.parameters())
+    params += list(projection_head.parameters())
+    params += list(visual_projection_head.parameters())
+
+    optimizer = torch.optim.AdamW(params, lr=1e-3)
+    best_loss = float("inf")
+
+    for epoch in range(epochs):
+        encoder.train()
+        visual_encoder.train()
+        projection_head.train()
+        visual_projection_head.train()
+
+        epoch_loss = 0.0
+        batches = 0
+
+        total = len(train_loader) if hasattr(train_loader, "__len__") else None
+        desc = f"Epoch {epoch + 1}/{epochs}"
+
+        with tqdm(train_loader, desc=desc, total=total) as pbar:
+            for batch in pbar:
+                seq = prepare_sequence(extract_sequence(batch)).to(device)
+
+                x_q = seq.swapaxes(1, 2)
+                noise = noise_std * torch.randn_like(x_q)
+                x_k = make_positive_view(x_q + noise)
+
+                optimizer.zero_grad(set_to_none=True)
+
+                q_encoded = encoder(x_q)
+                k_encoded = visual_encoder(x_k)
+
+                q_proj = F.normalize(projection_head(q_encoded), dim=1)
+                k_proj = F.normalize(visual_projection_head(k_encoded), dim=1)
+
+                loss = clip_contrastive_loss(q_proj, k_proj)
+
+                loss.backward()
+                optimizer.step()
+
+                batch_loss = float(loss.item())
+                epoch_loss += batch_loss
+                batches += 1
+                pbar.set_postfix(batch_loss=f"{batch_loss:.4f}", avg_loss=f"{(epoch_loss / batches):.4f}")
+
+        train_loss = epoch_loss / batches if batches > 0 else float("nan")
+
+        val_loss = None
+        if val_loader is not None:
+            encoder.eval()
+            visual_encoder.eval()
+            projection_head.eval()
+            visual_projection_head.eval()
+
+            val_epoch_loss = 0.0
+            val_batches = 0
+
+            with torch.no_grad():
+                for val_batch in val_loader:
+                    val_seq = prepare_sequence(extract_sequence(val_batch)).to(device)
+                    val_x_q = val_seq.swapaxes(1, 2)
+                    val_noise = noise_std * torch.randn_like(val_x_q)
+                    val_x_k = make_positive_view(val_x_q + val_noise)
+
+                    val_q_encoded = encoder(val_x_q)
+                    val_k_encoded = visual_encoder(val_x_k)
+
+                    val_q_proj = F.normalize(projection_head(val_q_encoded), dim=1)
+                    val_k_proj = F.normalize(visual_projection_head(val_k_encoded), dim=1)
+
+                    val_batch_loss = clip_contrastive_loss(val_q_proj, val_k_proj).item()
+                    val_epoch_loss += val_batch_loss
+                    val_batches += 1
+
+            if val_batches > 0:
+                val_loss = val_epoch_loss / val_batches
+
+            encoder.train()
+            visual_encoder.train()
+            projection_head.train()
+            visual_projection_head.train()
+
+        models_to_save = {
+            "time_series": encoder,
+            "visual_encoder": visual_encoder,
+            "time_series_projection": projection_head,
+            "visual_projection": visual_projection_head,
+        }
+
+        best_loss = log_and_save(
+            optimizer,
+            models=models_to_save,
+            epoch=epoch,
+            epochs=epochs,
+            train_loss=train_loss,
+            val_loss=val_loss,
+            checkpoint_dir=checkpoint_dir,
+            best_loss=best_loss,
+        )
+
+
+def build_projection_head(encoder: nn.Module) -> nn.Module:
+    """Infer encoder output dimension and create a projection head."""
+
+    try:
+        output_dim = encoder.final_norm._parameters["weight"].shape[0]
+    except AttributeError as exc:
+        raise RuntimeError("Encoder is expected to expose final_norm with learnable weight") from exc
+
+    return MoCoProjectionHead(output_dim, output_dim, 128)
 
 
 def mask_time_series(
