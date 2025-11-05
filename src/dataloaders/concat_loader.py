@@ -7,7 +7,7 @@ import os
 from typing import Dict, List, Optional, Tuple
 
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
-from data_provider.data_loader import Dataset_Custom
+from data_provider.data_loader import Dataset_Custom, Dataset_Solar, Dataset_PEMS
 
 from .utils import discover_dataset_files, split_dataset
 
@@ -22,11 +22,24 @@ def _try_make_dataset(
 ) -> Dataset:
     """Instantiate ``Dataset_Custom`` while being tolerant to optional kwargs."""
     try:
+        path = (data_path or "").lower()
+        if path.endswith(".txt"):
+            return Dataset_Solar(
+                root_path=root,
+                flag=flag,
+                data_path=data_path,
+            )
+
+        if path.endswith(".npz"):
+            return Dataset_PEMS(
+                root_path=root,
+                flag=flag,
+                data_path=data_path,
+            )
         return Dataset_Custom(
             root_path=root,
             flag=flag,
             data_path=data_path,
-            normalize=normalize,
         )
     except TypeError:
         # Backwards compatibility if ``normalize`` isn't supported.
