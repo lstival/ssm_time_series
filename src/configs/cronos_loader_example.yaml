@@ -1,36 +1,36 @@
 # Minimal configuration for the Chronos loader example.
 datasets_to_load:
-  # - m4_yearly
-  # - m4_hourly
-  # - m4_monthly
-  # - m4_yearly
-  # - monash_australian_electricity
-  # - taxi_30min
-  # - monash_traffic
-  # - monash_kdd_cup_2018
-  # - m5
-  # - mexico_city_bikes
-  # - exchange_rate
-  # - monash_car_parts
-  # - monash_covid_deaths
-  # - monash_electricity_hourly
-  # - monash_fred_md
-  # - monash_hospital
-  # - monash_m1_monthly
-  # - monash_m1_quarterly
-  # - monash_m1_yearly
-  # - monash_m3_monthly
-  # - monash_m3_quarterly
-  # - monash_m3_yearly
-  # - monash_nn5_weekly
-  # - taxi_30min
-  # - uber_tlc_daily
-  # - uber_tlc_hourly
-  # - wind_farms_hourly
+  - m4_yearly
+  - m4_hourly
+  - m4_monthly
+  - m4_yearly
+  - monash_australian_electricity
+  - taxi_30min
+  - monash_traffic
+  - monash_kdd_cup_2018
+  - m5
+  - mexico_city_bikes
+  - exchange_rate
+  - monash_car_parts
+  - monash_covid_deaths
+  - monash_electricity_hourly
+  - monash_fred_md
+  - monash_hospital
+  - monash_m1_monthly
+  - monash_m1_quarterly
+  - monash_m1_yearly
+  - monash_m3_monthly
+  - monash_m3_quarterly
+  - monash_m3_yearly
+  - monash_nn5_weekly
+  - taxi_30min
+  - uber_tlc_daily
+  - uber_tlc_hourly
+  - wind_farms_hourly
   - wind_farms_daily
-  # - dominick
-  # - electricity_15min
-  # - solar_1h
+  - dominick
+  - electricity_15min
+  - solar_1h
 
 split: train
 patch_length: 384

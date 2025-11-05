@@ -1,4 +1,4 @@
-"""Lightweight cosine-similarity training loop using Chronos datasets."""
+"""Lightweight masked autoencoder training loop using Chronos datasets."""
 
 from __future__ import annotations
 
@@ -19,36 +19,80 @@ from moco_training import (
     split_dataset,
 )
 
-def run_cosine_training(
+
+class ReconstructionDecoder(nn.Module):
+    """Simple MLP decoder that reconstructs masked sequences from embeddings."""
+
+    def __init__(
+        self,
+        *,
+        embedding_dim: int,
+        channels: int,
+        sequence_length: int,
+        hidden_dim: Optional[int] = None,
+    ) -> None:
+        super().__init__()
+        if embedding_dim <= 0:
+            raise ValueError("embedding_dim must be positive")
+        if channels <= 0:
+            raise ValueError("channels must be positive")
+        if sequence_length <= 0:
+            raise ValueError("sequence_length must be positive")
+
+        hidden_size = int(hidden_dim or max(embedding_dim * 2, channels * 8))
+        self.channels = channels
+        self.sequence_length = sequence_length
+        self.decoder = nn.Sequential(
+            nn.Linear(embedding_dim, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, channels * sequence_length),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self.decoder(x)
+        return out.view(x.size(0), self.channels, self.sequence_length)
+
+def run_mae_training(
     *,
     encoder: nn.Module,
     visual_encoder: nn.Module,
-    projection_head: nn.Module,
-    visual_projection_head: nn.Module,
+    decoder_head: nn.Module,
+    visual_decoder_head: nn.Module,
     train_loader,
     device: torch.device,
     epochs: int = 2,
     noise_std: float = 0.01,
+    time_loss_weight: float = 0.5,
+    visual_loss_weight: float = 0.5,
 ) -> None:
-    """Training loop that maximizes cosine similarity between two noisy views.
+    """Masked autoencoder training loop with weighted reconstruction losses."""
 
-    Optimizer: AdamW with lr=1e-3.
-    Loss: 1 - mean(cosine_similarity(q_proj, k_proj))
-    """
+    if time_loss_weight < 0 or visual_loss_weight < 0:
+        raise ValueError("Loss weights must be non-negative")
+    weight_total = time_loss_weight + visual_loss_weight
+    if weight_total == 0:
+        raise ValueError("At least one loss weight must be positive")
+
+    time_w = time_loss_weight / weight_total
+    visual_w = visual_loss_weight / weight_total
 
     encoder.to(device).train()
     visual_encoder.to(device).train()
-    projection_head.to(device).train()
-    visual_projection_head.to(device).train()
+    decoder_head.to(device).train()
+    visual_decoder_head.to(device).train()
 
     optimizer = torch.optim.AdamW(
-        list(encoder.parameters()) + list(visual_encoder.parameters()) +
-        list(projection_head.parameters()) + list(visual_projection_head.parameters()),
-        lr=1e-3
+        list(encoder.parameters())
+        + list(visual_encoder.parameters())
+        + list(decoder_head.parameters())
+        + list(visual_decoder_head.parameters()),
+        lr=1e-3,
     )
 
     for epoch in range(epochs):
         epoch_loss = 0.0
+        epoch_time_loss = 0.0
+        epoch_visual_loss = 0.0
         batches = 0
 
         total = len(train_loader) if hasattr(train_loader, "__len__") else None
@@ -57,50 +101,74 @@ def run_cosine_training(
             for batch in pbar:
                 seq = u.prepare_sequence(u.extract_sequence(batch)).to(device)
 
-                x_q = seq.swapaxes(1, 2)
-                noise = noise_std * torch.randn_like(x_q)
-                x_k = x_q + noise
-                x_k = u.make_positive_view(x_k)
+                series_view = seq.swapaxes(1, 2)
+                positive_view = u.make_positive_view(
+                    series_view + noise_std * torch.randn_like(series_view),
+                    noise_std=noise_std,
+                )
+
+                time_target = series_view
+                visual_target = positive_view
 
                 optimizer.zero_grad()
 
-                x_q = u.mask_time_series(x_q)
-                x_k = u.mask_time_series(x_k)
+                masked_time = u.mask_time_series(series_view)
+                masked_visual = u.mask_time_series(positive_view)
 
-                q_encoded = encoder(x_q)
-                k_encoded = visual_encoder(x_k)
+                time_encoded = encoder(masked_time)
+                visual_encoded = visual_encoder(masked_visual)
 
-                q_proj = projection_head(q_encoded)
-                k_proj = visual_projection_head(k_encoded)
+                time_recon = decoder_head(time_encoded)
+                visual_recon = visual_decoder_head(visual_encoded)
 
-                q_proj = nn.functional.normalize(q_proj, dim=1)
-                k_proj = nn.functional.normalize(k_proj, dim=1)
-
-                cosine_sim = nn.functional.cosine_similarity(q_proj, k_proj, dim=1)
-                loss = (1.0 - cosine_sim).mean()
-                # loss = clip_contrastive_loss(q_proj, k_proj)
+                time_loss = nn.functional.mse_loss(time_recon, time_target)
+                visual_loss = nn.functional.mse_loss(visual_recon, visual_target)
+                loss = time_w * time_loss + visual_w * visual_loss
 
                 loss.backward()
                 optimizer.step()
 
-                batch_loss = loss.item()
+                batch_loss = float(loss.item())
                 epoch_loss += batch_loss
+                epoch_time_loss += float(time_loss.item())
+                epoch_visual_loss += float(visual_loss.item())
                 batches += 1
 
-                pbar.set_postfix(batch_loss=f"{batch_loss:.4f}", avg_loss=f"{(epoch_loss / batches):.4f}")
+                pbar.set_postfix(
+                    total_loss=f"{(epoch_loss / batches):.4f}",
+                    time_loss=f"{(epoch_time_loss / batches):.4f}",
+                    visual_loss=f"{(epoch_visual_loss / batches):.4f}",
+                )
 
-        avg_loss = epoch_loss / batches if batches > 0 else float("nan")
-        print(f"Epoch {epoch + 1}/{epochs} - Average loss: {avg_loss:.4f}")
+        if batches > 0:
+            print(
+                f"Epoch {epoch + 1}/{epochs} - Total: {epoch_loss / batches:.4f} | "
+                f"Time: {epoch_time_loss / batches:.4f} | Visual: {epoch_visual_loss / batches:.4f}"
+            )
+        else:
+            print(f"Epoch {epoch + 1}/{epochs} - no batches processed")
 
 
-def build_projection_head(encoder: nn.Module) -> nn.Module:
-    """Infer encoder output dimension and create a projection head."""
+def build_decoder_head(
+    encoder: nn.Module,
+    *,
+    channels: int,
+    sequence_length: int,
+    hidden_dim: Optional[int] = None,
+) -> nn.Module:
+    """Infer encoder embedding size and create a reconstruction decoder."""
+
     try:
-        output_dim = encoder.final_norm._parameters["weight"].shape[0]
+        embedding_dim = encoder.output_proj.out_features
     except AttributeError as exc:
-        raise RuntimeError("Encoder is expected to expose final_norm with learnable weight") from exc
+        raise RuntimeError("Encoder is expected to expose output_proj layer with out_features") from exc
 
-    return u.MoCoProjectionHead(output_dim, output_dim, 128)
+    return ReconstructionDecoder(
+        embedding_dim=embedding_dim,
+        channels=channels,
+        sequence_length=sequence_length,
+        hidden_dim=hidden_dim,
+    )
 
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
@@ -139,17 +207,46 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     encoder = tu.build_encoder_from_config(config.model)
     visual_encoder = tu.build_visual_encoder_from_config(config.model)
 
-    projection_head = build_projection_head(encoder)
-    visual_projection_head = build_projection_head(visual_encoder)
+    try:
+        sample_batch = next(iter(train_loader))
+    except StopIteration as exc:
+        raise RuntimeError("Training loader is empty; cannot infer reconstruction shape") from exc
 
-    run_cosine_training(
+    sample_seq = u.prepare_sequence(u.extract_sequence(sample_batch))
+    sample_view = sample_seq.swapaxes(1, 2)
+    channels = int(sample_view.shape[1])
+    sequence_length = int(sample_view.shape[2])
+    del sample_batch, sample_seq, sample_view
+    print(f"Reconstruction target shape: channels={channels}, sequence_length={sequence_length}")
+
+    decoder_head = build_decoder_head(
+        encoder,
+        channels=channels,
+        sequence_length=sequence_length,
+    )
+    visual_decoder_head = build_decoder_head(
+        visual_encoder,
+        channels=channels,
+        sequence_length=sequence_length,
+    )
+
+    training_cfg = config.training
+    epochs = int(training_cfg.get("epochs", 2))
+    time_loss_weight = float(training_cfg.get("time_loss_weight", 0.5))
+    visual_loss_weight = float(training_cfg.get("visual_loss_weight", 0.5))
+    noise_std = float(training_cfg.get("noise_std", 0.01))
+
+    run_mae_training(
         encoder=encoder,
         visual_encoder=visual_encoder,
-        projection_head=projection_head,
-        visual_projection_head=visual_projection_head,
+        decoder_head=decoder_head,
+        visual_decoder_head=visual_decoder_head,
         train_loader=train_loader,
         device=device,
-        epochs=2,
+        epochs=epochs,
+        noise_std=noise_std,
+        time_loss_weight=time_loss_weight,
+        visual_loss_weight=visual_loss_weight,
     )
 
 
