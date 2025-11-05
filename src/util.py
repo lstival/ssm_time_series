@@ -84,8 +84,6 @@ def build_time_series_dataloaders(
             num_workers=num_workers,
             pin_memory=pin_memory,
             normalize=normalize,
-            train_ratio=train_ratio,
-            val_ratio=val_ratio,
             filename=filename,
             train=train,
             val=val,

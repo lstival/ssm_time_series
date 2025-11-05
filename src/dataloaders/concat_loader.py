@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from data_provider.data_loader import Dataset_Custom, Dataset_Solar, Dataset_PEMS
@@ -12,6 +12,24 @@ from data_provider.data_loader import Dataset_Custom, Dataset_Solar, Dataset_PEM
 from .utils import discover_dataset_files, split_dataset
 
 logger = logging.getLogger(__name__)
+
+
+class DatasetLoaders(NamedTuple):
+    """Grouped dataloaders produced for a single dataset file."""
+
+    name: str
+    train: Optional[DataLoader]
+    val: Optional[DataLoader]
+    test: Optional[DataLoader]
+
+
+class _DatasetSplits(NamedTuple):
+    """Dataset-level train/val/test splits prior to dataloader construction."""
+
+    name: str
+    train: Optional[Dataset]
+    val: Optional[Dataset]
+    test: Optional[Dataset]
 
 
 def _try_make_dataset(
@@ -50,56 +68,29 @@ def _try_make_dataset(
         )
 
 
-def build_concat_dataloaders(
+def _collect_dataset_splits(
     root_path: str,
     *,
-    batch_size: int = 128,
-    val_batch_size: Optional[int] = None,
-    num_workers: int = 4,
-    pin_memory: bool = True,
     normalize: bool = True,
-    train_ratio: float = 0.8,
-    val_ratio: float = 0.2,
+    # train_ratio: float = 0.8,
+    # val_ratio: float = 0.2,
     include_train: bool = True,
     include_val: bool = True,
     include_test: bool = False,
     filename: Optional[str] = None,
     dataset_files: Optional[Dict[str, str]] = None,
-) -> Tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
-    """Create dataloaders that concatenate every dataset discovered under ``root_path``.
-
-    Args:
-        root_path: Base directory that houses dataset folders/files.
-        batch_size: Batch size for the training loader.
-        val_batch_size: Batch size for validation/test loaders. Defaults to ``batch_size`` when ``None``.
-        num_workers: Number of workers for all dataloaders.
-        pin_memory: Whether to pin memory for all dataloaders.
-        normalize: Forwarded to ``Dataset_Custom`` when supported.
-        train_ratio: Ratio used when a dataset lacks explicit validation split.
-        val_ratio: Complementary ratio (unused when explicit validation split exists).
-        include_train: Whether to build a concatenated training loader.
-        include_val: Whether to build a concatenated validation loader.
-        include_test: Whether to build a concatenated test loader.
-        dataset_files: Optional mapping of dataset identifiers to absolute paths. When
-            provided, discovery is skipped and this mapping is used instead.
-
-    Returns:
-        A tuple ``(train_loader, val_loader, test_loader)``, where any missing loader is ``None``.
-    """
-    assert abs(train_ratio + val_ratio - 1.0) < 1e-6, "train_ratio + val_ratio must equal 1.0"
-
-    effective_val_batch = val_batch_size or batch_size
+) -> Tuple[List[_DatasetSplits], Dict[str, str]]:
+    """Create dataset splits for each discovered dataset prior to building loaders."""
+    # assert abs(train_ratio + val_ratio - 1.0) < 1e-6, "train_ratio + val_ratio must equal 1.0"
 
     discovered_files = dataset_files or discover_dataset_files(root_path, filename=filename)
     if not discovered_files:
         raise FileNotFoundError(f"No dataset files discovered under '{root_path}'.")
 
-    train_parts: List[Dataset] = []
-    val_parts: List[Dataset] = []
-    test_parts: List[Dataset] = []
+    dataset_splits: List[_DatasetSplits] = []
     skipped: Dict[str, str] = {}
 
-    for relative_path, absolute_path in discovered_files.items():
+    for relative_path, absolute_path in sorted(discovered_files.items()):
         data_root = os.path.dirname(absolute_path) or "."
         file_name = os.path.basename(absolute_path)
 
@@ -116,80 +107,195 @@ def build_concat_dataloaders(
         if include_val:
             try:
                 val_dataset = _try_make_dataset(data_root, file_name, "val", normalize)
-                val_supported = True
             except Exception:
                 val_dataset = None
-                val_supported = False
-        else:
-            val_supported = False
 
         if include_test:
             try:
                 test_dataset = _try_make_dataset(data_root, file_name, "test", normalize)
-                test_supported = True
+
             except Exception:
                 test_dataset = None
-                test_supported = False
-        else:
-            test_supported = False
 
-        if include_train:
-            if include_val and not val_supported:
-                train_subset, val_subset = split_dataset(train_dataset, train_ratio)
-                if train_subset is not None:
-                    train_parts.append(train_subset)
-                if val_subset is not None:
-                    val_parts.append(val_subset)
-            else:
-                train_parts.append(train_dataset)
+        train_source: Optional[Dataset] = train_dataset if include_train else None
+        val_source: Optional[Dataset] = val_dataset if include_val else None
 
-        if include_val and val_dataset is not None:
-            val_parts.append(val_dataset)
+        test_source: Optional[Dataset] = test_dataset if include_test else None
 
-        if include_test and test_dataset is not None:
-            test_parts.append(test_dataset)
+        dataset_splits.append(
+            _DatasetSplits(
+                name=relative_path,
+                train=train_source,
+                val=val_source,
+                test=test_source,
+            )
+        )
+
+    return dataset_splits, skipped
+
+
+def _make_loader(
+    dataset: Optional[Dataset],
+    *,
+    batch_size: int,
+    shuffle: bool,
+    num_workers: int,
+    pin_memory: bool,
+) -> Optional[DataLoader]:
+    """Create a dataloader when ``dataset`` is available and non-empty."""
+    if dataset is None:
+        return None
+
+    try:
+        if len(dataset) == 0:
+            return None
+    except TypeError:
+        # Some dataset wrappers may not support ``len``; fall back to construction.
+        pass
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
+
+
+def build_concat_dataloaders(
+    root_path: str,
+    *,
+    batch_size: int = 128,
+    val_batch_size: Optional[int] = None,
+    num_workers: int = 4,
+    pin_memory: bool = True,
+    normalize: bool = True,
+    train_ratio: float = 0.8,
+    val_ratio: float = 0.2,
+    include_train: bool = True,
+    include_val: bool = True,
+    include_test: bool = False,
+    filename: Optional[str] = None,
+    dataset_files: Optional[Dict[str, str]] = None,
+) -> Tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
+    """Create dataloaders that concatenate every dataset discovered under ``root_path``."""
+    dataset_splits, skipped = _collect_dataset_splits(
+        root_path,
+        normalize=normalize,
+        train_ratio=train_ratio,
+        val_ratio=val_ratio,
+        include_train=include_train,
+        include_val=include_val,
+        include_test=include_test,
+        filename=filename,
+        dataset_files=dataset_files,
+    )
 
     if skipped:
         logger.info("Skipped datasets due to errors: %s", skipped)
+
+    effective_val_batch = val_batch_size or batch_size
+
+    train_parts: List[Dataset] = [split.train for split in dataset_splits if split.train is not None]
+    val_parts: List[Dataset] = [split.val for split in dataset_splits if split.val is not None]
+    test_parts: List[Dataset] = [split.test for split in dataset_splits if split.test is not None]
 
     combined_train = ConcatDataset(train_parts) if train_parts else None
     combined_val = ConcatDataset(val_parts) if val_parts else None
     combined_test = ConcatDataset(test_parts) if test_parts else None
 
-    train_loader = (
-        DataLoader(
-            combined_train,
+    train_loader = _make_loader(
+        combined_train,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
+
+    val_loader = _make_loader(
+        combined_val,
+        batch_size=effective_val_batch,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
+
+    test_loader = _make_loader(
+        combined_test,
+        batch_size=effective_val_batch,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
+
+    return train_loader, val_loader, test_loader
+
+
+def build_dataset_loader_list(
+    root_path: str,
+    *,
+    batch_size: int = 128,
+    val_batch_size: Optional[int] = None,
+    num_workers: int = 4,
+    pin_memory: bool = True,
+    normalize: bool = True,
+    # train_ratio: float = 0.8,
+    # val_ratio: float = 0.2,
+    include_train: bool = True,
+    include_val: bool = True,
+    include_test: bool = False,
+    filename: Optional[str] = None,
+    dataset_files: Optional[Dict[str, str]] = None,
+) -> List[DatasetLoaders]:
+    """Build a list of dataloaders, one entry per dataset under ``root_path``."""
+    dataset_splits, skipped = _collect_dataset_splits(
+        root_path,
+        normalize=normalize,
+        # train_ratio=train_ratio,
+        # val_ratio=val_ratio,
+        include_train=include_train,
+        include_val=include_val,
+        include_test=include_test,
+        filename=filename,
+        dataset_files=dataset_files,
+    )
+
+    if skipped:
+        logger.info("Skipped datasets due to errors: %s", skipped)
+
+    effective_val_batch = val_batch_size or batch_size
+
+    grouped_loaders: List[DatasetLoaders] = []
+    for split in dataset_splits:
+        train_loader = _make_loader(
+            split.train,
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
-        if combined_train is not None
-        else None
-    )
-
-    val_loader = (
-        DataLoader(
-            combined_val,
+        val_loader = _make_loader(
+            split.val,
             batch_size=effective_val_batch,
             shuffle=False,
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
-        if combined_val is not None
-        else None
-    )
-
-    test_loader = (
-        DataLoader(
-            combined_test,
+        test_loader = _make_loader(
+            split.test,
             batch_size=effective_val_batch,
             shuffle=False,
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
-        if combined_test is not None
-        else None
-    )
 
-    return train_loader, val_loader, test_loader
+        grouped_loaders.append(
+            DatasetLoaders(
+                name=split.name,
+                train=train_loader,
+                val=val_loader,
+                test=test_loader,
+            )
+        )
+
+    return grouped_loaders

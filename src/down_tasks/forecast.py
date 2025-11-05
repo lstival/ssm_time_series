@@ -22,11 +22,11 @@ from tqdm import tqdm
 import training_utils as tu
 from moco_training import resolve_path
 from util import (
-	build_time_series_dataloaders,
 	default_device,
 	log_and_save,
 	prepare_run_directory,
 )
+from time_series_loader import TimeSeriesDataModule
 
 
 class ForecastMLP(nn.Module):
@@ -267,20 +267,22 @@ def main() -> None:
 	device = default_device()
 	print(f"Using device: {device}")
 
-	train_loader, val_loader = build_time_series_dataloaders(
-		data_dir=data_dir,
-		filename=filename,
+	module = TimeSeriesDataModule(
 		dataset_name=dataset_name or "",
+		data_dir=data_dir,
 		batch_size=batch_size,
 		val_batch_size=val_batch_size,
 		num_workers=num_workers,
+		pin_memory=True,
+		normalize=True,
+		filename=filename,
+		train=True,
+		val=True,
+		test=False,
 	)
-
-	sample_batch = next(iter(train_loader))
-	seq_x, seq_y = sample_batch[0], sample_batch[1]
-	forecast_len = seq_y.size(1) * seq_y.size(2)
-	print(f"Sample shapes - seq_x: {tuple(seq_x.shape)}, seq_y: {tuple(seq_y.shape)}")
-	print(f"Flattened forecast length: {forecast_len}")
+	dataset_groups = module.get_dataloaders()
+	if not dataset_groups:
+		raise RuntimeError("No datasets available for training.")
 
 	model_cfg = dict(config.model)
 	if args.token_size is not None:
@@ -301,35 +303,69 @@ def main() -> None:
 	print(f"Loading encoder checkpoint: {checkpoint_path}")
 	load_encoder_checkpoint(encoder, checkpoint_path, device)
 
-	head = ForecastMLP(encoder.embedding_dim, args.mlp_hidden_dim, forecast_len).to(device)
-	model = ForecastRegressor(encoder=encoder, head=head, freeze_encoder=True).to(device)
-
 	criterion = nn.MSELoss()
-	optimizer = AdamW(model.head.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+	run_root = prepare_run_directory(Path(checkpoint_base), "forecast_mlp")
+	print(f"Checkpoint root directory: {run_root}")
 
-	run_dir = prepare_run_directory(Path(checkpoint_base), "forecast_mlp")
-	print(f"Checkpoint directory: {run_dir}")
+	results = []
+	for group in dataset_groups:
+		train_loader = group.train
+		if train_loader is None:
+			print(f"Skipping dataset '{group.name}' because no train loader is available.")
+			continue
 
-	best_val = float("inf")
-	for epoch in range(args.epochs):
-		print(f"\nEpoch {epoch + 1}/{args.epochs}")
-		train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
-		val_loss = evaluate(model, val_loader, criterion, device)
+		val_loader = group.val
+		try:
+			sample_batch = next(iter(train_loader))
+		except StopIteration:
+			print(f"Skipping dataset '{group.name}' because the train loader is empty.")
+			continue
 
-		best_val = log_and_save(
-			optimizer,
-			models={"forecast_mlp": model},
-			epoch=epoch,
-			epochs=args.epochs,
-			train_loss=train_loss,
-			val_loss=val_loss,
-			checkpoint_dir=run_dir,
-			best_loss=best_val,
+		seq_x, seq_y = sample_batch[0], sample_batch[1]
+		forecast_len = seq_y.size(1) * seq_y.size(2)
+		print(
+			f"Dataset '{group.name}': seq_x shape {tuple(seq_x.shape)}, seq_y shape {tuple(seq_y.shape)}, "
+			f"forecast length {forecast_len}"
 		)
 
-	final_metric = best_val if val_loader is not None else train_loss
-	print(f"\nTraining finished. Best metric: {final_metric:.4f}")
-	print(f"Artifacts saved to: {run_dir}")
+		head = ForecastMLP(encoder.embedding_dim, args.mlp_hidden_dim, forecast_len).to(device)
+		model = ForecastRegressor(encoder=encoder, head=head, freeze_encoder=True).to(device)
+		optimizer = AdamW(model.head.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+
+		dataset_slug = group.name.replace("\\", "__").replace("/", "__") or "dataset"
+		dataset_dir = run_root / dataset_slug
+		dataset_dir.mkdir(parents=True, exist_ok=True)
+		print(f"Training dataset '{group.name}' (artifacts -> {dataset_dir})")
+
+		best_val = float("inf")
+		last_train_loss = float("nan")
+		for epoch in range(args.epochs):
+			print(f"\n[{group.name}] Epoch {epoch + 1}/{args.epochs}")
+			last_train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
+			val_loss = evaluate(model, val_loader, criterion, device)
+
+			best_val = log_and_save(
+				optimizer,
+				models={"forecast_mlp": model},
+				epoch=epoch,
+				epochs=args.epochs,
+				train_loss=last_train_loss,
+				val_loss=val_loss,
+				checkpoint_dir=dataset_dir,
+				best_loss=best_val,
+			)
+
+		final_metric = best_val if val_loader is not None else last_train_loss
+		print(f"\nFinished dataset '{group.name}'. Best metric: {final_metric:.4f}")
+		print(f"Artifacts saved to: {dataset_dir}")
+		results.append((group.name, final_metric))
+
+	if not results:
+		print("No datasets were trained. Check dataset filters or availability.")
+	else:
+		print("\nTraining summary:")
+		for name, metric in results:
+			print(f"  {name}: {metric:.4f}")
 
 
 if __name__ == "__main__":
