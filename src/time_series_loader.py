@@ -109,8 +109,11 @@ class TimeSeriesDataModule:
 if __name__ == '__main__':
     # Example usage with the requested settings
     data_root = "../ICML_datasets"
+    # dataset_name = "PEMS07.npz"
+    # dataset_name = "solar_AL.txt"
+    dataset_name = "ETTh1.csv"
 
-    module = TimeSeriesDataModule(data_dir=data_root, train=False, val=False, test=True)
+    module = TimeSeriesDataModule(data_dir=data_root, dataset_name=dataset_name, batch_size=1, train=True, val=True, test=True)
     loaders = module.get_dataloaders()
     for dataset in loaders:
         if dataset.train is not None:
@@ -119,3 +122,6 @@ if __name__ == '__main__':
             print(f"{dataset.name}: {len(dataset.val)} val batches")
         if dataset.test is not None:
             print(f"{dataset.name}: {len(dataset.test)} test batches")
+    
+    aa = next(iter(dataset.train))
+    print(aa[0].shape)
