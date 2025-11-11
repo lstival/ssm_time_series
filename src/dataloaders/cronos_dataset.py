@@ -102,7 +102,7 @@ def load_chronos_datasets(
     target_dtype: Optional[str] = "float64",
     offline_cache_dir: Optional[str] = "/data",
     force_offline: bool = True,
-    normalize_per_series: bool = False,
+    normalize_per_series: bool = True,
     normalization_epsilon: float = 1e-12,
     **load_kwargs,
 ) -> datasets.Dataset:

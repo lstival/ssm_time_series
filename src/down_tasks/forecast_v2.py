@@ -27,32 +27,13 @@ import pandas as pd
 import training_utils as tu
 from util import default_device, prepare_run_directory
 from dataloaders.embedding_cache_dataset import build_embedding_cache_loader
-
-
-class MultiHorizonForecastMLP(nn.Module):
-	"""MLP that maps encoder embeddings to multiple forecast horizons."""
-
-	def __init__(self, input_dim: int, hidden_dim: int, horizons: List[int]) -> None:
-		super().__init__()
-		self.horizons = sorted(horizons)
-		self.shared_layers = nn.Sequential(
-			nn.Linear(input_dim, hidden_dim),
-			nn.ReLU(),
-			nn.Dropout(0.1),
-			nn.Linear(hidden_dim, hidden_dim),
-			nn.ReLU(),
-		)
-		# Separate output heads for each horizon
-		self.horizon_heads = nn.ModuleDict({
-			str(h): nn.Linear(hidden_dim, h) for h in self.horizons
-		})
-
-	def forward(self, x: torch.Tensor, horizon: int) -> torch.Tensor:
-		shared_out = self.shared_layers(x)
-		return self.horizon_heads[str(horizon)](shared_out)
-
-
-
+from down_tasks.forecast_utils import (
+    MultiHorizonForecastMLP,
+    safe_collate_fn,
+    evaluate_single_dataset,
+    save_evaluation_results,
+    print_evaluation_summary
+)
 
 
 def train_epoch_multi_horizon(
@@ -179,60 +160,6 @@ def discover_datasets(embedding_cache_dir: Path) -> List[Tuple[str, str, Path]]:
 	return datasets
 
 
-def evaluate_dataset_per_horizon(
-	model: MultiHorizonForecastMLP,
-	dataset_path: Path,
-	horizons: List[int],
-	device: torch.device,
-	batch_size: int,
-	num_workers: int,
-) -> Dict[int, Dict[str, float]]:
-	"""Evaluate model on a single dataset for all horizons."""
-	model.eval()
-	results = {}
-	
-	with torch.no_grad():
-		for horizon in horizons:
-			try:
-				# Load test data for this dataset and horizon
-				test_loader = build_embedding_cache_loader(
-					dataset_path,
-					horizon=horizon,
-					split="test",
-					batch_size=batch_size,
-					shuffle=False,
-					num_workers=num_workers,
-					pin_memory=device.type == "cuda",
-				)
-				
-				running_mse = 0.0
-				running_mae = 0.0
-				steps = 0
-				
-				for embeddings, targets in test_loader:
-					embeddings = embeddings.to(device, non_blocking=True)
-					targets = targets.to(device, non_blocking=True)
-					
-					predictions = model(embeddings, horizon)
-					mse_loss = torch.nn.functional.mse_loss(predictions, targets)
-					mae_loss = torch.nn.functional.l1_loss(predictions, targets)
-					
-					running_mse += float(mse_loss.item())
-					running_mae += float(mae_loss.item())
-					steps += 1
-				
-				results[horizon] = {
-					'mse': running_mse / max(1, steps),
-					'mae': running_mae / max(1, steps)
-				}
-				
-			except FileNotFoundError:
-				print(f"  No test data for horizon {horizon}")
-				results[horizon] = {'mse': float('nan'), 'mae': float('nan')}
-	
-	return results
-
-
 def validate_dataset_compatibility(datasets_info: List[Tuple[str, str, Path]], horizons: List[int]) -> Dict[str, Dict[int, Tuple[int, Tuple]]]:
     """Validate that all datasets have compatible embedding and target dimensions.
     
@@ -285,47 +212,6 @@ def validate_dataset_compatibility(datasets_info: List[Tuple[str, str, Path]], h
                 continue
     
     return dataset_groups
-
-
-def safe_collate_fn(batch):
-    """Custom collate function that handles tensor shape mismatches."""
-    try:
-        embeddings, targets = zip(*batch)
-        
-        # Check embedding shapes
-        embedding_shapes = [e.shape for e in embeddings]
-        if len(set(embedding_shapes)) > 1:
-            print(f"Warning: Embedding shape mismatch: {set(embedding_shapes)}")
-            # Use only samples with the most common shape
-            from collections import Counter
-            most_common_shape = Counter(embedding_shapes).most_common(1)[0][0]
-            filtered_batch = [(e, t) for e, t in batch if e.shape == most_common_shape]
-            if filtered_batch:
-                embeddings, targets = zip(*filtered_batch)
-            else:
-                raise RuntimeError("No valid samples in batch after filtering")
-        
-        # Check target shapes
-        target_shapes = [t.shape for t in targets]
-        if len(set(target_shapes)) > 1:
-            print(f"Warning: Target shape mismatch: {set(target_shapes)}")
-            # Use only samples with the most common shape
-            from collections import Counter
-            most_common_shape = Counter(target_shapes).most_common(1)[0][0]
-            filtered_batch = [(e, t) for e, t in batch if t.shape == most_common_shape]
-            if filtered_batch:
-                embeddings, targets = zip(*filtered_batch)
-            else:
-                raise RuntimeError("No valid samples in batch after filtering")
-        
-        return torch.stack(embeddings), torch.stack(targets)
-    
-    except Exception as e:
-        print(f"Collate error: {e}")
-        print(f"Batch info: {len(batch)} samples")
-        for i, (emb, tgt) in enumerate(batch[:3]):  # Show first 3 samples
-            print(f"  Sample {i}: embedding {emb.shape}, target {tgt.shape}")
-        raise
 
 
 def main() -> None:
@@ -495,34 +381,7 @@ def main() -> None:
     if not combined_train_loaders:
         raise RuntimeError("No training data available for any horizon")
     
-    # Update model to handle multi-feature targets
-    class MultiHorizonForecastMLP(nn.Module):
-        """MLP that maps encoder embeddings to multiple forecast horizons."""
-        
-        def __init__(self, input_dim: int, hidden_dim: int, horizons: List[int], target_features: int = 1) -> None:
-            super().__init__()
-            self.horizons = sorted(horizons)
-            self.target_features = target_features
-            self.shared_layers = nn.Sequential(
-                nn.Linear(input_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(0.1),
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-            )
-            # Separate output heads for each horizon
-            self.horizon_heads = nn.ModuleDict({
-                str(h): nn.Linear(hidden_dim, h * target_features) for h in self.horizons
-            })
-        
-        def forward(self, x: torch.Tensor, horizon: int) -> torch.Tensor:
-            batch_size = x.shape[0]
-            shared_out = self.shared_layers(x)
-            output = self.horizon_heads[str(horizon)](shared_out)
-            # Reshape to [batch_size, horizon, target_features]
-            return output.view(batch_size, horizon, self.target_features)
-    
-    # Create model with correct target dimension
+    # Create model with correct target dimension (using imported MultiHorizonForecastMLP)
     model = MultiHorizonForecastMLP(
         input_dim=embedding_dim,
         hidden_dim=args.mlp_hidden_dim,
@@ -593,9 +452,9 @@ def main() -> None:
         dataset_key = f"{group}/{dataset_name}"
         print(f"Evaluating {dataset_key}")
         
-        dataset_results = evaluate_dataset_per_horizon(
+        dataset_results = evaluate_single_dataset(
             model, dataset_path, horizons, device, 
-            args.val_batch_size or args.batch_size, min(args.num_workers, 2)  # Use fewer workers for evaluation
+            args.val_batch_size or args.batch_size, min(args.num_workers, 2), "test"  # Use fewer workers for evaluation
         )
         
         all_results[dataset_key] = dataset_results

@@ -245,16 +245,25 @@ def run_contrastive_training(
     checkpoint_dir: Optional[Path] = None,
     save_best_only: bool = True,
     save_last: bool = True,
+    initial_epoch: int = 0,
+    best_metric: Optional[float] = None,
+    scaler_state: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Train the contrastive encoder with tqdm progress bars."""
 
     model = model.to(device)
     amp_enabled = use_amp and device.type == "cuda"
     scaler = GradScaler(enabled=amp_enabled)
-    best_metric = float("inf")
+    if amp_enabled and scaler_state is not None:
+        scaler.load_state_dict(scaler_state)
+    best_metric = float("inf") if best_metric is None else float(best_metric)
 
     if checkpoint_dir is not None:
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    if initial_epoch >= epochs:
+        print(f"Requested epochs already completed ({initial_epoch}/{epochs}).")
+        return
 
     def _run_epoch(loader: DataLoader, train_mode: bool, desc: str) -> float:
         if loader is None:
@@ -298,7 +307,7 @@ def run_contrastive_training(
 
         return running / max(1, steps)
 
-    for epoch in range(epochs):
+    for epoch in range(initial_epoch, epochs):
         train_loss = _run_epoch(train_loader, True, f"Train {epoch + 1}/{epochs}")
         metric = train_loss
 
@@ -315,17 +324,23 @@ def run_contrastive_training(
             else:
                 scheduler.step()
 
+        is_new_best = metric < best_metric
+        if is_new_best:
+            best_metric = metric
+
         if checkpoint_dir is not None:
             state = {
                 "epoch": epoch + 1,
                 "model_state": model.state_dict(),
                 "optimizer_state": optimizer.state_dict(),
                 "metric": metric,
+                "best_metric": best_metric,
+                "scheduler_state": scheduler.state_dict() if scheduler is not None else None,
+                "scaler_state": scaler.state_dict() if amp_enabled else None,
             }
 
             if save_best_only:
-                if metric < best_metric:
-                    best_metric = metric
+                if is_new_best:
                     torch.save(state, checkpoint_dir / "best.pt")
             else:
                 torch.save(state, checkpoint_dir / f"epoch_{epoch + 1}.pt")
@@ -409,6 +424,9 @@ def run_clip_training(
     checkpoint_dir: Path,
     epochs: int = 2,
     noise_std: float = 0.01,
+    optimizer: Optional[Optimizer] = None,
+    initial_epoch: int = 0,
+    best_loss: Optional[float] = None,
 ) -> None:
     """Training loop that optimizes a CLIP-style contrastive objective."""
 
@@ -422,10 +440,21 @@ def run_clip_training(
     params += list(projection_head.parameters())
     params += list(visual_projection_head.parameters())
 
-    optimizer = torch.optim.AdamW(params, lr=1e-3)
-    best_loss = float("inf")
+    if optimizer is None:
+        optimizer = torch.optim.AdamW(params, lr=1e-3)
 
-    for epoch in range(epochs):
+    for state in optimizer.state.values():
+        for key, value in list(state.items()):
+            if torch.is_tensor(value):
+                state[key] = value.to(device)
+
+    best_metric = float("inf") if best_loss is None else float(best_loss)
+    start_epoch = max(0, int(initial_epoch))
+    if start_epoch >= epochs:
+        print(f"Requested epochs already completed ({start_epoch}/{epochs}).")
+        return
+
+    for epoch in range(start_epoch, epochs):
         encoder.train()
         visual_encoder.train()
         projection_head.train()
@@ -507,7 +536,7 @@ def run_clip_training(
             "visual_projection": visual_projection_head,
         }
 
-        best_loss = log_and_save(
+        best_metric = log_and_save(
             optimizer,
             models=models_to_save,
             epoch=epoch,
@@ -515,7 +544,7 @@ def run_clip_training(
             train_loss=train_loss,
             val_loss=val_loss,
             checkpoint_dir=checkpoint_dir,
-            best_loss=best_loss,
+            best_loss=best_metric,
         )
 
 

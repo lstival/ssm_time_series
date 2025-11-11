@@ -216,7 +216,7 @@ if __name__ == "__main__":
         val_split=0.2,
         batch_size=8,
         num_workers=0,
-        seed=0,
+        seed=42,
     )
 
     # Inspect a single batch from train loader
@@ -224,4 +224,35 @@ if __name__ == "__main__":
     print("target shape:", batch["target"].shape)
     print("lengths:", batch.get("lengths"))
     print("mask shape:", batch.get("mask").shape)
+	
+	# import matplotlib.pyplot as plt
 
+	# targets = batch["target"]
+	# lengths = batch.get("lengths")
+	# if lengths is None:
+	# 	lengths = torch.tensor([t.numel() for t in targets], dtype=torch.long)
+	# lengths = lengths.detach().cpu().numpy()
+
+	# rows, cols = 4, 2
+	# n_plots = min(targets.shape[0], rows * cols)
+	# fig, axes = plt.subplots(rows, cols, figsize=(targets.shape[0], 12))
+	# axes = axes.flatten()
+
+	# for i in range(n_plots):
+	# 	s = targets[i]  # torch.Tensor
+	# 	arr = s.detach().cpu().reshape(-1).numpy()
+	# 	valid_len = int(lengths[i])
+	# 	arr = arr[:valid_len]  # trim to actual length before plotting
+	# 	ax = axes[i]
+	# 	ax.plot(arr, alpha=0.8)
+	# 	ax.axhline(0.0, color="k", linestyle="--", linewidth=0.8)
+	# 	ax.axhline(1.0, color="k", linestyle="--", linewidth=0.8)
+	# 	ax.set_title(f"sample {i} (len={arr.size})")
+	# 	ax.set_xlabel("time step")
+	# 	ax.set_ylabel("value")
+
+	# for j in range(n_plots, rows * cols):
+	# 	axes[j].axis("off")
+
+	# plt.tight_layout()
+	# plt.show()

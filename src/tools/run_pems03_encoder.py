@@ -29,6 +29,7 @@ import training_utils as tu
 from moco_training import resolve_path
 from time_series_loader import TimeSeriesDataModule
 from util import default_device
+import numpy as np
 
 
 def _load_encoder(config: tu.ExperimentConfig, checkpoint_path: Path, device: torch.device) -> nn.Module:
@@ -66,7 +67,7 @@ if __name__ == "__main__":  # pragma: no cover - simple CLI entrypoint
         config=str(Path(__file__).resolve().parents[1] / "configs" / "mamba_encoder.yaml"),
         encoder_checkpoint=str(Path(__file__).resolve().parents[2] / "checkpoints" / "ts_encoder_20251101_1100" / "time_series_best.pt"),
         data_dir=None,
-        split="train",
+        split="test",
         device="auto",
         max_batches=5,
     )
@@ -90,7 +91,8 @@ if __name__ == "__main__":  # pragma: no cover - simple CLI entrypoint
 
     # Build loaders for only PEMS03.npz using current dataloader utilities
     module = TimeSeriesDataModule(
-        dataset_name="PEMS03.npz",  # matches filename basename discovered under ICML_datasets
+        # dataset_name="PEMS03.npz", # matches filename basename discovered under ICML_datasets
+        dataset_name="ETTh1.csv",
         data_dir=data_dir_final,
         batch_size=int(data_cfg.get("batch_size", 128)),
         val_batch_size=int(data_cfg.get("val_batch_size", data_cfg.get("batch_size", 128))),
@@ -98,8 +100,8 @@ if __name__ == "__main__":  # pragma: no cover - simple CLI entrypoint
         pin_memory=bool(data_cfg.get("pin_memory", device.type == "cuda")),
         normalize=bool(data_cfg.get("normalize", True)),
         filename=None,  # rely on dataset_name filter above
-        train=True,
-        val=True,
+        train=False,
+        val=False,
         test=True,
     )
     loaders = module.get_dataloaders()
@@ -153,3 +155,83 @@ if __name__ == "__main__":  # pragma: no cover - simple CLI entrypoint
                 break
 
     print(f"Done. Processed {total} samples.")
+
+    # Plot encoder outputs against the input time series for one sample
+    import matplotlib.pyplot as plt
+
+    # Ensure we have at least one batch available (use last processed batch if present)
+    if 'seq_x' not in globals() or 'out' not in globals():
+        with torch.no_grad():
+            for batch in split_loader:
+                seq_x = batch[0].to(device).float().transpose(1, 2)
+                if seq_x.shape[1] > 1:
+                    outs = []
+                    for feat_idx in range(seq_x.shape[1]):
+                        emb = encoder(seq_x[:, feat_idx, :].unsqueeze(1))
+                        outs.append(emb)
+                    stacked = torch.stack(outs, dim=-1)
+                    out = stacked.swapaxes(1, 2)
+                else:
+                    out = encoder(seq_x)
+                break
+
+    # Move tensors to CPU numpy arrays
+    seq_np = seq_x.detach().cpu().numpy()  # shape (B, F, T)
+    out_np = out.detach().cpu().numpy()
+
+    B, F, T = seq_np.shape
+
+    # Try to recover predictions in shape (B, F, T_pred)
+    pred = None
+    if out_np.ndim >= 3:
+        # exact match (B, F, T)
+        if out_np.shape[0] == B and out_np.shape[1] == F and out_np.shape[-1] == T:
+            pred = out_np
+        # match by collapsing middle dims into feature dim
+        elif out_np.shape[0] == B and out_np.shape[-1] == T:
+            mid = int(np.prod(out_np.shape[1:-1]))
+            resh = out_np.reshape(B, mid, T)
+            if mid == F:
+                pred = resh
+            elif mid % F == 0:
+                pred = resh.reshape(B, F, -1)
+        # if shape equals total elements, try reshape
+        elif out_np.size == (B * F * T):
+            pred = out_np.reshape(B, F, T)
+    elif out_np.ndim == 2 and out_np.shape[0] == B and out_np.shape[1] == F * T:
+        pred = out_np.reshape(B, F, T)
+
+    # Plot the first sample in the batch
+    sample_idx = 0
+    plt.figure(figsize=(10, 4))
+    x_in = np.arange(T)
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+
+    # Plot original input features
+    for f in range(F):
+        plt.plot(x_in, seq_np[sample_idx, f, :], color=colors[f % len(colors)], alpha=0.6, label=f"input_f{f}" if f < 8 else None)
+
+    # Plot predictions if available
+    if pred is not None:
+        T_pred = pred.shape[2]
+        # If prediction length equals input length, overlay directly
+        if T_pred == T:
+            for f in range(F):
+                plt.plot(x_in, pred[sample_idx, f, :], linestyle="--", color=colors[f % len(colors)], linewidth=2, label=f"pred_f{f}" if f < 8 else None)
+        else:
+            # If prediction is a forecast extending beyond input, append on x-axis
+            x_pred = np.arange(T, T + T_pred)
+            for f in range(F):
+                plt.plot(x_pred, pred[sample_idx, f, :], linestyle="--", color=colors[f % len(colors)], linewidth=2, label=f"pred_f{f}" if f < 8 else None)
+    else:
+        # Fallback: plot raw out values for the sample as points
+        flat = out_np[sample_idx].ravel()
+        xp = np.linspace(0, T - 1, len(flat))
+        plt.plot(xp, flat, "xk", label="raw_prediction")
+
+    plt.title("Input time series (solid) and encoder prediction (dashed)")
+    plt.xlabel("time")
+    plt.ylabel("value")
+    plt.legend(ncol=2, fontsize="small")
+    plt.tight_layout()
+    plt.show()

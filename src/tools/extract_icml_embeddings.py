@@ -35,7 +35,7 @@ from util import default_device
 @dataclass
 class Args:
     config: str = str(SRC_DIR / "configs" / "mamba_encoder.yaml")
-    encoder_checkpoint: str = str(ROOT_DIR / "checkpoints" / "ts_encoder_20251101_1100_v2" / "time_series_best.pt")
+    encoder_checkpoint: str = str(ROOT_DIR / "checkpoints" / "ts_encoder_20251101_1100" / "time_series_best.pt")
     data_dir: Optional[str] = None
     output_dir: str = str(ROOT_DIR / "embedding_cache")
     dataset_name: Optional[str] = None
