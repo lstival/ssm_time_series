@@ -32,97 +32,10 @@ from down_tasks.forecast_utils import (
     safe_collate_fn,
     evaluate_single_dataset,
     save_evaluation_results,
-    print_evaluation_summary
+    print_evaluation_summary,
+    train_epoch_multi_horizon,
+    evaluate_multi_horizon,
 )
-
-
-def train_epoch_multi_horizon(
-	model: MultiHorizonForecastMLP,
-	horizon_loaders: Dict[int, DataLoader],
-	criterion: nn.Module,
-	optimizer: torch.optim.Optimizer,
-	device: torch.device,
-) -> Dict[int, float]:
-	model.train()
-	horizon_losses = {h: 0.0 for h in horizon_loaders.keys()}
-	horizon_steps = {h: 0 for h in horizon_loaders.keys()}
-
-	# Create iterators for all horizons
-	horizon_iters = {h: iter(loader) for h, loader in horizon_loaders.items()}
-	
-	# Train on all horizons in a round-robin fashion
-	max_steps = max(len(loader) for loader in horizon_loaders.values())
-	
-	# Use non_blocking transfers for better GPU utilization
-	for step in tqdm(range(max_steps), desc="Train Multi-Horizon MLP", leave=False):
-		total_loss = 0.0
-		active_horizons = 0
-		
-		optimizer.zero_grad(set_to_none=True)
-		
-		for horizon, data_iter in horizon_iters.items():
-			try:
-				embeddings, targets = next(data_iter)
-				embeddings = embeddings.to(device, non_blocking=True)
-				targets = targets.to(device, non_blocking=True)
-				
-				predictions = model(embeddings, horizon)
-				loss = criterion(predictions, targets)
-				loss.backward()
-				
-				horizon_losses[horizon] += float(loss.item())
-				horizon_steps[horizon] += 1
-				total_loss += float(loss.item())
-				active_horizons += 1
-				
-			except StopIteration:
-				# Reset iterator when exhausted
-				horizon_iters[horizon] = iter(horizon_loaders[horizon])
-				continue
-		
-		if active_horizons > 0:
-			optimizer.step()
-	
-	return {h: horizon_losses[h] / max(1, horizon_steps[h]) for h in horizon_losses.keys()}
-
-
-def evaluate_multi_horizon(
-	model: MultiHorizonForecastMLP,
-	horizon_loaders: Dict[int, Optional[DataLoader]],
-	criterion: nn.Module,
-	device: torch.device,
-) -> Dict[int, Optional[Dict[str, float]]]:
-	model.eval()
-	results = {}
-	
-	with torch.no_grad():
-		for horizon, dataloader in horizon_loaders.items():
-			if dataloader is None:
-				results[horizon] = None
-				continue
-				
-			running_mse = 0.0
-			running_mae = 0.0
-			steps = 0
-			
-			for embeddings, targets in tqdm(dataloader, desc=f"Val H{horizon}", leave=False):
-				embeddings = embeddings.to(device, non_blocking=True)
-				targets = targets.to(device, non_blocking=True)
-				
-				predictions = model(embeddings, horizon)
-				mse_loss = criterion(predictions, targets)
-				mae_loss = torch.nn.functional.l1_loss(predictions, targets)
-				
-				running_mse += float(mse_loss.item())
-				running_mae += float(mae_loss.item())
-				steps += 1
-			
-			results[horizon] = {
-				'mse': running_mse / max(1, steps),
-				'mae': running_mae / max(1, steps)
-			}
-	
-	return results
 
 
 def parse_args() -> argparse.Namespace:

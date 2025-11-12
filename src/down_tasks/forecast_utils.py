@@ -9,7 +9,8 @@ import warnings
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, ConcatDataset
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
@@ -19,35 +20,84 @@ from datetime import datetime, timedelta
 
 from dataloaders.embedding_cache_dataset import build_embedding_cache_loader
 
+from models.classifier import (
+    ForecastRegressor,
+    MultiHorizonForecastMLP
+	)
 
-class MultiHorizonForecastMLP(nn.Module):
-    """MLP that maps encoder embeddings to multiple forecast horizons.
-    
-    This is the updated version that handles multi-feature targets.
-    """
-    
-    def __init__(self, input_dim: int, hidden_dim: int, horizons: List[int], target_features: int = 1) -> None:
-        super().__init__()
-        self.horizons = sorted(horizons)
-        self.target_features = target_features
-        self.shared_layers = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+def ensure_dataloader_pred_len(loader: Optional[DataLoader], pred_len: int) -> None:
+    """Force underlying datasets to expose the requested prediction length."""
+
+    if loader is None:
+        return
+
+    def _apply(obj: object) -> None:
+        if obj is None:
+            return
+        if isinstance(obj, ConcatDataset):
+            for child in obj.datasets:
+                _apply(child)
+            return
+        if hasattr(obj, "dataset"):
+            _apply(getattr(obj, "dataset"))
+        if hasattr(obj, "pred_len"):
+            setattr(obj, "pred_len", pred_len)
+
+    _apply(getattr(loader, "dataset", None))
+
+
+def compute_multi_horizon_loss(
+    predictions: torch.Tensor,
+    targets: torch.Tensor,
+    horizons: List[int],
+    criterion: nn.Module,
+) -> Tuple[torch.Tensor, Dict[int, float]]:
+    """Compute aggregate and per-horizon losses for a batch."""
+
+    if predictions.size(1) < targets.size(1):
+        raise ValueError(
+            f"Predictions shape {tuple(predictions.shape)} is shorter than targets {tuple(targets.shape)}"
         )
-        # Separate output heads for each horizon
-        self.horizon_heads = nn.ModuleDict({
-            str(h): nn.Linear(hidden_dim, h * target_features) for h in self.horizons
-        })
-    
-    def forward(self, x: torch.Tensor, horizon: int) -> torch.Tensor:
-        batch_size = x.shape[0]
-        shared_out = self.shared_layers(x)
-        output = self.horizon_heads[str(horizon)](shared_out)
-        # Reshape to [batch_size, horizon, target_features]
-        return output.view(batch_size, horizon, self.target_features)
+
+    loss_values: Dict[int, float] = {}
+    total_loss: Optional[torch.Tensor] = None
+    device = predictions.device
+
+    for horizon in horizons:
+        pred_slice = predictions[:, :horizon, :]
+        target_slice = targets[:, :horizon, :]
+        loss = criterion(pred_slice, target_slice)
+        total_loss = loss if total_loss is None else total_loss + loss
+        loss_values[horizon] = float(loss.detach().item())
+
+    if total_loss is None:
+        total_loss = torch.zeros((), device=device)
+    else:
+        total_loss = total_loss / max(1, len(horizons))
+
+    return total_loss, loss_values
+
+
+def compute_multi_horizon_metrics(
+    predictions: torch.Tensor,
+    targets: torch.Tensor,
+    horizons: List[int],
+) -> Dict[int, Dict[str, float]]:
+    """Return MSE/MAE metrics per horizon for a batch."""
+
+    metrics: Dict[int, Dict[str, float]] = {}
+
+    for horizon in horizons:
+        pred_slice = predictions[:, :horizon, :]
+        target_slice = targets[:, :horizon, :]
+        mse = F.mse_loss(pred_slice, target_slice)
+        mae = F.l1_loss(pred_slice, target_slice)
+        metrics[horizon] = {
+            "mse": float(mse.detach().item()),
+            "mae": float(mae.detach().item()),
+        }
+
+    return metrics
 
 
 def load_trained_model(
@@ -78,19 +128,42 @@ def load_trained_model(
     
     # Try to infer dimensions from the model state dict
     model_state = checkpoint['model_state_dict']
-    
+    if any(key.startswith('horizon_heads.') for key in model_state.keys()):
+        raise ValueError(
+            "Checkpoint was created with the legacy per-horizon heads. "
+            "Please retrain using the updated unified head architecture."
+        )
+
     # Get input dimension from first shared layer
     input_dim = model_state['shared_layers.0.weight'].shape[1]
-    
+
     # Get hidden dimension from first shared layer or use provided override
     if mlp_hidden_dim is not None:
         hidden_dim = mlp_hidden_dim
     else:
         hidden_dim = model_state['shared_layers.0.weight'].shape[0]
-    
-    print(f"Model config - Input: {input_dim}, Hidden: {hidden_dim}, Target features: {target_features}")
+
+    max_horizon = max(horizons)
+    head_rows = model_state['prediction_head.weight'].shape[0]
+    if head_rows % max_horizon != 0:
+        raise ValueError(
+            "Prediction head rows are not divisible by the maximum horizon; cannot infer target features."
+        )
+    inferred_features = head_rows // max_horizon
+    if target_features is None:
+        target_features = inferred_features
+    elif target_features != inferred_features:
+        raise ValueError(
+            "Target feature dimension mismatch between checkpoint metadata "
+            f"({target_features}) and weights ({inferred_features})."
+        )
+
+    print(
+        f"Model config - Input: {input_dim}, Hidden: {hidden_dim}, Target features: {target_features}, "
+        f"Max horizon: {max_horizon}"
+    )
     print(f"Horizons: {horizons}")
-    
+
     # Create and load model
     model = MultiHorizonForecastMLP(
         input_dim=input_dim,
@@ -98,7 +171,7 @@ def load_trained_model(
         horizons=horizons,
         target_features=target_features
     ).to(device)
-    
+
     model.load_state_dict(model_state)
     model.eval()
     
@@ -112,11 +185,96 @@ def load_trained_model(
         'target_features': target_features,
         'input_dim': input_dim,
         'hidden_dim': hidden_dim,
+        'max_horizon': max_horizon,
     }
     
     print(f"Loaded model from epoch {checkpoint_info['epoch']} with avg val MSE: {checkpoint_info['avg_val_mse']}")
     
     return model, checkpoint_info
+
+
+def train_epoch_multi_horizon(
+    model: MultiHorizonForecastMLP,
+    horizon_loaders: Dict[int, DataLoader],
+    criterion: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+) -> Dict[int, float]:
+    """Train on cached embeddings covering multiple horizons."""
+
+    model.train()
+    horizon_losses = {h: 0.0 for h in horizon_loaders.keys()}
+    horizon_steps = {h: 0 for h in horizon_loaders.keys()}
+
+    horizon_iters = {h: iter(loader) for h, loader in horizon_loaders.items()}
+    max_steps = max(len(loader) for loader in horizon_loaders.values())
+
+    for _ in tqdm(range(max_steps), desc="Train Multi-Horizon MLP", leave=False):
+        active_horizons = 0
+        optimizer.zero_grad(set_to_none=True)
+
+        for horizon, data_iter in list(horizon_iters.items()):
+            try:
+                embeddings, targets = next(data_iter)
+            except StopIteration:
+                horizon_iters[horizon] = iter(horizon_loaders[horizon])
+                continue
+
+            embeddings = embeddings.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
+            predictions = model(embeddings, horizon)
+            loss = criterion(predictions, targets)
+            loss.backward()
+
+            horizon_losses[horizon] += float(loss.detach().item())
+            horizon_steps[horizon] += 1
+            active_horizons += 1
+
+        if active_horizons > 0:
+            optimizer.step()
+
+    return {h: horizon_losses[h] / max(1, horizon_steps[h]) for h in horizon_losses.keys()}
+
+
+def evaluate_multi_horizon(
+    model: MultiHorizonForecastMLP,
+    horizon_loaders: Dict[int, Optional[DataLoader]],
+    criterion: nn.Module,
+    device: torch.device,
+) -> Dict[int, Optional[Dict[str, float]]]:
+    """Evaluate cached-embedding dataloaders across horizons."""
+
+    model.eval()
+    results: Dict[int, Optional[Dict[str, float]]] = {}
+
+    with torch.no_grad():
+        for horizon, dataloader in horizon_loaders.items():
+            if dataloader is None:
+                results[horizon] = None
+                continue
+
+            running_mse = 0.0
+            running_mae = 0.0
+            steps = 0
+
+            for embeddings, targets in tqdm(dataloader, desc=f"Val H{horizon}", leave=False):
+                embeddings = embeddings.to(device, non_blocking=True)
+                targets = targets.to(device, non_blocking=True)
+
+                predictions = model(embeddings, horizon)
+                mse_loss = criterion(predictions, targets)
+                mae_loss = F.l1_loss(predictions, targets)
+
+                running_mse += float(mse_loss.detach().item())
+                running_mae += float(mae_loss.detach().item())
+                steps += 1
+
+            results[horizon] = {
+                "mse": running_mse / max(1, steps),
+                "mae": running_mae / max(1, steps),
+            }
+
+    return results
 
 
 def discover_icml_datasets(icml_datasets_dir: Path) -> List[Tuple[str, Path]]:

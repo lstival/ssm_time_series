@@ -11,7 +11,7 @@ for path in (SRC_DIR, ROOT_DIR):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
-from src.down_tasks.evaluate_icml import EvalConfig
+from evaluation.evaluate_icml import EvalConfig
 
 
 def main():
@@ -40,7 +40,7 @@ def main():
     print(f"  Generate plots: {config.generate_plots}")
     
     # Import evaluation functions
-    from src.down_tasks.evaluate_icml import (
+    from evaluation.evaluate_icml import (
         discover_embedding_datasets, 
         evaluate_all_embedding_datasets,
         evaluate_embedding_dataset

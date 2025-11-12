@@ -16,9 +16,18 @@ from torch.optim.lr_scheduler import _LRScheduler, ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
+from typing import Dict, List, Optional
 from dataloaders.cronos_loader import build_chronos_dataloaders
 from time_series_loader import TimeSeriesDataModule
 
+from down_tasks.forecast_utils import (
+	compute_multi_horizon_loss,
+	compute_multi_horizon_metrics,
+)
+
+from models.classifier import (
+    ForecastRegressor
+	)
 
 BatchType = Union[Tuple[torch.Tensor, ...], Dict[str, torch.Tensor], torch.Tensor]
 
@@ -35,6 +44,121 @@ class MoCoProjectionHead(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.projection(x)
+
+
+def train_epoch_dataset(
+	model: ForecastRegressor,
+	dataloader: torch.utils.data.DataLoader,
+	criterion: nn.Module,
+	optimizer: torch.optim.Optimizer,
+	device: torch.device,
+	horizons: List[int],
+) -> Dict[int, float]:
+	model.train()
+	running_losses = {h: 0.0 for h in horizons}
+	steps = 0
+	max_horizon = model.max_horizon
+
+	for batch in tqdm(dataloader, desc="Train", leave=False):
+		seq_x, seq_y, _, _ = batch
+		seq_x = seq_x.to(device).float().transpose(1, 2)
+		seq_y = seq_y.to(device).float()
+		if seq_y.size(1) < max_horizon:
+			raise ValueError(
+				f"Target sequence length {seq_y.size(1)} smaller than required max horizon {max_horizon}"
+			)
+		targets = seq_y[:, -max_horizon:, :]
+
+		optimizer.zero_grad(set_to_none=True)
+		predictions = model(seq_x)
+		total_loss, loss_values = compute_multi_horizon_loss(predictions, targets, horizons, criterion)
+		total_loss.backward()
+		optimizer.step()
+
+		for horizon, value in loss_values.items():
+			running_losses[horizon] += value
+		steps += 1
+
+	return {h: running_losses[h] / max(1, steps) for h in horizons}
+
+
+def evaluate_dataset(
+	model: ForecastRegressor,
+	dataloader: Optional[torch.utils.data.DataLoader],
+	device: torch.device,
+	horizons: List[int],
+) -> Optional[Dict[int, Dict[str, float]]]:
+	if dataloader is None:
+		return None
+
+	model.eval()
+	running_mse = {h: 0.0 for h in horizons}
+	running_mae = {h: 0.0 for h in horizons}
+	counts = {h: 0 for h in horizons}
+	max_horizon = model.max_horizon
+
+	with torch.no_grad():
+		for batch in tqdm(dataloader, desc="Val", leave=False):
+			seq_x, seq_y, _, _ = batch
+			seq_x = seq_x.to(device).float().transpose(1, 2)
+			seq_y = seq_y.to(device).float()
+			if seq_y.size(1) < max_horizon:
+				raise ValueError(
+					f"Target sequence length {seq_y.size(1)} smaller than required max horizon {max_horizon}"
+				)
+			targets = seq_y[:, -max_horizon:, :]
+			predictions = model(seq_x)
+			batch_metrics = compute_multi_horizon_metrics(predictions, targets, horizons)
+
+			target_features = targets.size(2)
+			batch_size = targets.size(0)
+			for horizon, metrics in batch_metrics.items():
+				elements = batch_size * horizon * target_features
+				running_mse[horizon] += metrics["mse"] * elements
+				running_mae[horizon] += metrics["mae"] * elements
+				counts[horizon] += elements
+
+	results: Dict[int, Dict[str, float]] = {}
+	for horizon in horizons:
+		if counts[horizon] == 0:
+			results[horizon] = {"mse": float("nan"), "mae": float("nan")}
+		else:
+			results[horizon] = {
+				"mse": running_mse[horizon] / counts[horizon],
+				"mae": running_mae[horizon] / counts[horizon],
+			}
+	return results
+
+
+def load_encoder_checkpoint(
+	encoder: nn.Module,
+	checkpoint_path: Path,
+	device: torch.device,
+) -> Dict[str, object]:
+	if not checkpoint_path.exists():
+		raise FileNotFoundError(f"Encoder checkpoint not found: {checkpoint_path}")
+
+	payload = torch.load(checkpoint_path, map_location=device)
+	if not isinstance(payload, dict):
+		raise ValueError(f"Unexpected checkpoint format in {checkpoint_path}")
+
+	candidates = (
+		payload.get("model_state_dict"),
+		payload.get("encoder_state_dict"),
+		payload.get("state_dict"),
+		payload.get("encoder"),
+		payload.get("model"),
+	)
+	state_dict = next((item for item in candidates if isinstance(item, dict)), None)
+	state_dict = state_dict or payload
+
+	missing, unexpected = encoder.load_state_dict(state_dict, strict=False)
+	if missing:
+		print(f"Warning: missing encoder weights: {sorted(missing)}")
+	if unexpected:
+		print(f"Warning: unexpected encoder weights: {sorted(unexpected)}")
+
+	return payload
 
 
 def default_device() -> torch.device:
