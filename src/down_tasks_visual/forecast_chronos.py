@@ -66,14 +66,7 @@ def _sequence_to_array(obj: object) -> np.ndarray:
     if arr.ndim == 2:
         return arr.astype(np.float32, copy=False)
     time_dim = arr.shape[0]
-    result = arr.reshape(time_dim, -1).astype(np.float32)
-    
-    # Check for NaN or Inf values
-    if np.isnan(result).any() or np.isinf(result).any():
-        print(f"Warning: Found NaN or Inf values in sequence, replacing with zeros")
-        result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
-    
-    return result
+    return arr.reshape(time_dim, -1).astype(np.float32)
 
 
 def _split_sequences(
@@ -155,19 +148,7 @@ class ChronosForecastWindowDataset(Dataset):
             if total < required:
                 arr = simple_interpolation(arr, required)
                 total = arr.shape[0]
-
-            # Normalize each series to prevent extreme values
-            # Use robust normalization with clipping
-            arr_mean = np.mean(arr, axis=0, keepdims=True)
-            arr_std = np.std(arr, axis=0, keepdims=True)
-            arr_std = np.maximum(arr_std, 1e-8)  # Prevent division by zero
-            arr = (arr - arr_mean) / arr_std
-            arr = np.clip(arr, -10.0, 10.0)  # Clip to reasonable range
-            
-            # Final NaN check after normalization
-            if np.isnan(arr).any() or np.isinf(arr).any():
-                print(f"Warning: NaN/Inf after normalization, skipping series")
-                continue
+                # continue
 
             base_idx = len(self.series)
             self.series.append(arr)
@@ -193,13 +174,6 @@ class ChronosForecastWindowDataset(Dataset):
         tgt_end = ctx_end + self.horizon
         seq_x = torch.as_tensor(series[start:ctx_end], dtype=self.dtype)
         seq_y = torch.as_tensor(series[ctx_end:tgt_end], dtype=self.dtype)
-        
-        # Validate tensors
-        if torch.isnan(seq_x).any() or torch.isinf(seq_x).any():
-            seq_x = torch.nan_to_num(seq_x, nan=0.0, posinf=1.0, neginf=-1.0)
-        if torch.isnan(seq_y).any() or torch.isinf(seq_y).any():
-            seq_y = torch.nan_to_num(seq_y, nan=0.0, posinf=1.0, neginf=-1.0)
-        
         seq_x_mark = torch.zeros_like(seq_x)
         seq_y_mark = torch.zeros_like(seq_y)
         return seq_x, seq_y, seq_x_mark, seq_y_mark
@@ -236,14 +210,7 @@ def _load_chronos_sequences(
     for idx in indices:
         sample = ds[int(idx)]
         target = sample.get("target") if isinstance(sample, dict) else sample
-        arr = _sequence_to_array(target)
-        
-        # Skip sequences with all zeros or constant values
-        if np.std(arr) < 1e-8:
-            print(f"Warning: Skipping constant/zero sequence from {dataset_name}")
-            continue
-            
-        sequences.append(arr)
+        sequences.append(_sequence_to_array(target))
         if max_series is not None and len(sequences) >= max_series:
             break
     return sequences
@@ -424,6 +391,7 @@ def build_dataset_group(
     )
 
 
+# Use the config file requested (note: name per user request)
 DEFAULT_FORECAST_CONFIG = SRC_DIR / "configs" / "chronos_forecast.yaml"
 
 
@@ -489,6 +457,7 @@ if __name__ == "__main__":
     print(f"Using forecast configuration: {config_path}")
 
     forecast_cfg = _load_yaml_config(config_path)
+    config_dir = config_path.parent
 
     model_section = dict(forecast_cfg.get("model") or {})
     model_config_candidate = model_section.get("config")
@@ -519,16 +488,11 @@ if __name__ == "__main__":
     batch_size = int(training_section.get("batch_size", data_cfg.get("batch_size", 16)))
     val_batch_size = int(training_section.get("val_batch_size", batch_size))
     epochs = int(training_section.get("epochs", 2))
-    # Reduce learning rate to prevent instability
-    lr = float(training_section.get("lr", 1e-4))  # Changed from 3e-4 to 1e-4
+    lr = float(training_section.get("lr", 3e-4))
     weight_decay = float(training_section.get("weight_decay", 1e-2))
     mlp_hidden_dim = int(training_section.get("mlp_hidden_dim", 512))
     num_workers = int(training_section.get("num_workers", data_cfg.get("num_workers", 0)))
     pin_memory = bool(training_section.get("pin_memory", data_cfg.get("pin_memory", True)))
-    
-    # Add gradient clipping parameter
-    grad_clip = float(training_section.get("grad_clip", 1.0))
-    print(f"Gradient clipping max norm: {grad_clip}")
 
     chronos_section = dict(forecast_cfg.get("chronos") or {})
     loader_config_candidate = chronos_section.get("config")
@@ -598,24 +562,38 @@ if __name__ == "__main__":
         print("Forcing offline mode - no network access will be attempted")
 
     paths_section = dict(forecast_cfg.get("paths") or {})
-    encoder_checkpoint_path = _coerce_path(
-        config_path.parent,
-        paths_section.get(
-            "encoder_checkpoint",
-            ROOT_DIR / "checkpoints" / "ts_encoder_20251101_1100" / "time_series_best.pt",
-        ),
-        must_exist=True,
-        description="Encoder checkpoint",
+    visual_candidate = paths_section.get(
+        "visual_encoder_checkpoint",
+        Path("../../checkpoints/ts_encoder_20251101_1100/visual_encoder_best.pt"),
     )
+    visual_base = config_dir
+    visual_mamba_checkpoint_path = _coerce_path(
+        visual_base,
+        visual_candidate,
+        must_exist=True,
+        description="Visual Mamba encoder checkpoint",
+    )
+    checkpoint_candidate = paths_section.get("checkpoint_dir")
+    if checkpoint_candidate is not None:
+        checkpoint_base = config_dir
+    else:
+        checkpoint_candidate = logging_cfg.get("checkpoint_dir", ROOT_DIR / "checkpoints")
+        checkpoint_base = ROOT_DIR
     checkpoint_dir = _coerce_path(
-        config_path.parent,
-        paths_section.get("checkpoint_dir", logging_cfg.get("checkpoint_dir", ROOT_DIR / "checkpoints")),
+        checkpoint_base,
+        checkpoint_candidate,
         must_exist=False,
         description="Checkpoint directory",
     )
+    results_candidate = paths_section.get("results_dir")
+    if results_candidate is not None:
+        results_base = config_dir
+    else:
+        results_candidate = ROOT_DIR / "results"
+        results_base = ROOT_DIR
     results_dir = _coerce_path(
-        config_path.parent,
-        paths_section.get("results_dir", ROOT_DIR / "results"),
+        results_base,
+        results_candidate,
         must_exist=False,
         description="Results directory",
     )
@@ -630,15 +608,17 @@ if __name__ == "__main__":
         embedding_dim=overrides.get("embedding_dim"),
         depth=overrides.get("depth"),
     )
-    encoder = tu.build_encoder_from_config(model_cfg).to(device)
+
+    encoder_builder = tu.build_visual_encoder_from_config
+    encoder = encoder_builder(model_cfg).to(device)
 
     if context_length < getattr(encoder, "input_dim", 1):
         raise ValueError(
             f"context_length {context_length} must be >= encoder token size {getattr(encoder, 'input_dim', '?')}."
         )
 
-    print(f"Loading encoder checkpoint: {encoder_checkpoint_path}")
-    load_encoder_checkpoint(encoder, encoder_checkpoint_path, device)
+    print(f"Loading visual mamba encoder checkpoint: {visual_mamba_checkpoint_path}")
+    load_encoder_checkpoint(encoder, visual_mamba_checkpoint_path, device)
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -731,7 +711,6 @@ if __name__ == "__main__":
             run_root=run_root,
             max_horizon=max_horizon,
             criterion=criterion,
-            grad_clip=grad_clip,  # Pass gradient clipping parameter
         )
         if record is not None:
             dataset_records.append(record)
@@ -745,7 +724,7 @@ if __name__ == "__main__":
         run_root=run_root,
         results_dir=results_dir,
         filename_prefix="forecast_results_chronos",
-        checkpoint_path=encoder_checkpoint_path,
+        checkpoint_path=visual_mamba_checkpoint_path,
         encoder_embedding_dim=getattr(encoder, "embedding_dim", None),
         mlp_hidden_dim=mlp_hidden_dim,
         epochs=epochs,
@@ -757,6 +736,5 @@ if __name__ == "__main__":
             "context_length": context_length,
             "stride": stride,
             "split": split,
-            "grad_clip": grad_clip,
         },
     )

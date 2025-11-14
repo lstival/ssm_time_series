@@ -14,7 +14,7 @@ chronos:
   # Optional separate loader configuration. Comment out if not needed.
   config: ./cronos_loader_example.yaml
   datasets:
-    - m4_yearly
+    # - m4_yearly
   split: train
   repo_id: autogluon/chronos_datasets
   target_dtype: float64
@@ -30,7 +30,7 @@ chronos:
 
 training:
   seed: 42
-  epochs: 5
+  epochs: 1
   batch_size: 256
   val_batch_size: 64
   lr: 0.0003
@@ -40,5 +40,6 @@ training:
 
 paths:
   encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100/time_series_best.pt
+  visual_encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100/visual_encoder_best.pt
   checkpoint_dir: ../../checkpoints
   results_dir: ../../results

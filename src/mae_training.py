@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -16,8 +17,27 @@ from moco_training import (
     infer_feature_dim,
     prepare_dataset,
     resolve_path,
+    resolve_checkpoint_dir,
     split_dataset,
 )
+
+
+def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="MAE training using Chronos datasets")
+    default_cfg = Path(__file__).resolve().parent / "configs" / "mamba_encoder.yaml"
+    parser.add_argument("--config", type=Path, default=default_cfg)
+    parser.add_argument("--checkpoint-dir", type=Path, default=None)
+    parser.add_argument(
+        "--resume-checkpoint",
+        type=Path,
+        default=None,
+        help="Checkpoint directory or file to resume from (expects *_last.pt files).",
+    )
+    parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--noise-std", type=float, default=None)
+    parser.add_argument("--time-loss-weight", type=float, default=None)
+    parser.add_argument("--visual-loss-weight", type=float, default=None)
+    return parser.parse_args(list(argv) if argv is not None else None)
 
 
 class ReconstructionDecoder(nn.Module):
@@ -59,11 +79,16 @@ def run_mae_training(
     decoder_head: nn.Module,
     visual_decoder_head: nn.Module,
     train_loader,
+    val_loader: Optional[object] = None,
     device: torch.device,
+    checkpoint_dir: Path,
     epochs: int = 2,
     noise_std: float = 0.01,
     time_loss_weight: float = 0.5,
     visual_loss_weight: float = 0.5,
+    optimizer: Optional[torch.optim.Optimizer] = None,
+    initial_epoch: int = 0,
+    best_loss: Optional[float] = None,
 ) -> None:
     """Masked autoencoder training loop with weighted reconstruction losses."""
 
@@ -76,20 +101,38 @@ def run_mae_training(
     time_w = time_loss_weight / weight_total
     visual_w = visual_loss_weight / weight_total
 
-    encoder.to(device).train()
-    visual_encoder.to(device).train()
-    decoder_head.to(device).train()
-    visual_decoder_head.to(device).train()
+    encoder.to(device)
+    visual_encoder.to(device)
+    decoder_head.to(device)
+    visual_decoder_head.to(device)
 
-    optimizer = torch.optim.AdamW(
+    params = (
         list(encoder.parameters())
         + list(visual_encoder.parameters())
         + list(decoder_head.parameters())
-        + list(visual_decoder_head.parameters()),
-        lr=1e-3,
+        + list(visual_decoder_head.parameters())
     )
+    
+    if optimizer is None:
+        optimizer = torch.optim.AdamW(params, lr=1e-3)
 
-    for epoch in range(epochs):
+    # Move optimizer state to device
+    for state in optimizer.state.values():
+        for key, value in list(state.items()):
+            if torch.is_tensor(value):
+                state[key] = value.to(device)
+
+    best_metric = float("inf") if best_loss is None else float(best_loss)
+    start_epoch = max(0, int(initial_epoch))
+    if start_epoch >= epochs:
+        print(f"Requested epochs already completed ({start_epoch}/{epochs}).")
+        return
+
+    for epoch in range(start_epoch, epochs):
+        encoder.train()
+        visual_encoder.train()
+        decoder_head.train()
+        visual_decoder_head.train()
         epoch_loss = 0.0
         epoch_time_loss = 0.0
         epoch_visual_loss = 0.0
@@ -140,13 +183,76 @@ def run_mae_training(
                     visual_loss=f"{(epoch_visual_loss / batches):.4f}",
                 )
 
-        if batches > 0:
-            print(
-                f"Epoch {epoch + 1}/{epochs} - Total: {epoch_loss / batches:.4f} | "
-                f"Time: {epoch_time_loss / batches:.4f} | Visual: {epoch_visual_loss / batches:.4f}"
-            )
-        else:
-            print(f"Epoch {epoch + 1}/{epochs} - no batches processed")
+        train_loss = epoch_loss / batches if batches > 0 else float("nan")
+        train_time_loss = epoch_time_loss / batches if batches > 0 else float("nan")
+        train_visual_loss = epoch_visual_loss / batches if batches > 0 else float("nan")
+
+        # Validation loop
+        val_loss = None
+        if val_loader is not None:
+            encoder.eval()
+            visual_encoder.eval()
+            decoder_head.eval()
+            visual_decoder_head.eval()
+
+            val_epoch_loss = 0.0
+            val_batches = 0
+
+            with torch.no_grad():
+                for val_batch in val_loader:
+                    val_seq = u.prepare_sequence(u.extract_sequence(val_batch)).to(device)
+
+                    val_series_view = val_seq.swapaxes(1, 2)
+                    val_positive_view = u.make_positive_view(
+                        val_series_view + noise_std * torch.randn_like(val_series_view),
+                        noise_std=noise_std,
+                    )
+
+                    val_time_target = val_series_view
+                    val_visual_target = val_positive_view
+
+                    val_masked_time = u.mask_time_series(val_series_view)
+                    val_masked_visual = u.mask_time_series(val_positive_view)
+
+                    val_time_encoded = encoder(val_masked_time)
+                    val_visual_encoded = visual_encoder(val_masked_visual)
+
+                    val_time_recon = decoder_head(val_time_encoded)
+                    val_visual_recon = visual_decoder_head(val_visual_encoded)
+
+                    val_time_loss = nn.functional.mse_loss(val_time_recon, val_time_target)
+                    val_visual_loss = nn.functional.mse_loss(val_visual_recon, val_visual_target)
+                    val_batch_loss = time_w * val_time_loss + visual_w * val_visual_loss
+
+                    val_epoch_loss += float(val_batch_loss.item())
+                    val_batches += 1
+
+            if val_batches > 0:
+                val_loss = val_epoch_loss / val_batches
+
+            encoder.train()
+            visual_encoder.train()
+            decoder_head.train()
+            visual_decoder_head.train()
+
+        # Save checkpoints using the same system as cosine_training.py
+        models_to_save = {
+            "time_series": encoder,
+            "visual_encoder": visual_encoder,
+            "time_series_decoder": decoder_head,
+            "visual_decoder": visual_decoder_head,
+        }
+
+        best_metric = u.log_and_save(
+            optimizer,
+            models=models_to_save,
+            epoch=epoch,
+            epochs=epochs,
+            train_loss=train_loss,
+            val_loss=val_loss,
+            checkpoint_dir=checkpoint_dir,
+            best_loss=best_metric,
+        )
 
 
 def build_decoder_head(
@@ -172,29 +278,36 @@ def build_decoder_head(
 
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
-    default_cfg = Path(__file__).resolve().parent / "configs" / "mamba_encoder.yaml"
-    config_path = resolve_path(Path.cwd(), default_cfg)
+    args = parse_args(argv)
+
+    config_path = resolve_path(Path.cwd(), args.config)
     if config_path is None or not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {default_cfg}")
+        raise FileNotFoundError(f"Configuration file not found: {args.config}")
 
     config = tu.load_config(config_path)
     tu.set_seed(config.seed)
     device = tu.prepare_device(config.device)
     print(f"Using device: {device}")
 
+    training_cfg = config.training
+    epochs = args.epochs if args.epochs is not None else int(training_cfg.get("epochs", 2))
+    noise_std = args.noise_std if args.noise_std is not None else float(training_cfg.get("noise_std", 0.01))
+    time_loss_weight = args.time_loss_weight if args.time_loss_weight is not None else float(training_cfg.get("time_loss_weight", 0.5))
+    visual_loss_weight = args.visual_loss_weight if args.visual_loss_weight is not None else float(training_cfg.get("visual_loss_weight", 0.5))
+
     data_cfg = config.data
     dataset = prepare_dataset(config_path, data_cfg)
 
     val_ratio = float(data_cfg.get("val_ratio", 0.0))
-    train_dataset, _ = split_dataset(dataset, val_ratio=val_ratio, seed=config.seed)
+    train_dataset, val_dataset = split_dataset(dataset, val_ratio=val_ratio, seed=config.seed)
 
     batch_size = int(data_cfg.get("batch_size", 128))
     num_workers = int(data_cfg.get("num_workers", 0))
     pin_memory = bool(data_cfg.get("pin_memory", False))
 
-    train_loader, _ = build_dataloaders(
+    train_loader, val_loader = build_dataloaders(
         train_dataset,
-        None,
+        val_dataset,
         batch_size=batch_size,
         val_batch_size=batch_size,
         num_workers=num_workers,
@@ -230,11 +343,67 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         sequence_length=sequence_length,
     )
 
-    training_cfg = config.training
-    epochs = int(training_cfg.get("epochs", 2))
-    time_loss_weight = float(training_cfg.get("time_loss_weight", 0.5))
-    visual_loss_weight = float(training_cfg.get("visual_loss_weight", 0.5))
-    noise_std = float(training_cfg.get("noise_std", 0.01))
+    params = (
+        list(encoder.parameters())
+        + list(visual_encoder.parameters())
+        + list(decoder_head.parameters())
+        + list(visual_decoder_head.parameters())
+    )
+    lr = float(training_cfg.get("learning_rate", 1e-3))
+    weight_decay = float(training_cfg.get("weight_decay", 0.0))
+    optimizer = torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
+
+    resume_dir: Optional[Path] = None
+    initial_epoch = 0
+    best_loss: Optional[float] = None
+
+    if args.resume_checkpoint is not None:
+        resume_candidate = resolve_path(Path.cwd(), args.resume_checkpoint)
+        if resume_candidate is None:
+            raise FileNotFoundError(f"Unable to resolve resume path: {args.resume_checkpoint}")
+
+        resume_dir = resume_candidate if resume_candidate.is_dir() else resume_candidate.parent
+        if not resume_dir.exists():
+            raise FileNotFoundError(f"Resume directory not found: {resume_dir}")
+
+        def _load_component(name: str, module: torch.nn.Module) -> dict:
+            path = resume_dir / f"{name}_last.pt"
+            if not path.exists():
+                raise FileNotFoundError(f"Missing checkpoint file: {path}")
+            state = torch.load(path, map_location="cpu")
+            module.load_state_dict(state["model_state_dict"])
+            return state
+
+        time_series_state = _load_component("time_series", encoder)
+        _load_component("visual_encoder", visual_encoder)
+        _load_component("time_series_decoder", decoder_head)
+        _load_component("visual_decoder", visual_decoder_head)
+
+        optimizer.load_state_dict(time_series_state["optimizer_state_dict"])
+        stored_epoch = int(time_series_state.get("epoch", 0))
+        initial_epoch = min(epochs, stored_epoch + 1)
+
+        best_path = resume_dir / "time_series_best.pt"
+        best_candidate = None
+        if best_path.exists():
+            best_state = torch.load(best_path, map_location="cpu")
+            best_candidate = best_state.get("loss")
+        if best_candidate is None:
+            best_candidate = time_series_state.get("loss")
+        if best_candidate is not None:
+            best_loss = float(best_candidate)
+
+        resume_display_epoch = min(epochs, stored_epoch + 1)
+        print(f"Resuming from checkpoint: {resume_dir.resolve()} (epoch {resume_display_epoch}).")
+
+    checkpoint_dir = (
+        resume_dir.resolve()
+        if resume_dir is not None
+        else resolve_checkpoint_dir(config, config_path, args.checkpoint_dir)
+    )
+    print(f"Checkpoints: {checkpoint_dir}")
+
+    val_loader = val_loader if val_loader is not None and len(val_loader) > 0 else None
 
     run_mae_training(
         encoder=encoder,
@@ -242,11 +411,16 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         decoder_head=decoder_head,
         visual_decoder_head=visual_decoder_head,
         train_loader=train_loader,
+        val_loader=val_loader,
         device=device,
+        checkpoint_dir=checkpoint_dir,
         epochs=epochs,
         noise_std=noise_std,
         time_loss_weight=time_loss_weight,
         visual_loss_weight=visual_loss_weight,
+        optimizer=optimizer,
+        initial_epoch=initial_epoch,
+        best_loss=best_loss,
     )
 
 
