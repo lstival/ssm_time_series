@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple, Union
 import torch
 import torch.nn.functional as F
 from torch import nn
+import numpy as np
 from torch.cuda.amp import GradScaler, autocast
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Optimizer
@@ -811,6 +812,44 @@ def make_positive_view(
 
     return out
 
+
+def simple_interpolation(time_series, target_size):
+    """
+    Interpolate a 2D time series of shape (time_steps, variables) to (target_size, variables).
+    Accepts numpy arrays, torch tensors, or list-like inputs. Returns same type as input.
+    """
+
+    if not isinstance(target_size, int) or target_size <= 0:
+        raise ValueError("target_size must be a positive integer")
+
+    is_torch = isinstance(time_series, torch.Tensor)
+    if is_torch:
+        device = time_series.device
+        dtype = time_series.dtype
+        arr = time_series.detach().cpu().numpy()
+    else:
+        arr = np.asarray(time_series)
+
+    if arr.ndim != 2:
+        raise ValueError("time_series must be 2D with shape (time_steps, variables)")
+
+    T, V = arr.shape
+    if T == target_size:
+        return time_series.clone() if is_torch else arr.copy()
+
+    if T == 1:
+        # If only one timestamp, repeat it
+        out = np.repeat(arr, target_size, axis=0)
+    else:
+        old_pos = np.linspace(0.0, 1.0, T)
+        new_pos = np.linspace(0.0, 1.0, target_size)
+        out = np.empty((target_size, V), dtype=arr.dtype)
+        for v in range(V):
+            out[:, v] = np.interp(new_pos, old_pos, arr[:, v])
+
+    if is_torch:
+        return torch.from_numpy(out).to(device=device, dtype=dtype)
+    return out
 
 if __name__ == "__main__":
     # Example usage for ICML and Chronos datasets.

@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import json
-import math
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -19,8 +16,6 @@ for path in (SRC_DIR, ROOT_DIR):
 
 import torch
 import torch.nn as nn
-import pandas as pd
-from torch.optim import AdamW
 import training_utils as tu
 from time_series_loader import TimeSeriesDataModule
 
@@ -29,18 +24,13 @@ from util import (
 	default_device,
 	prepare_run_directory,
 	load_encoder_checkpoint,
-	train_epoch_dataset,
-	evaluate_dataset
 )
-
-from down_tasks.forecast_utils import (
-	ensure_dataloader_pred_len
+from down_tasks.forecast_shared import (
+    apply_model_overrides,
+    finalize_results,
+    parse_horizon_values,
+    train_dataset_group,
 )
-
-from models.classifier import (
-    ForecastRegressor,
-    MultiHorizonForecastMLP
-	)
 
 
 def parse_args() -> argparse.Namespace:
@@ -121,15 +111,7 @@ def main() -> None:
 	tu.set_seed(seed)
 	torch.manual_seed(seed)
 
-	try:
-		horizon_values = [int(item.strip()) for item in args.horizons.split(",") if item.strip()]
-	except ValueError as exc:
-		raise ValueError(f"Failed to parse horizons '{args.horizons}': {exc}") from exc
-	if not horizon_values:
-		raise ValueError("At least one forecast horizon must be provided")
-	if any(value <= 0 for value in horizon_values):
-		raise ValueError(f"All horizons must be positive integers, received: {horizon_values}")
-	horizons = sorted(set(horizon_values))
+	horizons = parse_horizon_values(args.horizons)
 	max_horizon = max(horizons)
 	print(f"Training on horizons: {horizons} (max horizon: {max_horizon})")
 
@@ -186,17 +168,13 @@ def main() -> None:
 	if not dataset_groups:
 		raise RuntimeError("No datasets available for training.")
 
-	model_cfg = dict(config.model)
-	if args.token_size is not None:
-		model_cfg["input_dim"] = args.token_size
-	if args.model_dim is not None:
-		model_cfg["model_dim"] = args.model_dim
-	if args.embedding_dim is not None:
-		model_cfg["embedding_dim"] = args.embedding_dim
-	if args.depth is not None:
-		model_cfg["depth"] = args.depth
-	model_cfg.setdefault("pooling", "mean")
-	model_cfg.setdefault("dropout", 0.1)
+	model_cfg = apply_model_overrides(
+		config.model,
+		token_size=args.token_size,
+		model_dim=args.model_dim,
+		embedding_dim=args.embedding_dim,
+		depth=args.depth,
+	)
 	encoder = tu.build_encoder_from_config(model_cfg).to(device)
 
 	checkpoint_path = resolve_path(config_path.parent, args.encoder_checkpoint)
@@ -217,259 +195,43 @@ def main() -> None:
 	dataset_records: List[Dict[str, object]] = []
 
 	for group in dataset_groups:
-		train_loader = group.train
-		if train_loader is None:
-			print(f"Skipping dataset '{group.name}' because no train loader is available.")
-			continue
-
-		val_loader = group.val
-		ensure_dataloader_pred_len(train_loader, max_horizon)
-		if val_loader is not None:
-			ensure_dataloader_pred_len(val_loader, max_horizon)
-
-		try:
-			sample_batch = next(iter(train_loader))
-		except StopIteration:
-			print(f"Skipping dataset '{group.name}' because the train loader is empty.")
-			continue
-
-		seq_x, seq_y = sample_batch[0], sample_batch[1]
-		target_features = seq_y.size(2)
-		available_steps = seq_y.size(1)
-		if available_steps < max_horizon:
-			raise ValueError(
-				f"Dataset '{group.name}' provides only {available_steps} forecast steps, "
-				f"but max horizon {max_horizon} was requested."
-			)
-		print(
-			f"Dataset '{group.name}': seq_x shape {tuple(seq_x.shape)}, seq_y shape {tuple(seq_y.shape)}, "
-			f"target features {target_features}"
-		)
-
-		head = MultiHorizonForecastMLP(
-			input_dim=encoder.embedding_dim,
-			hidden_dim=args.mlp_hidden_dim,
+		record = train_dataset_group(
+			group_name=group.name,
+			train_loader=group.train,
+			val_loader=group.val,
+			encoder=encoder,
+			device=device,
 			horizons=horizons,
-			target_features=target_features,
-		).to(device)
-		model = ForecastRegressor(encoder=encoder, head=head, freeze_encoder=True).to(device)
-		optimizer = AdamW(model.head.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-
-		dataset_slug = group.name.replace("\\", "__").replace("/", "__") or "dataset"
-		dataset_dir = run_root / dataset_slug
-		dataset_dir.mkdir(parents=True, exist_ok=True)
-		best_checkpoint_path = dataset_dir / "best_model.pt"
-		print(f"Training dataset '{group.name}' (artifacts -> {dataset_dir})")
-
-		best_metric = float("inf")
-		best_state: Optional[Dict[str, object]] = None
-		last_train_losses: Dict[int, float] = {h: float("nan") for h in horizons}
-		last_val_metrics: Optional[Dict[int, Dict[str, float]]] = None
-		last_avg_train = float("nan")
-		last_avg_val = float("nan")
-
-		for epoch in range(args.epochs):
-			print(f"\n[{group.name}] Epoch {epoch + 1}/{args.epochs}")
-			train_losses = train_epoch_dataset(
-				model,
-				train_loader,
-				criterion,
-				optimizer,
-				device,
-				horizons,
-			)
-			val_metrics = evaluate_dataset(model, val_loader, device, horizons)
-
-			avg_train_loss = sum(train_losses.values()) / len(train_losses)
-			if val_metrics is not None:
-				valid_vals = [metrics["mse"] for metrics in val_metrics.values() if not math.isnan(metrics["mse"])]
-				avg_val_mse = sum(valid_vals) / len(valid_vals) if valid_vals else float("nan")
-			else:
-				avg_val_mse = float("nan")
-
-			train_str = ", ".join([f"H{h}: {train_losses[h]:.4f}" for h in horizons])
-			print(f"  Train - {train_str}")
-			if val_metrics is not None:
-				val_parts = []
-				for h in horizons:
-					if h in val_metrics:
-						metrics = val_metrics[h]
-						val_parts.append(f"H{h}: MSE={metrics['mse']:.4f}/MAE={metrics['mae']:.4f}")
-					else:
-						val_parts.append(f"H{h}: MSE=nan/MAE=nan")
-				val_str = ", ".join(val_parts)
-				print(f"  Val   - {val_str}")
-			else:
-				print("  Val   - unavailable")
-			print(f"  Avg Train: {avg_train_loss:.4f}, Avg Val MSE: {avg_val_mse:.4f}")
-
-			metric_to_compare = avg_val_mse
-			if math.isnan(metric_to_compare):
-				metric_to_compare = avg_train_loss
-
-			if best_state is None or metric_to_compare < best_metric:
-				best_metric = metric_to_compare
-				checkpoint = {
-					"epoch": epoch + 1,
-					"model_state_dict": model.state_dict(),
-					"optimizer_state_dict": optimizer.state_dict(),
-					"train_losses": train_losses,
-					"val_results": val_metrics,
-					"avg_train_loss": avg_train_loss,
-					"avg_val_mse": avg_val_mse,
-					"horizons": horizons,
-					"max_horizon": max_horizon,
-					"target_features": target_features,
-					"dataset": group.name,
-				}
-				torch.save(checkpoint, best_checkpoint_path)
-				best_state = {
-					"dataset": group.name,
-					"dataset_slug": dataset_slug,
-					"dataset_dir": str(dataset_dir),
-					"train_losses": dict(train_losses),
-					"avg_train_loss": avg_train_loss,
-					"val_metrics": {h: dict(metrics) for h, metrics in (val_metrics or {}).items()} if val_metrics is not None else None,
-					"avg_val_mse": avg_val_mse,
-					"epoch": epoch + 1,
-					"target_features": int(target_features),
-					"checkpoint_path": str(best_checkpoint_path),
-					"best_metric": metric_to_compare,
-				}
-				print(f"  → Saved best model (metric: {best_metric:.4f})")
-
-			last_train_losses = dict(train_losses)
-			last_val_metrics = val_metrics
-			last_avg_train = avg_train_loss
-			last_avg_val = avg_val_mse
-
-		if best_state is None:
-			best_state = {
-				"dataset": group.name,
-				"dataset_slug": dataset_slug,
-				"dataset_dir": str(dataset_dir),
-				"train_losses": dict(last_train_losses),
-				"avg_train_loss": last_avg_train,
-				"val_metrics": {h: dict(metrics) for h, metrics in (last_val_metrics or {}).items()} if last_val_metrics is not None else None,
-				"avg_val_mse": last_avg_val,
-				"epoch": args.epochs,
-				"target_features": int(target_features),
-				"checkpoint_path": str(best_checkpoint_path),
-				"best_metric": best_metric,
-			}
-			if not best_checkpoint_path.exists():
-				checkpoint = {
-					"epoch": args.epochs,
-					"model_state_dict": model.state_dict(),
-					"optimizer_state_dict": optimizer.state_dict(),
-					"train_losses": last_train_losses,
-					"val_results": last_val_metrics,
-					"avg_train_loss": last_avg_train,
-					"avg_val_mse": last_avg_val,
-					"horizons": horizons,
-					"max_horizon": max_horizon,
-					"target_features": target_features,
-					"dataset": group.name,
-				}
-				torch.save(checkpoint, best_checkpoint_path)
-
-		best_metric_display = best_state["avg_val_mse"]
-		if math.isnan(best_metric_display):
-			best_metric_display = best_state["avg_train_loss"]
-		print(f"\nFinished dataset '{group.name}'. Best metric: {best_metric_display:.4f}")
-		print(f"Artifacts saved to: {dataset_dir}")
-		dataset_records.append(best_state)
+			mlp_hidden_dim=args.mlp_hidden_dim,
+			lr=args.lr,
+			weight_decay=args.weight_decay,
+			epochs=args.epochs,
+			run_root=run_root,
+			max_horizon=max_horizon,
+			criterion=criterion,
+		)
+		if record is not None:
+			dataset_records.append(record)
 
 	if not dataset_records:
 		print("No datasets were trained. Check dataset filters or availability.")
 		return
 
-	print("\nTraining summary:")
-	for record in dataset_records:
-		metric = record.get("avg_val_mse", float("nan"))
-		if math.isnan(metric):
-			metric = record.get("avg_train_loss", float("nan"))
-		print(f"  {record['dataset']}: best epoch {record['epoch']} (metric {metric:.4f})")
-
-	print("\n" + "=" * 80)
-	print("FINAL RESULTS SUMMARY")
-	print("=" * 80)
-	print(f"{'Dataset':<30} {'Horizon':<8} {'TrainLoss':<12} {'ValMSE':<12} {'ValMAE':<12}")
-	print("-" * 80)
-	for record in dataset_records:
-		train_losses = record["train_losses"]
-		val_metrics = record.get("val_metrics")
-		for horizon in horizons:
-			train_loss = train_losses.get(horizon, float("nan"))
-			if val_metrics is not None and horizon in val_metrics:
-				val_mse = val_metrics[horizon]["mse"]
-				val_mae = val_metrics[horizon]["mae"]
-			else:
-				val_mse = float("nan")
-				val_mae = float("nan")
-			print(f"{record['dataset']:<30} {horizon:<8} {train_loss:<12.6f} {val_mse:<12.6f} {val_mae:<12.6f}")
-	print("=" * 80)
-
-	timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-	json_path = results_dir / f"forecast_results_raw_{timestamp}.json"
-	csv_path = results_dir / f"forecast_results_raw_{timestamp}.csv"
-
-	results_payload = {
-		"timestamp": timestamp,
-		"checkpoint_root": str(run_root),
-		"model_config": {
-			"encoder_checkpoint": str(checkpoint_path),
-			"embedding_dim": getattr(encoder, "embedding_dim", None),
-			"hidden_dim": args.mlp_hidden_dim,
-			"horizons": horizons,
-			"epochs": args.epochs,
-			"lr": args.lr,
-			"weight_decay": args.weight_decay,
-			"batch_size": batch_size,
-			"val_batch_size": val_batch_size,
-		},
-		"datasets": dataset_records,
-	}
-
-	def _sanitize_for_json(obj: object) -> object:
-		if isinstance(obj, float):
-			return None if math.isnan(obj) else obj
-		if isinstance(obj, dict):
-			return {key: _sanitize_for_json(value) for key, value in obj.items()}
-		if isinstance(obj, list):
-			return [_sanitize_for_json(item) for item in obj]
-		return obj
-
-	with open(json_path, "w", encoding="utf-8") as fp:
-		json.dump(_sanitize_for_json(results_payload), fp, indent=2)
-
-	csv_rows = []
-	for record in dataset_records:
-		val_metrics = record.get("val_metrics")
-		for horizon in horizons:
-			row = {
-				"dataset": record["dataset"],
-				"dataset_slug": record["dataset_slug"],
-				"horizon": horizon,
-				"train_loss": record["train_losses"].get(horizon, float("nan")),
-				"val_mse": float("nan"),
-				"val_mae": float("nan"),
-				"avg_train_loss": record["avg_train_loss"],
-				"avg_val_mse": record.get("avg_val_mse", float("nan")),
-				"best_epoch": record["epoch"],
-				"target_features": record["target_features"],
-				"checkpoint_path": record["checkpoint_path"],
-			}
-			if val_metrics is not None and horizon in val_metrics:
-				row["val_mse"] = val_metrics[horizon]["mse"]
-				row["val_mae"] = val_metrics[horizon]["mae"]
-			csv_rows.append(row)
-
-	pd.DataFrame(csv_rows).to_csv(csv_path, index=False)
-
-	print("\nResults saved to:")
-	print(f"  JSON: {json_path}")
-	print(f"  CSV:  {csv_path}")
+	finalize_results(
+		dataset_records=dataset_records,
+		horizons=horizons,
+		run_root=run_root,
+		results_dir=results_dir,
+		filename_prefix="forecast_results_raw",
+		checkpoint_path=checkpoint_path,
+		encoder_embedding_dim=getattr(encoder, "embedding_dim", None),
+		mlp_hidden_dim=args.mlp_hidden_dim,
+		epochs=args.epochs,
+		lr=args.lr,
+		weight_decay=args.weight_decay,
+		batch_size=batch_size,
+		val_batch_size=val_batch_size,
+	)
 
 
 if __name__ == "__main__":

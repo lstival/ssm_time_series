@@ -1,0 +1,44 @@
+# Default configuration for Chronos forecasting fine-tuning.
+# Adjust paths and hyperparameters as needed.
+
+model:
+  # Path to the encoder model configuration (relative paths are resolved from this file's directory).
+  config: ./mamba_encoder.yaml
+  overrides:
+    token_size: null
+    model_dim: null
+    embedding_dim: null
+    depth: null
+
+chronos:
+  # Optional separate loader configuration. Comment out if not needed.
+  config: ./cronos_loader_example.yaml
+  datasets:
+    - m4_yearly
+  split: train
+  repo_id: autogluon/chronos_datasets
+  target_dtype: float64
+  normalize: true
+  val_split: 0.2
+  context_length: 384
+  window_stride: null  # Use the maximum horizon when null.
+  max_windows_per_series: null
+  max_series: null
+  load_kwargs:
+    offline_cache_dir: ../../data
+    force_offline: true
+
+training:
+  seed: 42
+  epochs: 5
+  batch_size: 256
+  val_batch_size: 64
+  lr: 0.0003
+  weight_decay: 0.01
+  mlp_hidden_dim: 512
+  horizons: [96, 192, 336, 720]
+
+paths:
+  encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100/time_series_best.pt
+  checkpoint_dir: ../../checkpoints
+  results_dir: ../../results
