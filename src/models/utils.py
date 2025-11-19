@@ -65,6 +65,7 @@ class ChronosForecastConfig:
     mlp_hidden_dim: int
     num_workers: int
     pin_memory: bool
+    grad_clip: float
     
     # Chronos dataset configuration
     datasets_to_load: List[str]
@@ -81,6 +82,7 @@ class ChronosForecastConfig:
     
     # Path configuration
     visual_mamba_checkpoint_path: Path
+    encoder_checkpoint_path: Path
     checkpoint_dir: Path
     results_dir: Path
     
@@ -240,6 +242,7 @@ def load_chronos_forecast_config(
     mlp_hidden_dim = int(training_section.get("mlp_hidden_dim", 512))
     num_workers = int(training_section.get("num_workers", data_cfg.get("num_workers", 0)))
     pin_memory = bool(training_section.get("pin_memory", data_cfg.get("pin_memory", True)))
+    grad_clip = float(training_section.get("grad_clip", 1.0))
     
     # Parse Chronos configuration
     chronos_section = dict(forecast_cfg.get("chronos") or {})
@@ -319,6 +322,17 @@ def load_chronos_forecast_config(
         must_exist=True,
         description="Visual Mamba encoder checkpoint",
     )
+
+    encoder_candidate = paths_section.get(
+        "encoder_checkpoint",
+        Path("../../checkpoints/ts_encoder_20251101_1100/time_series_best.pt"),
+    )
+    encoder_checkpoint_path = _coerce_path(
+        config_dir,
+        encoder_candidate,
+        must_exist=True,
+        description="Encoder checkpoint",
+    )
     
     checkpoint_candidate = paths_section.get("checkpoint_dir")
     if checkpoint_candidate is not None:
@@ -375,10 +389,12 @@ def load_chronos_forecast_config(
         max_series=max_series,
         load_kwargs=load_kwargs,
         visual_mamba_checkpoint_path=visual_mamba_checkpoint_path,
+        encoder_checkpoint_path=encoder_checkpoint_path,
         checkpoint_dir=checkpoint_dir,
         results_dir=results_dir,
         config_path=config_path,
         config_dir=config_dir,
+        grad_clip=grad_clip,
     )
 
 
