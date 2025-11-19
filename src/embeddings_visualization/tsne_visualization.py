@@ -1,16 +1,15 @@
-import os
-import torch
-import matplotlib.pyplot as plt
-from sklearn.manifold import TSNE
-import numpy as np
-from pathlib import Path
-import yaml
 import sys
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Tuple
+
 import re
-import pandas as pd
-import training_utils as tu
-from time_series_loader import TimeSeriesDataModule
-import datasets
+
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from sklearn.manifold import TSNE
+from torch.utils.data import DataLoader
+import yaml
 
 SRC_DIR = Path(__file__).resolve().parents[1]
 ROOT_DIR = SRC_DIR.parent
@@ -20,275 +19,266 @@ for path in (SRC_DIR, ROOT_DIR):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
+import training_utils as tu
+from down_tasks.forecast_chronos import (
+    build_dataset_group as build_chronos_dataset_group,
+    _parse_dataset_names as parse_chronos_dataset_names,
+)
+from down_tasks.forecast_shared import apply_model_overrides, parse_horizon_values
+from time_series_loader import TimeSeriesDataModule
 from util import (
     default_device,
-    prepare_run_directory,
+    extract_sequence,
     load_encoder_checkpoint,
-    simple_interpolation,
+    prepare_sequence,
 )
-from dataloaders.cronos_dataset import load_chronos_datasets
-from moco_training import resolve_path
-from down_tasks.forecast_shared import apply_model_overrides
 
-def load_chronos_dataset(dataset_name, repo_id="autogluon/chronos_datasets", split="train", normalize_per_series=True, max_length=512, max_series=1000):
-    """
-    Load Chronos datasets to extract features.
 
-    Args:
-        dataset_name (str): Name of the dataset to load.
-        repo_id (str): Repository ID for the dataset.
-        split (str): Dataset split to load (e.g., "train", "val").
-        normalize_per_series (bool): Whether to normalize each series individually.
-        max_length (int): Maximum length of time series to use.
-        max_series (int): Maximum number of series to load.
+_SLUG_PATTERN = re.compile(r"[^a-zA-Z0-9]+")
 
-    Returns:
-        np.ndarray: Loaded dataset as a numpy array of shape (N, T).
-    """
-    try:
-        print(f"Loading Chronos dataset: {dataset_name}")
-        ds = load_chronos_datasets(
-            [dataset_name],
-            split=split,
-            repo_id=repo_id,
-            normalize_per_series=normalize_per_series,
-            offline_cache_dir="../../data",
-            force_offline=True,
-        )
-        
-        sequences = []
-        for idx, item in enumerate(ds):
-            if idx >= max_series:
-                break
-                
-            target = item.get('target') if isinstance(item, dict) else item
-            if isinstance(target, (list, np.ndarray)):
-                target = np.array(target, dtype=np.float32)
-                # Truncate or pad to max_length
-                if len(target) > max_length:
-                    target = target[:max_length]
-                elif len(target) < max_length:
-                    # Pad with zeros
-                    padded = np.zeros(max_length, dtype=np.float32)
-                    padded[:len(target)] = target
-                    target = padded
-                
-                # Skip sequences with all zeros or constant values
-                if np.std(target) > 1e-8:
-                    sequences.append(target)
-        
-        if sequences:
-            return np.stack(sequences, axis=0)
-        else:
-            print(f"Warning: No valid sequences found for {dataset_name}")
-            return None
-        
-    except Exception as e:
-        print(f"Error loading Chronos dataset {dataset_name}: {e}")
+
+def slugify_label(value: str) -> str:
+    slug = _SLUG_PATTERN.sub("_", value).strip("_").lower()
+    return slug or "dataset"
+
+
+def resolve_optional_path(base: Path, candidate: Optional[object]) -> Optional[Path]:
+    if candidate is None:
         return None
+    candidate_path = Path(str(candidate)).expanduser()
+    if not candidate_path.is_absolute():
+        candidate_path = (base / candidate_path).resolve()
+    else:
+        candidate_path = candidate_path.resolve()
+    return candidate_path
 
 
-def load_icml_dataset(dataset_name, data_dir="../../ICML_datasets", max_length=512, max_series=1000):
-    """
-    Load ICML datasets from local CSV files.
+def load_yaml_mapping(path: Path) -> Dict[str, object]:
+    with path.open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"YAML file must contain a mapping: {path}")
+    return payload
 
-    Args:
-        dataset_name (str): Name of the ICML dataset to load.
-        data_dir (str): Path to ICML datasets directory.
-        max_length (int): Maximum length of time series to use.
-        max_series (int): Maximum number of series to load.
 
-    Returns:
-        np.ndarray: Loaded dataset as a numpy array of shape (N, T).
-    """
-    try:
-        print(f"Loading ICML dataset: {dataset_name}")
-        dataset_path = Path(data_dir) / dataset_name
-        
-        if not dataset_path.exists():
-            print(f"Warning: ICML dataset path does not exist: {dataset_path}")
-            return None
-        
-        # Find CSV files in the dataset directory
-        csv_files = list(dataset_path.glob("*.csv"))
-        if not csv_files:
-            print(f"Warning: No CSV files found in {dataset_path}")
-            return None
-        
-        sequences = []
-        for csv_file in csv_files:
+def discover_directory_names(root: Path) -> List[str]:
+    if not root.exists():
+        return []
+    return sorted(
+        child.name for child in root.iterdir() if child.is_dir() and not child.name.startswith(".")
+    )
+
+
+def build_icml_dataset_loaders(
+    data_dir: Path,
+    *,
+    batch_size: int,
+    val_batch_size: int,
+    num_workers: int,
+    pin_memory: bool,
+    normalize: bool,
+    selected: Optional[Sequence[str]] = None,
+) -> List[Tuple[str, DataLoader]]:
+    module = TimeSeriesDataModule(
+        dataset_name="",
+        data_dir=str(data_dir),
+        batch_size=batch_size,
+        val_batch_size=val_batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        normalize=normalize,
+        train=True,
+        val=False,
+        test=False,
+    )
+    groups = module.get_dataloaders()
+    allowed = {entry.lower() for entry in selected} if selected else None
+    loaders: List[Tuple[str, DataLoader]] = []
+    for group in groups:
+        loader = group.train
+        if loader is None:
+            continue
+        normalized_name = group.name.replace("\\", "/")
+        group_path = Path(normalized_name)
+        folder = group_path.parts[0].lower() if group_path.parts else group_path.stem.lower()
+        stem = group_path.stem.lower()
+        if allowed is not None and not (
+            normalized_name.lower() in allowed or folder in allowed or stem in allowed
+        ):
+            continue
+        loaders.append((normalized_name, loader))
+    return loaders
+
+
+def build_chronos_dataset_loaders(
+    dataset_names: Sequence[str],
+    *,
+    repo_id: str,
+    split: str,
+    target_dtype: Optional[str],
+    normalize_per_series: bool,
+    load_kwargs: Dict[str, object],
+    context_length: int,
+    horizon: int,
+    stride: int,
+    batch_size: int,
+    val_batch_size: int,
+    num_workers: int,
+    pin_memory: bool,
+    torch_dtype: torch.dtype,
+    max_windows_per_series: Optional[int],
+    max_series: Optional[int],
+    val_ratio: float,
+    seed: int,
+) -> List[Tuple[str, DataLoader]]:
+    loaders: List[Tuple[str, DataLoader]] = []
+    for dataset_name in dataset_names:
+        try:
+            group = build_chronos_dataset_group(
+                dataset_name,
+                repo_id=repo_id,
+                split=split,
+                target_dtype=target_dtype,
+                normalize_per_series=normalize_per_series,
+                load_kwargs=dict(load_kwargs),
+                context_length=context_length,
+                horizon=horizon,
+                stride=stride,
+                batch_size=batch_size,
+                val_batch_size=val_batch_size,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                torch_dtype=torch_dtype,
+                max_windows_per_series=max_windows_per_series,
+                max_series=max_series,
+                val_ratio=val_ratio,
+                seed=seed,
+            )
+        except Exception as exc:
+            print(f"Warning: failed to build Chronos loader for {dataset_name}: {exc}")
+            continue
+        if group is None or group.train is None:
+            print(f"Warning: Chronos dataset {dataset_name} produced no train loader; skipping.")
+            continue
+        loaders.append((dataset_name, group.train))
+    return loaders
+
+
+def extract_embeddings_from_loader(
+    loader: DataLoader,
+    *,
+    encoder: torch.nn.Module,
+    device: torch.device,
+    max_samples: Optional[int],
+) -> Tuple[Optional[np.ndarray], torch.device]:
+    limit = max_samples if max_samples is not None and max_samples > 0 else None
+    collected = 0
+    chunks: List[np.ndarray] = []
+    active_device = device
+    oom_reported = False
+
+    encoder.eval()
+    with torch.no_grad():
+        for batch in loader:
+            seq = prepare_sequence(extract_sequence(batch)).to(device=active_device, dtype=torch.float32)
+            seq = seq.transpose(1, 2)
             try:
-                # Load CSV file
-                df = pd.read_csv(csv_file)
-                
-                # Skip date/time columns and use only numeric columns
-                numeric_columns = df.select_dtypes(include=[np.number]).columns
-                if len(numeric_columns) == 0:
-                    # Try to find columns that might be numeric but stored as strings
-                    for col in df.columns:
-                        if col.lower() not in ['date', 'time', 'timestamp']:
-                            try:
-                                df[col] = pd.to_numeric(df[col], errors='coerce')
-                                if not df[col].isna().all():
-                                    numeric_columns = numeric_columns.append(pd.Index([col]))
-                            except:
-                                continue
-                
-                if len(numeric_columns) == 0:
-                    print(f"Warning: No numeric columns found in {csv_file}")
-                    continue
-                
-                # Extract each numeric column as a separate time series
-                for col in numeric_columns:
-                    series_data = df[col].fillna(0).values.astype(np.float32)
-                    
-                    # Truncate or pad to max_length
-                    if len(series_data) > max_length:
-                        series_data = series_data[:max_length]
-                    elif len(series_data) < max_length:
-                        padded = np.zeros(max_length, dtype=np.float32)
-                        padded[:len(series_data)] = series_data
-                        series_data = padded
-                    
-                    # Skip sequences with all zeros or constant values
-                    if np.std(series_data) > 1e-8:
-                        sequences.append(series_data)
-                        
-                        if len(sequences) >= max_series:
-                            break
-                
-                if len(sequences) >= max_series:
-                    break
-                    
-            except Exception as e:
-                print(f"Warning: Error reading {csv_file}: {e}")
-                continue
-        
-        if sequences:
-            return np.stack(sequences, axis=0)
-        else:
-            print(f"Warning: No valid sequences found for ICML dataset {dataset_name}")
-            return None
-        
-    except Exception as e:
-        print(f"Error loading ICML dataset {dataset_name}: {e}")
-        return None
+                outputs = encoder(seq)
+            except RuntimeError as exc:
+                message = str(exc).lower()
+                if active_device.type == "cuda" and "out of memory" in message:
+                    if not oom_reported:
+                        print("CUDA OOM encountered during embedding extraction; switching encoder to CPU.")
+                        oom_reported = True
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    encoder.to("cpu")
+                    active_device = torch.device("cpu")
+                    seq = seq.to(active_device)
+                    outputs = encoder(seq)
+                else:
+                    raise
+
+            if isinstance(outputs, (tuple, list)):
+                outputs = outputs[0]
+
+            embeddings_cpu = outputs.detach().to("cpu")
+            chunk = embeddings_cpu.numpy()
+            if limit is not None and collected + chunk.shape[0] > limit:
+                chunk = chunk[: limit - collected]
+            chunks.append(chunk)
+            collected += chunk.shape[0]
+
+            if active_device.type == "cuda" and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            del seq, outputs
+
+            if limit is not None and collected >= limit:
+                break
+
+    if not chunks:
+        return None, active_device
+    return np.concatenate(chunks, axis=0), active_device
 
 
-def discover_available_datasets(chronos_data_dir="../../data", icml_data_dir="../../ICML_datasets"):
-    """
-    Discover all available datasets from both Chronos and ICML sources.
-    
-    Returns:
-        tuple: (chronos_datasets, icml_datasets) - lists of available dataset names
-    """
-    chronos_datasets = []
-    icml_datasets = []
-    
-    # Discover Chronos datasets from data directory
-    try:
-        chronos_path = Path(chronos_data_dir)
-        if chronos_path.exists():
-            chronos_datasets = [d.name for d in chronos_path.iterdir() if d.is_dir() and not d.name.startswith('.')]
-    except Exception as e:
-        print(f"Error discovering Chronos datasets: {e}")
-    
-    # Discover ICML datasets
-    try:
-        icml_path = Path(icml_data_dir)
-        if icml_path.exists():
-            icml_datasets = [d.name for d in icml_path.iterdir() if d.is_dir() and not d.name.startswith('.')]
-    except Exception as e:
-        print(f"Error discovering ICML datasets: {e}")
-    
-    print(f"Found {len(chronos_datasets)} Chronos datasets: {chronos_datasets[:5]}{'...' if len(chronos_datasets) > 5 else ''}")
-    print(f"Found {len(icml_datasets)} ICML datasets: {icml_datasets}")
-    
-    return chronos_datasets, icml_datasets
+def discover_available_datasets(
+    chronos_data_dir: Path,
+    icml_data_dir: Path,
+) -> Tuple[List[str], List[str]]:
+    chronos = discover_directory_names(chronos_data_dir)
+    icml = discover_directory_names(icml_data_dir)
+    print(
+        f"Found {len(chronos)} Chronos datasets: {chronos[:5]}{'...' if len(chronos) > 5 else ''}"
+    )
+    print(f"Found {len(icml)} ICML datasets: {icml}")
+    return chronos, icml
 
 
-def get_encoder_path(config_path):
-    """
-    Retrieve the encoder path from the configuration file.
-
-    Args:
-        config_path (str or Path): Path to the configuration YAML file.
-
-    Returns:
-        str: Path to the encoder checkpoint.
-
-    Raises:
-        FileNotFoundError: If the config file does not exist.
-        KeyError: If encoder checkpoint path is not found.
-    """
-    cfg_path = Path(config_path)
-    if not cfg_path.exists():
-        raise FileNotFoundError(f"Config file not found: {cfg_path}")
-
-    with cfg_path.open("r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-
-    # Try to get encoder checkpoint from paths section
-    if "paths" in cfg and "encoder_checkpoint" in cfg["paths"]:
-        encoder_path = cfg["paths"]["encoder_checkpoint"]
-    else:
-        raise KeyError("Encoder checkpoint path not found in configuration. Expected 'paths.encoder_checkpoint' key.")
-
-    # Resolve relative paths against config directory
-    found_path = Path(encoder_path)
-    if not found_path.is_absolute():
-        resolved = (cfg_path.parent / found_path).resolve()
-    else:
-        resolved = found_path
-
+def get_encoder_path(config_path: Path) -> str:
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    with config_path.open("r", encoding="utf-8") as handle:
+        cfg = yaml.safe_load(handle) or {}
+    paths_section = cfg.get("paths") or {}
+    encoder_path = paths_section.get("encoder_checkpoint")
+    if encoder_path is None:
+        raise KeyError("Configuration missing 'paths.encoder_checkpoint'.")
+    candidate = Path(str(encoder_path))
+    resolved = candidate if candidate.is_absolute() else (config_path.parent / candidate).resolve()
     return str(resolved)
 
 
-def tsne_visualization(config_path, chronos_datasets=None, icml_datasets=None, repo_id="autogluon/chronos_datasets", 
-                      output_dir="results/tsne", max_samples_per_dataset=500, batch_size=128, 
-                      chronos_data_dir="../../data", icml_data_dir="../../ICML_datasets"):
-    """
-    Perform TSNE visualization for embeddings from multiple datasets.
-
-    Args:
-        config_path (str): Path to the configuration YAML file.
-        chronos_datasets (list): List of Chronos dataset names. If None, auto-discover all.
-        icml_datasets (list): List of ICML dataset names. If None, auto-discover all.
-        repo_id (str): Repository ID for Chronos datasets.
-        output_dir (str): Directory to save the TSNE plots.
-        max_samples_per_dataset (int): Max number of samples to use per dataset.
-        batch_size (int): Batch size for embedding extraction.
-        chronos_data_dir (str): Path to Chronos data directory.
-        icml_data_dir (str): Path to ICML datasets directory.
-    """
-    print(f"Starting t-SNE visualization with datasets: {datasets}")
-    
-    # Get encoder path from config
-    encoder_path = get_encoder_path(config_path)
+def tsne_visualization(
+    config_path: str,
+    chronos_datasets: Optional[Sequence[str]] = None,
+    icml_datasets: Optional[Sequence[str]] = None,
+    repo_id: str = "autogluon/chronos_datasets",
+    output_dir: str = "results/tsne",
+    max_samples_per_dataset: Optional[int] = 500,
+    batch_size: int = 128,
+    chronos_data_dir: str = "../../data",
+    icml_data_dir: str = "../../ICML_datasets",
+) -> None:
+    print("Starting t-SNE visualization")
+    cfg_path = Path(config_path).expanduser().resolve()
+    encoder_path = Path(get_encoder_path(cfg_path))
     print(f"Encoder path: {encoder_path}")
+    if not encoder_path.exists():
+        raise FileNotFoundError(f"Encoder checkpoint not found: {encoder_path}")
 
-    # Check if encoder checkpoint exists
-    checkpoint_path = Path(encoder_path)
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"Encoder checkpoint not found: {checkpoint_path}")
-
-    # Load configuration files
-    cfg_path = Path(config_path)
-    with cfg_path.open("r", encoding="utf-8") as fh:
-        forecast_cfg = yaml.safe_load(fh) or {}
+    with cfg_path.open("r", encoding="utf-8") as handle:
+        forecast_cfg = yaml.safe_load(handle) or {}
 
     model_section = dict(forecast_cfg.get("model") or {})
     model_config_candidate = model_section.get("config")
     if model_config_candidate is None:
         raise ValueError("Configuration missing required key 'model.config'.")
-
-    model_config_path = Path(model_config_candidate)
+    model_config_path = Path(str(model_config_candidate))
     if not model_config_path.is_absolute():
         model_config_path = (cfg_path.parent / model_config_path).resolve()
 
     base_config = tu.load_config(model_config_path)
     overrides = dict(model_section.get("overrides") or {})
-
     model_cfg = apply_model_overrides(
         base_config.model,
         token_size=overrides.get("token_size"),
@@ -297,143 +287,252 @@ def tsne_visualization(config_path, chronos_datasets=None, icml_datasets=None, r
         depth=overrides.get("depth"),
     )
 
-    # Build and load encoder
+    training_section = dict(forecast_cfg.get("training") or {})
+    horizons_raw = training_section.get("horizons", [])
+    if isinstance(horizons_raw, str):
+        horizons = parse_horizon_values(horizons_raw)
+    else:
+        horizons = [int(h) for h in horizons_raw]
+    if not horizons:
+        raise ValueError("No forecast horizons configured.")
+    max_horizon = max(horizons)
+
+    data_cfg = dict(base_config.data or {})
+    seed = int(training_section.get("seed", base_config.seed))
+    icml_batch_size = int(training_section.get("batch_size", data_cfg.get("batch_size", batch_size)))
+    icml_val_batch_size = int(
+        training_section.get("val_batch_size", data_cfg.get("val_batch_size", icml_batch_size))
+    )
+    num_workers = int(training_section.get("num_workers", data_cfg.get("num_workers", 0)))
+    pin_memory = bool(training_section.get("pin_memory", data_cfg.get("pin_memory", True)))
+    normalize_icml = bool(data_cfg.get("normalize", True))
+
+    chronos_base_dir = Path(chronos_data_dir).expanduser()
+    if not chronos_base_dir.is_absolute():
+        chronos_base_dir = (cfg_path.parent / chronos_base_dir).resolve()
+    icml_base_dir = Path(icml_data_dir).expanduser()
+    if not icml_base_dir.is_absolute():
+        icml_base_dir = (cfg_path.parent / icml_base_dir).resolve()
+
+    chronos_available, _icml_available = discover_available_datasets(chronos_base_dir, icml_base_dir)
+
+    chronos_section = dict(forecast_cfg.get("chronos") or {})
+    chronos_cfg: Dict[str, object] = {}
+    loader_config_candidate = chronos_section.get("config")
+    if loader_config_candidate is not None:
+        loader_config_path = resolve_optional_path(cfg_path.parent, loader_config_candidate)
+        if loader_config_path is None or not loader_config_path.exists():
+            raise FileNotFoundError(f"Chronos loader config not found: {loader_config_candidate}")
+        chronos_cfg.update(load_yaml_mapping(loader_config_path))
+
+    resolved_chronos = list(chronos_datasets) if chronos_datasets is not None else []
+    if not resolved_chronos:
+        config_list = parse_chronos_dataset_names(
+            chronos_section.get("datasets") or chronos_cfg.get("datasets") or chronos_cfg.get("datasets_to_load")
+        )
+        if config_list:
+            resolved_chronos = list(config_list)
+        else:
+            resolved_chronos = chronos_available
+
+    icml_selected = list(icml_datasets) if icml_datasets is not None else None
+
+    chronos_split = str(chronos_section.get("split", chronos_cfg.get("split", "train")))
+    target_dtype = chronos_section.get("target_dtype", chronos_cfg.get("target_dtype"))
+    normalize_per_series = bool(chronos_section.get("normalize", chronos_cfg.get("normalize", True)))
+    val_ratio = float(chronos_section.get("val_split", chronos_cfg.get("val_split", 0.2)))
+
+    context_length = chronos_section.get("context_length")
+    if context_length is None:
+        context_length = chronos_cfg.get("context_length", chronos_cfg.get("patch_length", max_horizon))
+    context_length = int(context_length)
+
+    stride_value = chronos_section.get("window_stride", chronos_cfg.get("window_stride"))
+    stride = int(stride_value) if stride_value is not None else max_horizon
+    stride = max(1, stride)
+
+    max_windows_per_series = chronos_section.get(
+        "max_windows_per_series", chronos_cfg.get("max_windows_per_series")
+    )
+    if max_windows_per_series is not None:
+        max_windows_per_series = int(max_windows_per_series)
+
+    max_series = chronos_section.get("max_series", chronos_cfg.get("max_series"))
+    if max_series is not None:
+        max_series = int(max_series)
+
+    load_kwargs: Dict[str, object] = dict(chronos_cfg.get("load_kwargs", {}) or {})
+    section_load_kwargs = chronos_section.get("load_kwargs")
+    if isinstance(section_load_kwargs, dict):
+        load_kwargs.update(section_load_kwargs)
+
+    offline_cache_dir = resolve_optional_path(cfg_path.parent, load_kwargs.get("offline_cache_dir"))
+    if offline_cache_dir is None:
+        offline_cache_dir = chronos_base_dir
+    load_kwargs["offline_cache_dir"] = str(offline_cache_dir)
+    if "force_offline" not in load_kwargs:
+        load_kwargs["force_offline"] = True
+
     device = default_device()
     print(f"Using device: {device}")
-    
     encoder = tu.build_encoder_from_config(model_cfg).to(device)
-    print(f"Loading encoder checkpoint: {checkpoint_path}")
-    load_encoder_checkpoint(encoder, checkpoint_path, device)
+    print(f"Loading encoder checkpoint: {encoder_path}")
+    load_encoder_checkpoint(encoder, encoder_path, device)
     encoder.eval()
 
-    # Auto-discover datasets if not provided
-    if chronos_datasets is None or icml_datasets is None:
-        discovered_chronos, discovered_icml = discover_available_datasets(chronos_data_dir, icml_data_dir)
-        if chronos_datasets is None:
-            chronos_datasets = discovered_chronos
-        if icml_datasets is None:
-            icml_datasets = discovered_icml
-    
-    all_datasets = [(name, "chronos") for name in chronos_datasets] + [(name, "icml") for name in icml_datasets]
-    print(f"Processing {len(all_datasets)} total datasets: {len(chronos_datasets)} Chronos + {len(icml_datasets)} ICML")
+    output_dir_path = Path(output_dir).expanduser()
+    if not output_dir_path.is_absolute():
+        output_dir_path = (ROOT_DIR / output_dir_path).resolve()
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+    embeddings_dir = output_dir_path / f"embeddings_{encoder_path.stem}"
+    embeddings_dir.mkdir(parents=True, exist_ok=True)
 
-    all_embeddings = []
-    all_labels = []
-    dataset_names = []
+    for old_file in embeddings_dir.glob("*.npy"):
+        try:
+            old_file.unlink()
+        except OSError as exc:
+            print(f"Warning: failed to remove stale embedding file {old_file}: {exc}")
 
-    # Process each dataset
-    for label, (dataset_name, dataset_type) in enumerate(all_datasets):
-        print(f"Processing {dataset_type} dataset: {dataset_name}")
+    chronos_loaders = build_chronos_dataset_loaders(
+        resolved_chronos,
+        repo_id=repo_id,
+        split=chronos_split,
+        target_dtype=target_dtype,
+        normalize_per_series=normalize_per_series,
+        load_kwargs=load_kwargs,
+        context_length=context_length,
+        horizon=max_horizon,
+        stride=stride,
+        batch_size=batch_size,
+        val_batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        torch_dtype=torch.float32,
+        max_windows_per_series=max_windows_per_series,
+        max_series=max_series,
+        val_ratio=val_ratio,
+        seed=seed,
+    )
 
-        # Load dataset based on type
-        if dataset_type == "chronos":
-            data = load_chronos_dataset(dataset_name, repo_id, max_length=512, max_series=max_samples_per_dataset)
-        else:  # icml
-            data = load_icml_dataset(dataset_name, icml_data_dir, max_length=512, max_series=max_samples_per_dataset)
-        
-        if data is None:
-            print(f"Warning: dataset {dataset_name} returned None, skipping.")
+    icml_loaders = build_icml_dataset_loaders(
+        icml_base_dir,
+        batch_size=icml_batch_size,
+        val_batch_size=icml_val_batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        normalize=normalize_icml,
+        selected=icml_selected,
+    )
+
+    dataset_entries: List[Tuple[str, str, DataLoader]] = []
+    dataset_entries.extend(("Chronos", name, loader) for name, loader in chronos_loaders)
+    dataset_entries.extend(("ICML", name, loader) for name, loader in icml_loaders)
+
+    if not dataset_entries:
+        raise RuntimeError("No datasets available for embedding extraction.")
+
+    embedding_records: List[Tuple[str, Path, int]] = []
+    dataset_labels: List[str] = []
+
+    for source, name, loader in dataset_entries:
+        label = f"{source}: {name}"
+        print(f"Extracting embeddings for {label}")
+        embeddings, device = extract_embeddings_from_loader(
+            loader,
+            encoder=encoder,
+            device=device,
+            max_samples=max_samples_per_dataset,
+        )
+        if embeddings is None or embeddings.size == 0:
+            print(f"Warning: no embeddings extracted for {label}")
             continue
+        sample_count = int(embeddings.shape[0])
+        slug = slugify_label(label)
+        file_path = embeddings_dir / f"{len(embedding_records):03d}_{slug}.npy"
+        np.save(file_path, embeddings)
+        embedding_records.append((label, file_path, sample_count))
+        print(f"Collected {sample_count} embeddings for {label} -> {file_path}")
 
-        print(f"Dataset {dataset_name} shape: {data.shape}")
-        
-        # Limit samples
-        n_samples = min(len(data), max_samples_per_dataset)
-        data = data[:n_samples]
-        print(f"Using {n_samples} samples from {dataset_name}")
-
-        embeddings_list = []
-        with torch.no_grad():
-            for start in range(0, n_samples, batch_size):
-                end = min(start + batch_size, n_samples)
-                batch = data[start:end]
-                
-                # Convert to tensor
-                batch_tensor = torch.tensor(batch, dtype=torch.float32, device=device)
-                
-                # Add channel dimension if needed (B, T) -> (B, 1, T)
-                if batch_tensor.dim() == 2:
-                    batch_tensor = batch_tensor.unsqueeze(1)
-                
-                # Get embeddings
-                emb = encoder(batch_tensor)
-                if isinstance(emb, (tuple, list)):
-                    emb = emb[0]
-                
-                emb = emb.detach().cpu().numpy()
-                embeddings_list.append(emb)
-
-        if len(embeddings_list) == 0:
-            print(f"No embeddings extracted for {dataset_name}")
-            continue
-
-        embeddings = np.concatenate(embeddings_list, axis=0)
-        print(f"Embeddings shape for {dataset_name}: {embeddings.shape}")
-        
-        all_embeddings.append(embeddings)
-        all_labels.extend([label] * len(embeddings))
-        dataset_names.append(f"{dataset_name} ({dataset_type})")
-
-    if len(all_embeddings) == 0:
+    if not embedding_records:
         raise RuntimeError("No embeddings produced for any dataset.")
 
-    # Combine all embeddings and labels
-    all_embeddings = np.concatenate(all_embeddings, axis=0)
-    all_labels = np.array(all_labels)
-    print(f"Total embeddings shape: {all_embeddings.shape}")
+    print(f"Embedding files written to {embeddings_dir}")
 
-    # Perform TSNE
-    print("Running t-SNE...")
-    perplexity = min(30, len(all_embeddings) // 3)  # Adjust perplexity based on sample size
+    dataset_labels = [record[0] for record in embedding_records]
+
+    loaded_embeddings: List[np.ndarray] = []
+    combined_labels: List[int] = []
+    for label_index, (dataset_label, file_path, expected_count) in enumerate(embedding_records):
+        data = np.load(file_path, allow_pickle=False)
+        if data.ndim == 1:
+            data = data.reshape(1, -1)
+        actual_count = int(data.shape[0])
+        if expected_count != actual_count:
+            print(
+                f"Warning: embedding count mismatch for {dataset_label}; expected {expected_count}, reloaded {actual_count}."
+            )
+        loaded_embeddings.append(data)
+        combined_labels.extend([label_index] * actual_count)
+
+    combined_embeddings = np.concatenate(loaded_embeddings, axis=0)
+    combined_labels = np.array(combined_labels, dtype=np.int64)
+    total_samples = combined_embeddings.shape[0]
+    print(f"Total embeddings: {total_samples}")
+
+    perplexity = max(2, min(30, total_samples // 3))
+    if perplexity >= total_samples:
+        perplexity = max(2, total_samples - 1)
+    print(f"Running t-SNE with perplexity={perplexity}")
+
     tsne = TSNE(n_components=2, random_state=42, init="random", perplexity=perplexity, max_iter=1000)
-    tsne_results = tsne.fit_transform(all_embeddings)
+    tsne_results = tsne.fit_transform(combined_embeddings)
     print("t-SNE completed")
 
-    # Plot TSNE
     plt.figure(figsize=(15, 12))
-    colors = plt.cm.Set3(np.linspace(0, 1, len(dataset_names)))
-    
-    for label, dataset_name in enumerate(dataset_names):
-        indices = np.where(all_labels == label)[0]
+    cmap = plt.get_cmap("tab20", max(1, len(dataset_labels)))
+
+    for label_index, dataset_label in enumerate(dataset_labels):
+        indices = np.where(combined_labels == label_index)[0]
         if indices.size == 0:
             continue
-        plt.scatter(tsne_results[indices, 0], tsne_results[indices, 1], 
-                   label=f"{dataset_name} (n={len(indices)})", 
-                   alpha=0.7, s=20, c=[colors[label]])
+        plt.scatter(
+            tsne_results[indices, 0],
+            tsne_results[indices, 1],
+            label=f"{dataset_label} (n={indices.size})",
+            alpha=0.7,
+            s=20,
+            color=cmap(label_index),
+        )
 
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.legend(bbox_to_anchor=(1.02, 1), loc="upper left", fontsize="small")
     plt.title("t-SNE Visualization of Time Series Embeddings")
     plt.xlabel("t-SNE Component 1")
     plt.ylabel("t-SNE Component 2")
     plt.tight_layout()
 
-    # Save plot
-    os.makedirs(output_dir, exist_ok=True)
-    encoder_name = Path(encoder_path).stem
-    plot_path = os.path.join(output_dir, f"tsne_{encoder_name}.png")
-    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    encoder_name = encoder_path.stem
+    plot_path = output_dir_path / f"tsne_{encoder_name}.png"
+    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
     plt.show()
     print(f"t-SNE plot saved to {plot_path}")
 
 
-# Example usage
 if __name__ == "__main__":
-    config_path = r"c:\WUR\ssm_time_series\src\configs\chronos_forecast.yaml"
-    
+    default_config = ROOT_DIR / "src" / "configs" / "chronos_forecast.yaml"
     try:
-        # Use all available datasets from both sources
         tsne_visualization(
-            config_path=config_path,
-            chronos_datasets=None,  # Auto-discover all Chronos datasets
-            icml_datasets=None,     # Auto-discover all ICML datasets
+            config_path=str(default_config),
+            chronos_datasets=None,
+            icml_datasets=None,
             repo_id="autogluon/chronos_datasets",
             output_dir="results/tsne",
-            max_samples_per_dataset=200,  # Reduced for faster processing with more datasets
+            max_samples_per_dataset=200,
             batch_size=64,
             chronos_data_dir="../../data",
-            icml_data_dir="../../ICML_datasets"
+            icml_data_dir="../../ICML_datasets",
         )
-    except Exception as e:
-        print(f"Error during t-SNE visualization: {e}")
+    except Exception as exc:
+        print(f"Error during t-SNE visualization: {exc}")
         import traceback
+
         traceback.print_exc()

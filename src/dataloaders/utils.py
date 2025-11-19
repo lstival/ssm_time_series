@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import os
-from typing import Dict, Iterable, Optional, Sequence, Tuple
+import random
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from dataclasses import dataclass, field
 
-from torch.utils.data import Dataset, Subset
+import numpy as np
+import torch
+from torch.utils.data import Dataset, Subset, DataLoader, ConcatDataset
+import datasets
+
+from dataloaders.cronos_dataset import load_chronos_datasets
+from util import simple_interpolation
 
 SUPPORTED_EXTENSIONS: Tuple[str, ...] = (".csv", ".txt", ".npz")
 
@@ -105,3 +113,350 @@ def split_dataset(dataset: Dataset, train_ratio: float) -> Tuple[Optional[Subset
         val_subset = Subset(dataset, range(split_idx, total))
 
     return train_subset, val_subset
+
+
+@dataclass
+class ChronosDatasetGroup:
+    """Group containing train and validation dataloaders for a dataset."""
+    name: str
+    train: Optional[DataLoader]
+    val: Optional[DataLoader]
+    metadata: Dict[str, object] = field(default_factory=dict)
+
+
+def _ensure_hf_list_feature_registered() -> None:
+    """Ensure HuggingFace List feature is registered."""
+    feature_registry = getattr(datasets.features, "_FEATURE_TYPES", None)
+    sequence_cls = getattr(datasets.features, "Sequence", None)
+    if isinstance(feature_registry, dict) and "List" not in feature_registry and sequence_cls is not None:
+        feature_registry["List"] = sequence_cls
+
+
+def _sequence_to_array(obj: object) -> np.ndarray:
+    """Convert sequence object to numpy array."""
+    arr = np.asarray(obj)
+    if arr.ndim == 0:
+        return arr.reshape(1, 1).astype(np.float32)
+    if arr.ndim == 1:
+        return arr.reshape(-1, 1).astype(np.float32)
+    if arr.ndim == 2:
+        return arr.astype(np.float32, copy=False)
+    time_dim = arr.shape[0]
+    return arr.reshape(time_dim, -1).astype(np.float32)
+
+
+def _split_sequences(
+    sequences: Sequence[np.ndarray],
+    *,
+    val_ratio: float,
+    seed: int,
+) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """Split sequences into training and validation sets."""
+    if not sequences or val_ratio <= 0.0:
+        return list(sequences), []
+
+    val_ratio = float(val_ratio)
+    val_ratio = max(0.0, min(val_ratio, 0.9))
+    indices = list(range(len(sequences)))
+    if not indices:
+        return [], []
+    rng = random.Random(seed)
+    rng.shuffle(indices)
+
+    val_size = int(len(indices) * val_ratio)
+    if val_size == 0 and len(indices) > 1 and val_ratio > 0:
+        val_size = 1
+    if val_size >= len(indices):
+        val_size = len(indices) - 1
+
+    val_indices = set(indices[:val_size])
+    train_sequences: List[np.ndarray] = []
+    val_sequences: List[np.ndarray] = []
+    for idx, seq in enumerate(sequences):
+        if idx in val_indices:
+            val_sequences.append(seq)
+        else:
+            train_sequences.append(seq)
+    if not train_sequences and val_sequences:
+        train_sequences.append(val_sequences.pop())
+    return train_sequences, val_sequences
+
+
+def _load_chronos_sequences(
+    dataset_name: str,
+    *,
+    repo_id: str,
+    split: str,
+    target_dtype: Optional[str],
+    normalize_per_series: bool,
+    load_kwargs: Dict[str, object],
+    max_series: Optional[int],
+    seed: int,
+) -> List[np.ndarray]:
+    """Load sequences from a Chronos dataset."""
+    _ensure_hf_list_feature_registered()
+    ds = load_chronos_datasets(
+        [dataset_name],
+        split=split,
+        repo_id=repo_id,
+        target_dtype=target_dtype,
+        normalize_per_series=normalize_per_series,
+        **load_kwargs,
+    )
+    sequences: List[np.ndarray] = []
+    indices = list(range(len(ds)))
+    rng = random.Random(seed)
+    rng.shuffle(indices)
+    for idx in indices:
+        sample = ds[int(idx)]
+        target = sample.get("target") if isinstance(sample, dict) else sample
+        sequences.append(_sequence_to_array(target))
+        if max_series is not None and len(sequences) >= max_series:
+            break
+    return sequences
+
+
+class ChronosForecastWindowDataset(Dataset):
+    """Create sliding windows from Chronos sequences for forecasting."""
+
+    def __init__(
+        self,
+        sequences: Sequence[np.ndarray],
+        *,
+        context_length: int,
+        horizon: int,
+        stride: int,
+        torch_dtype: torch.dtype = torch.float32,
+        max_windows_per_series: Optional[int] = None,
+    ) -> None:
+        if context_length <= 0:
+            raise ValueError("context_length must be positive")
+        if horizon <= 0:
+            raise ValueError("horizon must be positive")
+        if stride <= 0:
+            raise ValueError("stride must be positive")
+
+        self.context_length = int(context_length)
+        self.horizon = int(horizon)
+        self.stride = int(stride)
+        self.dtype = torch_dtype
+        self.pred_len = self.horizon
+        self.series: List[np.ndarray] = []
+        self.index_map: List[Tuple[int, int]] = []
+
+        for seq in sequences:
+            arr = _sequence_to_array(seq)
+            total = arr.shape[0]
+            required = self.context_length + self.horizon
+            if total < required:
+                arr = simple_interpolation(arr, required)
+                total = arr.shape[0]
+
+            base_idx = len(self.series)
+            self.series.append(arr)
+            max_start = total - required
+            start = 0
+            windows_added = 0
+            while start <= max_start:
+                self.index_map.append((base_idx, start))
+                windows_added += 1
+                if max_windows_per_series is not None and windows_added >= max_windows_per_series:
+                    break
+                start += self.stride
+            if windows_added == 0:
+                self.index_map.append((base_idx, max_start))
+
+    def __len__(self) -> int:
+        return len(self.index_map)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        series_idx, start = self.index_map[idx]
+        series = self.series[series_idx]
+        ctx_end = start + self.context_length
+        tgt_end = ctx_end + self.horizon
+        seq_x = torch.as_tensor(series[start:ctx_end], dtype=self.dtype)
+        seq_y = torch.as_tensor(series[ctx_end:tgt_end], dtype=self.dtype)
+        seq_x_mark = torch.zeros_like(seq_x)
+        seq_y_mark = torch.zeros_like(seq_y)
+        return seq_x, seq_y, seq_x_mark, seq_y_mark
+
+    @property
+    def series_count(self) -> int:
+        return len(self.series)
+
+
+def _build_dataloader(
+    sequences: Sequence[np.ndarray],
+    *,
+    context_length: int,
+    horizon: int,
+    stride: int,
+    batch_size: int,
+    shuffle: bool,
+    num_workers: int,
+    pin_memory: bool,
+    torch_dtype: torch.dtype,
+    max_windows_per_series: Optional[int],
+) -> Optional[DataLoader]:
+    """Build a dataloader from sequences."""
+    dataset = ChronosForecastWindowDataset(
+        sequences,
+        context_length=context_length,
+        horizon=horizon,
+        stride=stride,
+        torch_dtype=torch_dtype,
+        max_windows_per_series=max_windows_per_series,
+    )
+    if len(dataset) == 0:
+        return None
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        drop_last=False,
+    )
+
+
+def _build_aggregated_loader(
+    dataset_groups: Sequence[ChronosDatasetGroup],
+    *,
+    is_train: bool,
+    batch_size: int,
+    shuffle: bool,
+    num_workers: int,
+    pin_memory: bool,
+) -> Optional[DataLoader]:
+    """Aggregate datasets from multiple ChronosDatasetGroup objects into one loader."""
+    datasets_to_concat: List[Dataset] = []
+    collate_fn = None
+
+    for group in dataset_groups:
+        loader = group.train if is_train else group.val
+        if loader is None:
+            continue
+        ds = getattr(loader, "dataset", None)
+        if ds is None or len(ds) == 0:  # type: ignore[arg-type]
+            continue
+        datasets_to_concat.append(ds)
+        if collate_fn is None and loader.collate_fn is not None:
+            collate_fn = loader.collate_fn
+
+    if not datasets_to_concat:
+        return None
+
+    merged_dataset: Dataset
+    if len(datasets_to_concat) == 1:
+        merged_dataset = datasets_to_concat[0]
+    else:
+        merged_dataset = ConcatDataset(datasets_to_concat)
+
+    return DataLoader(
+        merged_dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        collate_fn=collate_fn,
+        drop_last=False,
+    )
+
+
+def build_dataset_group(
+    dataset_name: str,
+    *,
+    repo_id: str,
+    split: str,
+    target_dtype: Optional[str],
+    normalize_per_series: bool,
+    load_kwargs: Dict[str, object],
+    context_length: int,
+    horizon: int,
+    stride: int,
+    batch_size: int,
+    val_batch_size: int,
+    num_workers: int,
+    pin_memory: bool,
+    torch_dtype: torch.dtype,
+    max_windows_per_series: Optional[int],
+    max_series: Optional[int],
+    val_ratio: float,
+    seed: int,
+) -> Optional[ChronosDatasetGroup]:
+    """Build a dataset group with train and validation loaders."""
+    sequences = _load_chronos_sequences(
+        dataset_name,
+        repo_id=repo_id,
+        split=split,
+        target_dtype=target_dtype,
+        normalize_per_series=normalize_per_series,
+        load_kwargs=load_kwargs,
+        max_series=max_series,
+        seed=seed,
+    )
+    if not sequences:
+        print(f"Skipping dataset '{dataset_name}': no sequences available after loading.")
+        return None
+
+    train_sequences, val_sequences = _split_sequences(sequences, val_ratio=val_ratio, seed=seed)
+    train_loader = _build_dataloader(
+        train_sequences,
+        context_length=context_length,
+        horizon=horizon,
+        stride=stride,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        torch_dtype=torch_dtype,
+        max_windows_per_series=max_windows_per_series,
+    )
+
+    val_loader = _build_dataloader(
+        val_sequences,
+        context_length=context_length,
+        horizon=horizon,
+        stride=stride,
+        batch_size=val_batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        torch_dtype=torch_dtype,
+        max_windows_per_series=max_windows_per_series,
+    ) if val_sequences else None
+
+    if train_loader is None:
+        print(f"Skipping dataset '{dataset_name}': no training windows after preprocessing.")
+        return None
+
+    if val_loader is not None and len(val_loader.dataset) > 0:  # type: ignore[attr-defined]
+        val_sample = next(iter(val_loader))
+        print(f"Val loader sample shape: {val_sample[0].shape}")
+
+    metadata = {
+        "train_series": len(train_sequences),
+        "val_series": len(val_sequences),
+        "train_windows": len(train_loader.dataset),  # type: ignore[attr-defined]
+        "val_windows": len(val_loader.dataset) if val_loader is not None else 0,  # type: ignore[attr-defined]
+        "context_length": context_length,
+        "horizon": horizon,
+        "stride": stride,
+    }
+    print(
+        f"Prepared dataset '{dataset_name}': {metadata['train_series']} train series -> "
+        f"{metadata['train_windows']} train windows (context={context_length}, horizon={horizon}, stride={stride})."
+    )
+    if val_loader is None or len(val_loader.dataset) == 0:  # type: ignore[attr-defined]
+        print(f"  Validation split disabled or empty.")
+    else:
+        print(
+            f"  Validation: {metadata['val_series']} series -> {metadata['val_windows']} windows."
+        )
+
+    return ChronosDatasetGroup(
+        name=dataset_name,
+        train=train_loader,
+        val=val_loader,
+        metadata=metadata,
+    )
