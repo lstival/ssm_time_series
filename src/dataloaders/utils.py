@@ -13,9 +13,42 @@ from torch.utils.data import Dataset, Subset, DataLoader, ConcatDataset
 import datasets
 
 from dataloaders.cronos_dataset import load_chronos_datasets
-from util import simple_interpolation
 
 SUPPORTED_EXTENSIONS: Tuple[str, ...] = (".csv", ".txt", ".npz")
+
+
+def _simple_interpolation(time_series: object, target_size: int) -> object:
+    """Lightweight interpolation helper to avoid importing util and creating cycles."""
+    if not isinstance(target_size, int) or target_size <= 0:
+        raise ValueError("target_size must be a positive integer")
+
+    is_torch = isinstance(time_series, torch.Tensor)
+    if is_torch:
+        device = time_series.device
+        dtype = time_series.dtype
+        arr = time_series.detach().cpu().numpy()
+    else:
+        arr = np.asarray(time_series)
+
+    if arr.ndim != 2:
+        raise ValueError("time_series must be 2D with shape (time_steps, variables)")
+
+    time_steps, variables = arr.shape
+    if time_steps == target_size:
+        return time_series.clone() if is_torch else arr.copy()
+
+    if time_steps == 1:
+        out = np.repeat(arr, target_size, axis=0)
+    else:
+        old_pos = np.linspace(0.0, 1.0, time_steps)
+        new_pos = np.linspace(0.0, 1.0, target_size)
+        out = np.empty((target_size, variables), dtype=arr.dtype)
+        for idx in range(variables):
+            out[:, idx] = np.interp(new_pos, old_pos, arr[:, idx])
+
+    if is_torch:
+        return torch.from_numpy(out).to(device=device, dtype=dtype)
+    return out
 
 
 def discover_dataset_files(
@@ -249,7 +282,7 @@ class ChronosForecastWindowDataset(Dataset):
             total = arr.shape[0]
             required = self.context_length + self.horizon
             if total < required:
-                arr = simple_interpolation(arr, required)
+                arr = _simple_interpolation(arr, required)
                 total = arr.shape[0]
 
             base_idx = len(self.series)
