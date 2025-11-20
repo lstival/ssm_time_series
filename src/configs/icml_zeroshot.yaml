@@ -1,0 +1,34 @@
+# Configuration for zero-shot evaluation on ICML datasets using Chronos-trained heads
+seed: 42
+
+model:
+  # Path to the base encoder configuration (relative paths resolved from this file)
+  config: ../configs/mamba_encoder.yaml
+  overrides:
+    token_size: null
+    model_dim: null
+    embedding_dim: null
+    depth: null
+
+paths:
+  # Chronos-trained forecasting checkpoint containing encoder + head weights
+  forecast_checkpoint: ../../checkpoints/multi_horizon_forecast_chronos_20251119_1218/all_datasets/best_model.pt
+  # Optional: direct encoder checkpoint if stored separately (None uses forecast checkpoint)
+  encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100/time_series_best.pt
+  # Directory where evaluation artifacts will be saved
+  results_dir: ../../results
+
+data:
+  # Root directory containing ICML datasets
+  data_dir: ../../ICML_datasets
+  # Optional dataset filter (leave empty for all)
+  dataset_name:
+  filename:
+  batch_size: 32
+  val_batch_size: 32
+  num_workers: 4
+
+evaluation:
+  horizons: [96, 192, 336, 720]
+  split: test
+  output_prefix: icml_zeroshot_forecast

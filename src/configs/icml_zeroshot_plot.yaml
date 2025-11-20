@@ -1,0 +1,15 @@
+# Configuration for plotting zero-shot forecast results
+predictions:
+  # Either provide 'root_dir' + 'dataset' (slug) or a direct 'file' path to the saved data.pt
+  root_dir: ../../results/icml_zeroshot_forecast_YYYYMMDD_HHMMSS_predictions
+  dataset: dataset
+  file:
+
+plot:
+  horizons: [96]
+  sample_indices: [0]
+  feature_indices: [0]
+  output_dir: ../../results/plots
+  show: false
+  dpi: 150
+  figsize: [12, 6]
