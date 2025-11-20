@@ -196,9 +196,9 @@ class Dataset_Custom(Dataset):
         # size [seq_len, label_len, pred_len]
         # info
         if size == None:
-            self.seq_len = 24 * 4 * 4
+            self.seq_len = 24 * 4
             self.label_len = 24 * 4
-            self.pred_len = 24 * 4
+            self.pred_len = 45 * 4 * 4 
         else:
             self.seq_len = size[0]
             self.label_len = size[1]
@@ -279,6 +279,11 @@ class Dataset_Custom(Dataset):
         seq_x_mark = self.data_stamp[s_begin:s_end]
         seq_y_mark = self.data_stamp[r_begin:r_end]
 
+        # # normal the data
+        # self.scaler.fit(seq_x)
+        # seq_x = self.scaler.transform(seq_x)
+        # seq_y = self.scaler.transform(seq_y)
+
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
     def __len__(self):
@@ -295,9 +300,9 @@ class Dataset_PEMS(Dataset):
         # size [seq_len, label_len, pred_len]
         # info
         if size == None:
-            self.seq_len = 24 * 4 * 4
+            self.seq_len = 24 * 4
             self.label_len = 24 * 4
-            self.pred_len = 24 * 4
+            self.pred_len = 45 * 4 * 4 
         else:
             self.seq_len = size[0]
             self.label_len = size[1]
@@ -319,7 +324,8 @@ class Dataset_PEMS(Dataset):
         self.__read_data__()
 
     def __read_data__(self):
-        self.scaler = StandardScaler()
+        # self.scaler = StandardScaler()
+        self.scaler = MinMaxScaler(feature_range=(0, 1))
         data_file = os.path.join(self.root_path, self.data_path)
         data = np.load(data_file, allow_pickle=True)
         data = data['data'][:, :, 0]
@@ -353,6 +359,11 @@ class Dataset_PEMS(Dataset):
         seq_x_mark = torch.zeros((seq_x.shape[0], 1))
         seq_y_mark = torch.zeros((seq_x.shape[0], 1))
 
+        # # normal the data
+        # self.scaler.fit(seq_x)
+        # seq_x = self.scaler.transform(seq_x)
+        # seq_y = self.scaler.transform(seq_y)
+
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
     def __len__(self):
@@ -369,9 +380,9 @@ class Dataset_Solar(Dataset):
         # size [seq_len, label_len, pred_len]
         # info
         if size == None:
-            self.seq_len = 24 * 4 * 4
+            self.seq_len = 24 * 4
             self.label_len = 24 * 4
-            self.pred_len = 24 * 4
+            self.pred_len = 45 * 4 * 4 
         else:
             self.seq_len = size[0]
             self.label_len = size[1]
@@ -393,7 +404,8 @@ class Dataset_Solar(Dataset):
         self.__read_data__()
 
     def __read_data__(self):
-        self.scaler = StandardScaler()
+        # self.scaler = StandardScaler()
+        self.scaler = MinMaxScaler(feature_range=(0, 1))
         df_raw = []
         with open(os.path.join(self.root_path, self.data_path), "r", encoding='utf-8') as f:
             for line in f.readlines():
@@ -434,6 +446,11 @@ class Dataset_Solar(Dataset):
         seq_x_mark = torch.zeros((seq_x.shape[0], 1))
         seq_y_mark = torch.zeros((seq_x.shape[0], 1))
 
+        # # normal the data
+        # self.scaler.fit(seq_x)
+        # seq_x = self.scaler.transform(seq_x)
+        # seq_y = self.scaler.transform(seq_y)
+
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
     def __len__(self):
@@ -472,7 +489,8 @@ class Dataset_Pred(Dataset):
         self.__read_data__()
 
     def __read_data__(self):
-        self.scaler = StandardScaler()
+        # self.scaler = StandardScaler()
+        self.scaler = MinMaxScaler(feature_range=(0, 1))
         df_raw = pd.read_csv(os.path.join(self.root_path,
                                           self.data_path))
         '''

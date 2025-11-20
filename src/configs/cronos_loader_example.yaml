@@ -32,6 +32,6 @@ datasets_to_load:
   - solar_1h
 
 split: train
-patch_length: 384
+patch_length: 96
 target_dtype: float64
 normalize: true

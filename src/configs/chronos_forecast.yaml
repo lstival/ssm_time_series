@@ -20,7 +20,7 @@ chronos:
   target_dtype: float64
   normalize: true
   val_split: 0.2
-  context_length: 384
+  context_length: 96
   window_stride: null  # Use the maximum horizon when null.
   max_windows_per_series: null
   max_series: null
@@ -39,7 +39,7 @@ training:
   horizons: [96, 192, 336, 720]
 
 paths:
-  encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100/time_series_best.pt
+  encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100_ep20/time_series_best.pt
   visual_encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100/visual_encoder_best.pt
   checkpoint_dir: ../../checkpoints
   results_dir: ../../results

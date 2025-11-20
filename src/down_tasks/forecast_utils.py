@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 
-from dataloaders.embedding_cache_dataset import build_embedding_cache_loader
+# from dataloaders.embedding_cache_dataset import build_embedding_cache_loader
 
 from models.classifier import (
     ForecastRegressor,
@@ -293,164 +293,12 @@ def discover_icml_datasets(icml_datasets_dir: Path) -> List[Tuple[str, Path]]:
     return sorted(datasets)
 
 
-def evaluate_single_dataset(
-    model: MultiHorizonForecastMLP,
-    dataset_path: Path,
-    horizons: List[int],
-    device: torch.device,
-    batch_size: int = 64,
-    num_workers: int = 4,
-    split: str = "test",
-    return_predictions: bool = False
-) -> Dict[int, Dict[str, Union[float, torch.Tensor]]]:
-    """Evaluate model on a single dataset for all horizons.
-    
-    Args:
-        model: Trained model
-        dataset_path: Path to dataset directory
-        horizons: List of forecast horizons
-        device: Device to run evaluation on
-        batch_size: Batch size for evaluation
-        num_workers: Number of data loading workers
-        split: Data split to evaluate on ('test', 'val', 'train')
-        return_predictions: If True, return predictions and targets
-    
-    Returns:
-        Dictionary mapping horizon to metrics/predictions
-    """
-    model.eval()
-    results = {}
-    
-    with torch.no_grad():
-        for horizon in horizons:
-            try:
-                # Load test data for this dataset and horizon
-                dataloader = build_embedding_cache_loader(
-                    dataset_path,
-                    horizon=horizon,
-                    split=split,
-                    batch_size=batch_size,
-                    shuffle=False,
-                    num_workers=num_workers,
-                    pin_memory=device.type == "cuda",
-                )
-                
-                all_predictions = []
-                all_targets = []
-                running_mse = 0.0
-                running_mae = 0.0
-                running_mape = 0.0
-                steps = 0
-                
-                for embeddings, targets in tqdm(dataloader, desc=f"{split.capitalize()} H{horizon}", leave=False):
-                    embeddings = embeddings.to(device, non_blocking=True)
-                    targets = targets.to(device, non_blocking=True)
-                    
-                    predictions = model(embeddings, horizon)
-                    
-                    # Calculate metrics
-                    mse_loss = torch.nn.functional.mse_loss(predictions, targets)
-                    mae_loss = torch.nn.functional.l1_loss(predictions, targets)
-                    
-                    # MAPE calculation (avoiding division by zero)
-                    epsilon = 1e-8
-                    mape_loss = torch.mean(torch.abs((targets - predictions) / (targets + epsilon))) * 100
-                    
-                    running_mse += float(mse_loss.item())
-                    running_mae += float(mae_loss.item())
-                    running_mape += float(mape_loss.item())
-                    steps += 1
-                    
-                    if return_predictions:
-                        all_predictions.append(predictions.cpu())
-                        all_targets.append(targets.cpu())
-                
-                # Compile results
-                result_dict = {
-                    'mse': running_mse / max(1, steps),
-                    'mae': running_mae / max(1, steps),
-                    'mape': running_mape / max(1, steps),
-                    'rmse': np.sqrt(running_mse / max(1, steps)),
-                    'samples': steps * batch_size if steps > 0 else 0
-                }
-                
-                if return_predictions and all_predictions:
-                    result_dict['predictions'] = torch.cat(all_predictions, dim=0)
-                    result_dict['targets'] = torch.cat(all_targets, dim=0)
-                
-                results[horizon] = result_dict
-                
-            except FileNotFoundError:
-                print(f"  No {split} data for horizon {horizon}")
-                results[horizon] = {
-                    'mse': float('nan'), 
-                    'mae': float('nan'),
-                    'mape': float('nan'),
-                    'rmse': float('nan'),
-                    'samples': 0
-                }
-                if return_predictions:
-                    results[horizon]['predictions'] = None
-                    results[horizon]['targets'] = None
-    
-    return results
-
-
-def evaluate_all_icml_datasets(
-    model: MultiHorizonForecastMLP,
-    icml_datasets_dir: Path,
-    horizons: List[int],
-    device: torch.device,
-    batch_size: int = 64,
-    num_workers: int = 4,
-    split: str = "test"
-) -> Dict[str, Dict[int, Dict[str, float]]]:
-    """Evaluate model on all ICML datasets.
-    
-    Args:
-        model: Trained model
-        icml_datasets_dir: Path to ICML_datasets directory
-        horizons: List of forecast horizons
-        device: Device to run evaluation on
-        batch_size: Batch size for evaluation
-        num_workers: Number of data loading workers
-        split: Data split to evaluate on
-    
-    Returns:
-        Dictionary mapping dataset_name to horizon results
-    """
-    datasets = discover_icml_datasets(icml_datasets_dir)
-    all_results = {}
-    
-    print(f"Evaluating on {len(datasets)} ICML datasets:")
-    for dataset_name, dataset_path in datasets:
-        print(f"  {dataset_name}")
-    
-    for dataset_name, dataset_path in datasets:
-        print(f"\nEvaluating {dataset_name}...")
-        
-        dataset_results = evaluate_single_dataset(
-            model, dataset_path, horizons, device, batch_size, num_workers, split
-        )
-        
-        all_results[dataset_name] = dataset_results
-        
-        # Print results for this dataset
-        print(f"Results for {dataset_name}:")
-        for horizon, metrics in dataset_results.items():
-            if not np.isnan(metrics['mse']):
-                print(f"  H{horizon}: MSE={metrics['mse']:.6f}, MAE={metrics['mae']:.6f}, MAPE={metrics['mape']:.2f}%, RMSE={metrics['rmse']:.6f} ({metrics['samples']} samples)")
-            else:
-                print(f"  H{horizon}: No data available")
-    
-    return all_results
-
-
 def save_evaluation_results(
     results: Dict[str, Dict[int, Dict[str, float]]],
     checkpoint_info: Dict[str, Any],
     output_dir: Path,
-    prefix: str = "icml_evaluation"
+    prefix: str = "icml_evaluation",
+    timestamp: Optional[str] = None,
 ) -> Tuple[Path, Path]:
     """Save evaluation results to JSON and CSV files.
     
@@ -459,12 +307,14 @@ def save_evaluation_results(
         checkpoint_info: Checkpoint information
         output_dir: Directory to save results
         prefix: Filename prefix
+        timestamp: Optional timestamp override (default uses current time)
     
     Returns:
         Tuple of (json_path, csv_path)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     # Save JSON
     json_path = output_dir / f"{prefix}_{timestamp}.json"

@@ -107,13 +107,17 @@ class TimeSeriesDataModule:
         return self.test_loaders
 
 if __name__ == '__main__':
+    
+    import matplotlib.pyplot as plt
+    import numpy as np
+
     # Example usage with the requested settings
     data_root = "../ICML_datasets"
-    # dataset_name = "PEMS07.npz"
+    dataset_name = "PEMS07.npz"
     # dataset_name = "solar_AL.txt"
-    dataset_name = "ETTh1.csv"
+    # dataset_name = "ETTh1.csv"
 
-    module = TimeSeriesDataModule(data_dir=data_root, dataset_name=dataset_name, batch_size=1, train=True, val=True, test=True)
+    module = TimeSeriesDataModule(data_dir=data_root, dataset_name=dataset_name, batch_size=1, train=False, val=False, test=True)
     loaders = module.get_dataloaders()
     for dataset in loaders:
         if dataset.train is not None:
@@ -123,5 +127,10 @@ if __name__ == '__main__':
         if dataset.test is not None:
             print(f"{dataset.name}: {len(dataset.test)} test batches")
     
-    aa = next(iter(dataset.train))
+    aa = next(iter(dataset.test))
     print(aa[0].shape)
+
+    plt.plot(np.arange(aa[0].shape[1]), aa[0][0,:,0])
+    plt.show()
+    plt.plot(np.arange(aa[1][0,:720,0].shape[0]), aa[1][0,:720,0])
+    plt.show()

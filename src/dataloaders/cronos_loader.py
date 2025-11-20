@@ -172,46 +172,45 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-
-    # example of usage
-    logging.basicConfig(level=logging.INFO)
-    datasets_to_load = [
+	import matplotlib.pyplot as plt 
+	logging.basicConfig(level=logging.INFO)
+	datasets_to_load = [
         "m4_daily",
-        "m4_hourly",
-        "m4_monthly",
-        "m4_yearly",
-        "monash_australian_electricity",
-        "taxi_30min",
-        "monash_traffic",
-        "monash_kdd_cup_2018",
-        "m5",
-        "mexico_city_bikes",
-        "exchange_rate",
-        "monash_car_parts",
-        "monash_covid_deaths",
-        "monash_electricity_hourly",
-        "monash_fred_md",
-        "monash_hospital",
-        "monash_m1_monthly",
-        "monash_m1_quarterly",
-        "monash_m1_yearly",
-        "monash_m3_monthly",
-        "monash_m3_quarterly",
-        "monash_m3_yearly",
-        "monash_nn5_weekly",
-        "taxi_30min",
-        "uber_tlc_daily",
-        "uber_tlc_hourly",
-        "wind_farms_hourly",
-        "wind_farms_daily",
-        "dominick",
-        "electricity_15min",
-        "solar_1h",
+        # "m4_hourly",
+        # "m4_monthly",
+        # "m4_yearly",
+        # "monash_australian_electricity",
+        # "taxi_30min",
+        # "monash_traffic",
+        # "monash_kdd_cup_2018",
+        # "m5",
+        # "mexico_city_bikes",
+        # "exchange_rate",
+        # "monash_car_parts",
+        # "monash_covid_deaths",
+        # "monash_electricity_hourly",
+        # "monash_fred_md",
+        # "monash_hospital",
+        # "monash_m1_monthly",
+        # "monash_m1_quarterly",
+        # "monash_m1_yearly",
+        # "monash_m3_monthly",
+        # "monash_m3_quarterly",
+        # "monash_m3_yearly",
+        # "monash_nn5_weekly",
+        # "taxi_30min",
+        # "uber_tlc_daily",
+        # "uber_tlc_hourly",
+        # "wind_farms_hourly",
+        # "wind_farms_daily",
+        # "dominick",
+        # "electricity_15min",
+        # "solar_1h",
         # "ercot", # 8 rows with 158k length time series
     ]
 
     # Build dataloaders (will download dataset if needed)
-    train_loader, val_loader = build_chronos_dataloaders(
+	train_loader, val_loader = build_chronos_dataloaders(
         datasets_to_load,
         val_split=0.2,
         batch_size=8,
@@ -220,39 +219,32 @@ if __name__ == "__main__":
     )
 
     # Inspect a single batch from train loader
-    batch = next(iter(train_loader))
-    print("target shape:", batch["target"].shape)
-    print("lengths:", batch.get("lengths"))
-    print("mask shape:", batch.get("mask").shape)
-	
-	# import matplotlib.pyplot as plt
-
-	# targets = batch["target"]
-	# lengths = batch.get("lengths")
-	# if lengths is None:
-	# 	lengths = torch.tensor([t.numel() for t in targets], dtype=torch.long)
-	# lengths = lengths.detach().cpu().numpy()
-
-	# rows, cols = 4, 2
-	# n_plots = min(targets.shape[0], rows * cols)
-	# fig, axes = plt.subplots(rows, cols, figsize=(targets.shape[0], 12))
-	# axes = axes.flatten()
-
-	# for i in range(n_plots):
-	# 	s = targets[i]  # torch.Tensor
-	# 	arr = s.detach().cpu().reshape(-1).numpy()
-	# 	valid_len = int(lengths[i])
-	# 	arr = arr[:valid_len]  # trim to actual length before plotting
-	# 	ax = axes[i]
-	# 	ax.plot(arr, alpha=0.8)
-	# 	ax.axhline(0.0, color="k", linestyle="--", linewidth=0.8)
-	# 	ax.axhline(1.0, color="k", linestyle="--", linewidth=0.8)
-	# 	ax.set_title(f"sample {i} (len={arr.size})")
-	# 	ax.set_xlabel("time step")
-	# 	ax.set_ylabel("value")
-
-	# for j in range(n_plots, rows * cols):
-	# 	axes[j].axis("off")
-
-	# plt.tight_layout()
-	# plt.show()
+	batch = next(iter(train_loader))
+	print("target shape:", batch["target"].shape)
+	print("lengths:", batch.get("lengths"))
+	print("mask shape:", batch.get("mask").shape)
+	targets = batch["target"]
+	lengths = batch.get("lengths")
+	if lengths is None:
+		lengths = torch.tensor([t.numel() for t in targets], dtype=torch.long)
+	lengths = lengths.detach().cpu().numpy()
+	rows, cols = 4, 2
+	n_plots = min(targets.shape[0], rows * cols)
+	fig, axes = plt.subplots(rows, cols, figsize=(targets.shape[0], 12))
+	axes = axes.flatten()
+	for i in range(n_plots):
+		s = targets[i]  # torch.Tensor
+		arr = s.detach().cpu().reshape(-1).numpy()
+		valid_len = int(lengths[i])
+		arr = arr[:valid_len]  # trim to actual length before plotting
+		ax = axes[i]
+		ax.plot(arr, alpha=0.8)
+		ax.axhline(0.0, color="k", linestyle="--", linewidth=0.8)
+		ax.axhline(1.0, color="k", linestyle="--", linewidth=0.8)
+		ax.set_title(f"sample {i} (len={arr.size})")
+		ax.set_xlabel("time step")
+		ax.set_ylabel("value")
+	for j in range(n_plots, rows * cols):
+		axes[j].axis("off")
+	plt.tight_layout()
+	plt.show()
