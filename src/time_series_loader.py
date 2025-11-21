@@ -113,7 +113,7 @@ if __name__ == '__main__':
 
     # Example usage with the requested settings
     data_root = "../ICML_datasets"
-    dataset_name = "PEMS07.npz"
+    dataset_name = "PEMS03.npz"
     # dataset_name = "solar_AL.txt"
     # dataset_name = "ETTh1.csv"
 

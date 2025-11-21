@@ -394,21 +394,30 @@ def build_model_from_checkpoint(
 
 
 def select_loader(group, preferred_split: str):
+    def _resolve(split_name: str, loader):
+        dataset_attr = f"{split_name}_dataset"
+        dataset_obj = getattr(group, dataset_attr, None)
+        if dataset_obj is None and loader is not None:
+            dataset_obj = getattr(loader, "dataset", None)
+        return loader, dataset_obj
+
     if preferred_split == "test":
-        primary, fallback = group.test, group.val
+        primary_loader, fallback_loader = group.test, group.val
         primary_name, fallback_name = "test", "val"
     else:
-        primary, fallback = group.val, group.test
+        primary_loader, fallback_loader = group.val, group.test
         primary_name, fallback_name = "val", "test"
 
-    if primary is not None:
-        return primary, primary_name
-    if fallback is not None:
+    if primary_loader is not None:
+        loader, dataset = _resolve(primary_name, primary_loader)
+        return loader, dataset, primary_name
+    if fallback_loader is not None:
+        loader, dataset = _resolve(fallback_name, fallback_loader)
         print(
             f"  Preferred split '{primary_name}' unavailable for {group.name}; using '{fallback_name}' split instead."
         )
-        return fallback, fallback_name
-    return None, primary_name
+        return loader, dataset, fallback_name
+    return None, None, primary_name
 
 
 def list_dataset_directories(root: Path) -> List[str]:

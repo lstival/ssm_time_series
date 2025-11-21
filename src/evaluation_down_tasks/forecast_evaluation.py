@@ -290,6 +290,7 @@ def main() -> None:
         train=True,
         val=True,
         test=True,
+        grouped=True,
     )
     dataset_groups = module.get_dataloaders()
     dataset_map: Dict[str, DatasetLoaders] = {group.name: group for group in dataset_groups}

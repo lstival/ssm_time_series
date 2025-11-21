@@ -413,6 +413,7 @@ def main() -> None:
             train=False,
             val=True,
             test=True,
+            grouped=True,
         )
         dataset_groups = module.get_dataloaders()
         if not dataset_groups:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 from data_provider.data_loader import Dataset_Custom, Dataset_Solar, Dataset_PEMS
@@ -21,6 +21,9 @@ class DatasetLoaders(NamedTuple):
     train: Optional[DataLoader]
     val: Optional[DataLoader]
     test: Optional[DataLoader]
+    train_dataset: Optional[Dataset]
+    val_dataset: Optional[Dataset]
+    test_dataset: Optional[Dataset]
 
 
 class _DatasetSplits(NamedTuple):
@@ -39,13 +42,14 @@ def _try_make_dataset(
     normalize: bool,
 ) -> Dataset:
     """Instantiate ``Dataset_Custom`` while being tolerant to optional kwargs."""
+    path = (data_path or "").lower()
     try:
-        path = (data_path or "").lower()
         if path.endswith(".txt"):
             return Dataset_Solar(
                 root_path=root,
                 flag=flag,
                 data_path=data_path,
+                scale=normalize,
             )
 
         if path.endswith(".npz"):
@@ -53,14 +57,28 @@ def _try_make_dataset(
                 root_path=root,
                 flag=flag,
                 data_path=data_path,
+                scale=normalize,
             )
         return Dataset_Custom(
             root_path=root,
             flag=flag,
             data_path=data_path,
+            scale=normalize,
         )
     except TypeError:
-        # Backwards compatibility if ``normalize`` isn't supported.
+        # Backwards compatibility if ``scale`` isn't supported.
+        if path.endswith(".txt"):
+            return Dataset_Solar(
+                root_path=root,
+                flag=flag,
+                data_path=data_path,
+            )
+        if path.endswith(".npz"):
+            return Dataset_PEMS(
+                root_path=root,
+                flag=flag,
+                data_path=data_path,
+            )
         return Dataset_Custom(
             root_path=root,
             flag=flag,
@@ -141,6 +159,7 @@ def _make_loader(
     shuffle: bool,
     num_workers: int,
     pin_memory: bool,
+    collate_fn: Optional[Callable],
 ) -> Optional[DataLoader]:
     """Create a dataloader when ``dataset`` is available and non-empty."""
     if dataset is None:
@@ -159,6 +178,8 @@ def _make_loader(
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=pin_memory,
+        collate_fn=collate_fn,
+        drop_last=True
     )
 
 
@@ -177,6 +198,7 @@ def build_concat_dataloaders(
     include_test: bool = False,
     filename: Optional[str] = None,
     dataset_files: Optional[Dict[str, str]] = None,
+    collate_fn: Optional[Callable] = None,
 ) -> Tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
     """Create dataloaders that concatenate every dataset discovered under ``root_path``."""
     dataset_splits, skipped = _collect_dataset_splits(
@@ -210,6 +232,7 @@ def build_concat_dataloaders(
         shuffle=True,
         num_workers=num_workers,
         pin_memory=pin_memory,
+        collate_fn=collate_fn,
     )
 
     val_loader = _make_loader(
@@ -218,6 +241,7 @@ def build_concat_dataloaders(
         shuffle=False,
         num_workers=num_workers,
         pin_memory=pin_memory,
+        collate_fn=collate_fn,
     )
 
     test_loader = _make_loader(
@@ -226,6 +250,7 @@ def build_concat_dataloaders(
         shuffle=False,
         num_workers=num_workers,
         pin_memory=pin_memory,
+        collate_fn=collate_fn,
     )
 
     return train_loader, val_loader, test_loader
@@ -246,6 +271,7 @@ def build_dataset_loader_list(
     include_test: bool = False,
     filename: Optional[str] = None,
     dataset_files: Optional[Dict[str, str]] = None,
+    collate_fn: Optional[Callable] = None,
 ) -> List[DatasetLoaders]:
     """Build a list of dataloaders, one entry per dataset under ``root_path``."""
     dataset_splits, skipped = _collect_dataset_splits(
@@ -273,6 +299,7 @@ def build_dataset_loader_list(
             shuffle=True,
             num_workers=num_workers,
             pin_memory=pin_memory,
+            collate_fn=collate_fn,
         )
         val_loader = _make_loader(
             split.val,
@@ -280,6 +307,7 @@ def build_dataset_loader_list(
             shuffle=False,
             num_workers=num_workers,
             pin_memory=pin_memory,
+            collate_fn=collate_fn,
         )
         test_loader = _make_loader(
             split.test,
@@ -287,6 +315,7 @@ def build_dataset_loader_list(
             shuffle=False,
             num_workers=num_workers,
             pin_memory=pin_memory,
+            collate_fn=collate_fn,
         )
 
         grouped_loaders.append(
@@ -295,6 +324,9 @@ def build_dataset_loader_list(
                 train=train_loader,
                 val=val_loader,
                 test=test_loader,
+                train_dataset=split.train,
+                val_dataset=split.val,
+                test_dataset=split.test,
             )
         )
 

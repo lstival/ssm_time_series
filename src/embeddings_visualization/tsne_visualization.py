@@ -90,6 +90,7 @@ def build_icml_dataset_loaders(
         train=True,
         val=False,
         test=False,
+        grouped=True,
     )
     groups = module.get_dataloaders()
     allowed = {entry.lower() for entry in selected} if selected else None

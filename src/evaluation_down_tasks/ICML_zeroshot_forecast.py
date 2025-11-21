@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -197,6 +198,15 @@ if __name__ == "__main__":
         f"{checkpoint_info['horizons']} (evaluating {eval_horizons}), max horizon {max_horizon}"
     )
 
+    # Generate timestamp from checkpoint name or current time
+    checkpoint_timestamp = extract_checkpoint_timestamp(zeroshot_cfg.forecast_checkpoint_path)
+    if checkpoint_timestamp is None:
+        checkpoint_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Create predictions directory early
+    predictions_dir = results_dir / f"{zeroshot_cfg.output_prefix}_{checkpoint_timestamp}_predictions"
+    predictions_dir.mkdir(parents=True, exist_ok=True)
+
     module = TimeSeriesDataModule(
         dataset_name=zeroshot_cfg.dataset_name or "",
         data_dir=zeroshot_cfg.data_dir,
@@ -206,7 +216,7 @@ if __name__ == "__main__":
         pin_memory=True,
         normalize=True,
         filename=zeroshot_cfg.filename,
-        train=False,
+        train=True,
         val=True,
         test=True,
     )
@@ -217,35 +227,51 @@ if __name__ == "__main__":
     results_by_dataset: Dict[str, Dict[int, Dict[str, float]]] = {}
     prediction_payloads: Dict[str, Dict[str, object]] = {}
     for group in dataset_groups:
-        loader, split_used = select_loader(group, zeroshot_cfg.split)
+        loader, _, split_used = select_loader(group, zeroshot_cfg.split)
         if loader is None:
             print(f"Skipping dataset '{group.name}' because neither val nor test splits are available.")
             continue
 
-        ensure_dataloader_pred_len(loader, max_horizon)
-        print(f"\nEvaluating dataset '{group.name}' on '{split_used}' split...")
-        metrics, payload = evaluate_and_collect(model, loader, device, list(eval_horizons), max_horizon)
-        if metrics is None or payload is None:
-            print(f"  No metrics computed for dataset '{group.name}'.")
-            continue
+        try:
+            ensure_dataloader_pred_len(loader, max_horizon)
+            print(f"\nEvaluating dataset '{group.name}' on '{split_used}' split...")
+            metrics, payload = evaluate_and_collect(model, loader, device, list(eval_horizons), max_horizon)
+            if metrics is None or payload is None:
+                print(f"  No metrics computed for dataset '{group.name}'.")
+                continue
 
-        results_by_dataset[group.name] = metrics
-        payload["dataset"] = group.name
-        payload["dataset_slug"] = dataset_slug(group.name)
-        prediction_payloads[group.name] = payload
-        for horizon in eval_horizons:
-            if horizon in metrics:
-                mse = metrics[horizon]["mse"]
-                mae = metrics[horizon]["mae"]
-                mse_str = f"{mse:.6f}" if not math.isnan(mse) else "nan"
-                mae_str = f"{mae:.6f}" if not math.isnan(mae) else "nan"
-                print(f"  H{horizon}: MSE={mse_str}, MAE={mae_str}")
+            results_by_dataset[group.name] = metrics
+            payload["dataset"] = group.name
+            payload["dataset_slug"] = dataset_slug(group.name)
+            payload["split"] = split_used
+            prediction_payloads[group.name] = payload
+            
+            # Save predictions immediately after evaluation
+            dataset_dir = predictions_dir / payload["dataset_slug"]
+            dataset_dir.mkdir(parents=True, exist_ok=True)
+            torch.save(payload, dataset_dir / "data.pt")
+            print(f"  Saved predictions to: {dataset_dir / 'data.pt'}")
+            
+            for horizon in eval_horizons:
+                if horizon in metrics:
+                    mse = metrics[horizon]["mse"]
+                    mae = metrics[horizon]["mae"]
+                    mse_str = f"{mse:.6f}" if not math.isnan(mse) else "nan"
+                    mae_str = f"{mae:.6f}" if not math.isnan(mae) else "nan"
+                    print(f"  H{horizon}: MSE={mse_str}, MAE={mae_str}")
+                    
+        except (RuntimeError, torch.cuda.OutOfMemoryError) as exc:
+            if "out of memory" in str(exc).lower() or "oom" in str(exc).lower():
+                print(f"  Skipping dataset '{group.name}' due to out of memory error: {exc}")
+                torch.cuda.empty_cache()  # Clear GPU memory if available
+                continue
+            else:
+                raise  # Re-raise non-OOM runtime errors
 
     if not results_by_dataset:
         print("No datasets produced evaluation metrics. Nothing to report.")
         sys.exit(0)
 
-    checkpoint_timestamp = extract_checkpoint_timestamp(zeroshot_cfg.forecast_checkpoint_path)
     dataset_json_path, dataset_csv_path = save_evaluation_results(
         results_by_dataset,
         checkpoint_info,
@@ -256,24 +282,13 @@ if __name__ == "__main__":
 
     print_evaluation_summary(results_by_dataset, checkpoint_info)
 
-    timestamp = dataset_json_path.stem
-    prefix_tag = f"{zeroshot_cfg.output_prefix}_"
-    if timestamp.startswith(prefix_tag):
-        timestamp = timestamp[len(prefix_tag) :]
     horizon_summary = _aggregate_results_by_horizon(results_by_dataset)
     horizon_json_path, horizon_csv_path = _save_horizon_summary(
         horizon_summary,
         results_dir=results_dir,
         prefix=zeroshot_cfg.output_prefix,
-        timestamp=timestamp,
+        timestamp=checkpoint_timestamp,
     )
-
-    predictions_dir = results_dir / f"{zeroshot_cfg.output_prefix}_{timestamp}_predictions"
-    predictions_dir.mkdir(parents=True, exist_ok=True)
-    for dataset_name, payload in prediction_payloads.items():
-        dataset_dir = predictions_dir / payload["dataset_slug"]
-        dataset_dir.mkdir(parents=True, exist_ok=True)
-        torch.save(payload, dataset_dir / "data.pt")
 
     print("\nSaved evaluation artifacts:")
     print(f"  Per-dataset JSON: {dataset_json_path}")

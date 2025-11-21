@@ -103,6 +103,7 @@ if __name__ == "__main__":  # pragma: no cover - simple CLI entrypoint
         train=False,
         val=False,
         test=True,
+        grouped=True,
     )
     loaders = module.get_dataloaders()
 

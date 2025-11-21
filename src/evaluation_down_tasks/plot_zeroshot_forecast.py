@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, List, Sequence, Tuple
 
 import matplotlib
 matplotlib.use("Agg")
@@ -28,8 +29,8 @@ for path in (SRC_DIR, ROOT_DIR):
 
 CONFIG_ENV_VAR = "ICML_ZEROSHOT_PLOT_CONFIG"
 DEFAULT_CONFIG_PATH = SRC_DIR / "configs" / "icml_zeroshot_plot.yaml"
-
-
+PLOT_HORIZONS: Tuple[int, ...] = (96, 192, 336, 720)
+TOP_K = 3
 
 
 def _extract_sample(payload: Dict[str, object], sample_idx: int) -> Dict[str, torch.Tensor]:
@@ -41,6 +42,53 @@ def _extract_sample(payload: Dict[str, object], sample_idx: int) -> Dict[str, to
         "targets": targets,
         "predictions": preds,
     }
+
+
+def _compute_sample_mae(
+    targets: torch.Tensor,
+    predictions: torch.Tensor,
+) -> Tuple[torch.Tensor, int]:
+    if not isinstance(targets, torch.Tensor) or not isinstance(predictions, torch.Tensor):
+        raise TypeError("'targets' and 'predictions' must be torch.Tensor instances")
+    if targets.ndim != 3 or predictions.ndim != 3:
+        raise ValueError("Expected three-dimensional tensors: [samples, horizon, features]")
+
+    common_horizon = int(min(targets.size(1), predictions.size(1)))
+    if common_horizon <= 0:
+        raise ValueError("Targets and predictions must contain at least one forecast step")
+
+    targets_slice = targets[:, :common_horizon, :].float()
+    predictions_slice = predictions[:, :common_horizon, :].float()
+    mae_per_sample = torch.mean(torch.abs(targets_slice - predictions_slice), dim=(1, 2))
+    return mae_per_sample, common_horizon
+
+
+def _checkpoint_slug(predictions_path: Path, payload: Dict[str, object]) -> str:
+    raw_name = (
+        payload.get("checkpoint_name")
+        or payload.get("checkpoint")
+        or payload.get("checkpoint_path")
+        or predictions_path.stem
+    )
+    if isinstance(raw_name, (str, Path)):
+        raw_str = str(raw_name)
+    else:
+        raw_str = predictions_path.stem
+    candidate = Path(raw_str).stem
+    return dataset_slug(candidate)
+
+
+def _extract_results_folder_name(predictions_path: Path) -> str:
+    """Extract the results folder name from the predictions file path.
+    
+    For a path like /path/to/results/model_run_20241121/dataset_name/data.pt,
+    this returns 'model_run_20241121'.
+    """
+    # Navigate up from data.pt -> dataset_dir -> results_folder
+    # predictions_path is typically: results_folder/dataset_name/data.pt
+    dataset_dir = predictions_path.parent  # dataset_name folder
+    results_folder = dataset_dir.parent    # results folder (what we want)
+    return results_folder.name
 
 
 def _plot_single(
@@ -114,20 +162,72 @@ if __name__ == "__main__":
         available_horizons = payload.get("eval_horizons") or []
         max_horizon = int(payload.get("max_horizon", 0))
         dataset_label = payload.get("dataset") or dataset_name
+        results_folder_name = _extract_results_folder_name(predictions_path)
+        base_output_dir = plot_cfg.output_dir / results_folder_name
+        plots_output_dir = base_output_dir / "plots"
+        best_metrics_root = base_output_dir / "best_metrics"
+        dataset_best_dir = best_metrics_root / dataset_slug(str(dataset_label))
+
+        targets_tensor = payload.get("targets")
+        predictions_tensor = payload.get("predictions")
+        if not isinstance(targets_tensor, torch.Tensor) or not isinstance(predictions_tensor, torch.Tensor):
+            raise TypeError("Payload must contain 'targets' and 'predictions' tensors")
+        mae_per_sample, comparable_horizon = _compute_sample_mae(
+            targets_tensor,
+            predictions_tensor,
+        )
+        num_samples = int(mae_per_sample.numel())
+        top_k = min(TOP_K, num_samples)
+        if top_k == 0:
+            print("No samples available to rank for plotting; skipping dataset.")
+            continue
+
+        ranked_indices = torch.argsort(mae_per_sample)[:top_k].tolist()
+        print(f"\nSelected top {top_k} sample(s) by MAE for dataset '{dataset_label}':")
+        for rank, sample_idx in enumerate(ranked_indices, start=1):
+            mae_value = float(mae_per_sample[sample_idx])
+            print(f"  #{rank}: sample {sample_idx} | MAE={mae_value:.6f}")
 
         print(f"\nLoaded predictions from: {predictions_path}")
         print(f"Dataset: {dataset_label}")
         print(f"Available horizons: {available_horizons}")
         print(f"Context length: {payload.get('context_length')} | Target features: {payload.get('target_features')}")
 
-        for sample_idx in plot_cfg.sample_indices:
+        requested_horizons = [h for h in PLOT_HORIZONS if h <= comparable_horizon]
+        missing_horizons = [h for h in PLOT_HORIZONS if h > comparable_horizon]
+        if missing_horizons:
+            print(
+                "Warning: skipping horizons exceeding available forecast length "
+                f"({comparable_horizon}). Missing: {missing_horizons}"
+            )
+        if not requested_horizons:
+            print("Requested plot horizons are unavailable for this dataset; skipping plots.")
+            continue
+
+        for sample_idx in ranked_indices:
             sample = _extract_sample(payload, sample_idx)
-            for horizon in plot_cfg.horizon_list:
+            sample_target_len = sample["targets"].shape[0]
+            sample_pred_len = sample["predictions"].shape[0]
+            max_sample_horizon = min(sample_target_len, sample_pred_len)
+
+            for horizon in requested_horizons:
                 if max_horizon and horizon > max_horizon:
-                    raise ValueError(
-                        f"Requested horizon {horizon} exceeds stored maximum horizon {max_horizon}"
+                    print(
+                        f"Skipping horizon {horizon} for sample {sample_idx}: exceeds stored max horizon {max_horizon}."
                     )
+                    continue
+                if horizon > max_sample_horizon:
+                    print(
+                        f"Skipping horizon {horizon} for sample {sample_idx}: available forecast length {max_sample_horizon}."
+                    )
+                    continue
                 for feature_idx in plot_cfg.feature_indices:
+                    if feature_idx >= sample["context"].shape[1]:
+                        print(
+                            f"Skipping feature index {feature_idx} for sample {sample_idx}: "
+                            f"only {sample['context'].shape[1]} feature(s) available."
+                        )
+                        continue
                     output_path = _plot_single(
                         context=sample["context"],
                         targets=sample["targets"],
@@ -136,12 +236,16 @@ if __name__ == "__main__":
                         feature_idx=feature_idx,
                         dataset=str(dataset_label),
                         sample_idx=sample_idx,
-                        output_dir=plot_cfg.output_dir,
+                        output_dir=plots_output_dir,
                         show=plot_cfg.show,
                         dpi=plot_cfg.dpi,
                         figsize=plot_cfg.figsize,
                     )
+                    dataset_best_dir.mkdir(parents=True, exist_ok=True)
+                    best_output_path = dataset_best_dir / output_path.name
+                    shutil.copy2(output_path, best_output_path)
                     generated_paths.append(output_path)
                     print(f"Saved plot: {output_path}")
+                    print(f"Saved best plot copy: {best_output_path}")
 
     print(f"\nGenerated {len(generated_paths)} plot(s).")

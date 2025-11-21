@@ -2,25 +2,26 @@ import os
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import Dataset, DataLoader
-from sklearn.preprocessing import StandardScaler
+from torch.utils.data import Dataset
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from .utils.timefeatures import time_features
 import warnings
-from sklearn.preprocessing import MinMaxScaler
 
 warnings.filterwarnings('ignore')
 
+SEQ_LEN = 24 * 4
+LABEL_LEN = 0
+PRED_LEN = 24 * 4
 
 class Dataset_ETT_hour(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  features='S', data_path='ETTh1.csv',
-                 target='OT', scale=True, timeenc=0, freq='h'):
+                 target='OT', scale=True, timeenc=0, freq='h', scaler_type='minmax'):
         # size [seq_len, label_len, pred_len]
-        # info
         if size == None:
-            self.seq_len = 24 * 4 * 4
-            self.label_len = 24 * 4
-            self.pred_len = 24 * 4
+            self.seq_len = SEQ_LEN
+            self.label_len = LABEL_LEN
+            self.pred_len = PRED_LEN
         else:
             self.seq_len = size[0]
             self.label_len = size[1]
@@ -35,13 +36,18 @@ class Dataset_ETT_hour(Dataset):
         self.scale = scale
         self.timeenc = timeenc
         self.freq = freq
+        self.scaler_type = scaler_type
 
         self.root_path = root_path
         self.data_path = data_path
         self.__read_data__()
 
     def __read_data__(self):
-        self.scaler = StandardScaler()
+        if self.scaler_type == 'standard':
+            self.scaler = StandardScaler()
+        else:
+            self.scaler = MinMaxScaler(feature_range=(0, 1))
+
         df_raw = pd.read_csv(os.path.join(self.root_path,
                                           self.data_path))
 
@@ -102,13 +108,12 @@ class Dataset_ETT_hour(Dataset):
 class Dataset_ETT_minute(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  features='S', data_path='ETTm1.csv',
-                 target='OT', scale=True, timeenc=0, freq='t'):
+                 target='OT', scale=True, timeenc=0, freq='t', scaler_type='minmax'):
         # size [seq_len, label_len, pred_len]
-        # info
         if size == None:
-            self.seq_len = 24 * 4 * 4
-            self.label_len = 24 * 4
-            self.pred_len = 24 * 4
+            self.seq_len = SEQ_LEN
+            self.label_len = LABEL_LEN
+            self.pred_len = PRED_LEN
         else:
             self.seq_len = size[0]
             self.label_len = size[1]
@@ -123,13 +128,18 @@ class Dataset_ETT_minute(Dataset):
         self.scale = scale
         self.timeenc = timeenc
         self.freq = freq
+        self.scaler_type = scaler_type
 
         self.root_path = root_path
         self.data_path = data_path
         self.__read_data__()
 
     def __read_data__(self):
-        self.scaler = StandardScaler()
+        if self.scaler_type == 'standard':
+            self.scaler = StandardScaler()
+        else:
+            self.scaler = MinMaxScaler(feature_range=(0, 1))
+
         df_raw = pd.read_csv(os.path.join(self.root_path,
                                           self.data_path))
 
@@ -192,13 +202,12 @@ class Dataset_ETT_minute(Dataset):
 class Dataset_Custom(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  features='S', data_path='ETTh1.csv',
-                 target='OT', scale=True, timeenc=0, freq='h'):
+                 target='OT', scale=True, timeenc=0, freq='h', scaler_type='minmax'):
         # size [seq_len, label_len, pred_len]
-        # info
         if size == None:
-            self.seq_len = 24 * 4
-            self.label_len = 24 * 4
-            self.pred_len = 45 * 4 * 4 
+            self.seq_len = SEQ_LEN
+            self.label_len = LABEL_LEN
+            self.pred_len = PRED_LEN
         else:
             self.seq_len = size[0]
             self.label_len = size[1]
@@ -213,14 +222,18 @@ class Dataset_Custom(Dataset):
         self.scale = scale
         self.timeenc = timeenc
         self.freq = freq
+        self.scaler_type = scaler_type
 
         self.root_path = root_path
         self.data_path = data_path
         self.__read_data__()
 
     def __read_data__(self):
-        # self.scaler = StandardScaler()
-        self.scaler = MinMaxScaler(feature_range=(0, 1))
+        if self.scaler_type == 'standard':
+            self.scaler = StandardScaler()
+        else:
+            self.scaler = MinMaxScaler(feature_range=(0, 1))
+
         df_raw = pd.read_csv(os.path.join(self.root_path,
                           self.data_path))
 
@@ -279,11 +292,6 @@ class Dataset_Custom(Dataset):
         seq_x_mark = self.data_stamp[s_begin:s_end]
         seq_y_mark = self.data_stamp[r_begin:r_end]
 
-        # # normal the data
-        # self.scaler.fit(seq_x)
-        # seq_x = self.scaler.transform(seq_x)
-        # seq_y = self.scaler.transform(seq_y)
-
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
     def __len__(self):
@@ -296,13 +304,12 @@ class Dataset_Custom(Dataset):
 class Dataset_PEMS(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  features='S', data_path='ETTh1.csv',
-                 target='OT', scale=True, timeenc=0, freq='h'):
+                 target='OT', scale=True, timeenc=0, freq='h', scaler_type='minmax'):
         # size [seq_len, label_len, pred_len]
-        # info
         if size == None:
-            self.seq_len = 24 * 4
-            self.label_len = 24 * 4
-            self.pred_len = 45 * 4 * 4 
+            self.seq_len = SEQ_LEN
+            self.label_len = LABEL_LEN
+            self.pred_len = PRED_LEN
         else:
             self.seq_len = size[0]
             self.label_len = size[1]
@@ -318,14 +325,18 @@ class Dataset_PEMS(Dataset):
         self.scale = scale
         self.timeenc = timeenc
         self.freq = freq
+        self.scaler_type = scaler_type
 
         self.root_path = root_path
         self.data_path = data_path
         self.__read_data__()
 
     def __read_data__(self):
-        # self.scaler = StandardScaler()
-        self.scaler = MinMaxScaler(feature_range=(0, 1))
+        if self.scaler_type == 'standard':
+            self.scaler = StandardScaler()
+        else:
+            self.scaler = MinMaxScaler(feature_range=(0, 1))
+
         data_file = os.path.join(self.root_path, self.data_path)
         data = np.load(data_file, allow_pickle=True)
         data = data['data'][:, :, 0]
@@ -359,11 +370,6 @@ class Dataset_PEMS(Dataset):
         seq_x_mark = torch.zeros((seq_x.shape[0], 1))
         seq_y_mark = torch.zeros((seq_x.shape[0], 1))
 
-        # # normal the data
-        # self.scaler.fit(seq_x)
-        # seq_x = self.scaler.transform(seq_x)
-        # seq_y = self.scaler.transform(seq_y)
-
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
     def __len__(self):
@@ -376,13 +382,12 @@ class Dataset_PEMS(Dataset):
 class Dataset_Solar(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  features='S', data_path='ETTh1.csv',
-                 target='OT', scale=True, timeenc=0, freq='h'):
+                 target='OT', scale=True, timeenc=0, freq='h', scaler_type='minmax'):
         # size [seq_len, label_len, pred_len]
-        # info
         if size == None:
-            self.seq_len = 24 * 4
-            self.label_len = 24 * 4
-            self.pred_len = 45 * 4 * 4 
+            self.seq_len = SEQ_LEN
+            self.label_len = LABEL_LEN
+            self.pred_len = PRED_LEN
         else:
             self.seq_len = size[0]
             self.label_len = size[1]
@@ -398,19 +403,23 @@ class Dataset_Solar(Dataset):
         self.scale = scale
         self.timeenc = timeenc
         self.freq = freq
+        self.scaler_type = scaler_type
 
         self.root_path = root_path
         self.data_path = data_path
         self.__read_data__()
 
     def __read_data__(self):
-        # self.scaler = StandardScaler()
-        self.scaler = MinMaxScaler(feature_range=(0, 1))
+        if self.scaler_type == 'standard':
+            self.scaler = StandardScaler()
+        else:
+            self.scaler = MinMaxScaler(feature_range=(0, 1))
+
         df_raw = []
-        with open(os.path.join(self.root_path, self.data_path), "r", encoding='utf-8') as f:
-            for line in f.readlines():
-                line = line.strip('\n').split(',')
-                data_line = np.stack([float(i) for i in line])
+        with open(os.path.join(self.root_path, self.data_path), "r", encoding='utf-8') as handle:
+            for line in handle:
+                values = line.strip().split(',')
+                data_line = np.stack([float(i) for i in values])
                 df_raw.append(data_line)
         df_raw = np.stack(df_raw, 0)
         df_raw = pd.DataFrame(df_raw)
@@ -446,11 +455,6 @@ class Dataset_Solar(Dataset):
         seq_x_mark = torch.zeros((seq_x.shape[0], 1))
         seq_y_mark = torch.zeros((seq_x.shape[0], 1))
 
-        # # normal the data
-        # self.scaler.fit(seq_x)
-        # seq_x = self.scaler.transform(seq_x)
-        # seq_y = self.scaler.transform(seq_y)
-
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
     def __len__(self):
@@ -463,13 +467,12 @@ class Dataset_Solar(Dataset):
 class Dataset_Pred(Dataset):
     def __init__(self, root_path, flag='pred', size=None,
                  features='S', data_path='ETTh1.csv',
-                 target='OT', scale=True, inverse=False, timeenc=0, freq='15min', cols=None):
+                 target='OT', scale=True, inverse=False, timeenc=0, freq='15min', cols=None, scaler_type='minmax'):
         # size [seq_len, label_len, pred_len]
-        # info
         if size == None:
-            self.seq_len = 24 * 4 * 4
-            self.label_len = 24 * 4
-            self.pred_len = 24 * 4
+            self.seq_len = SEQ_LEN
+            self.label_len = LABEL_LEN
+            self.pred_len = PRED_LEN
         else:
             self.seq_len = size[0]
             self.label_len = size[1]
@@ -484,13 +487,18 @@ class Dataset_Pred(Dataset):
         self.timeenc = timeenc
         self.freq = freq
         self.cols = cols
+        self.scaler_type = scaler_type
+
         self.root_path = root_path
         self.data_path = data_path
         self.__read_data__()
 
     def __read_data__(self):
-        # self.scaler = StandardScaler()
-        self.scaler = MinMaxScaler(feature_range=(0, 1))
+        if self.scaler_type == 'standard':
+            self.scaler = StandardScaler()
+        else:
+            self.scaler = MinMaxScaler(feature_range=(0, 1))
+
         df_raw = pd.read_csv(os.path.join(self.root_path,
                                           self.data_path))
         '''
@@ -565,5 +573,3 @@ class Dataset_Pred(Dataset):
 
     def inverse_transform(self, data):
         return self.scaler.inverse_transform(data)
-
-

@@ -12,9 +12,9 @@ model:
 
 paths:
   # Chronos-trained forecasting checkpoint containing encoder + head weights
-  forecast_checkpoint: ../../checkpoints/multi_horizon_forecast_chronos_20251119_1218/all_datasets/best_model.pt
+  forecast_checkpoint: ../../checkpoints/multi_horizon_forecast_chronos_20251121_1108/all_datasets/best_model.pt
   # Optional: direct encoder checkpoint if stored separately (None uses forecast checkpoint)
-  encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100/time_series_best.pt
+  encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100_ep20/time_series_best.pt
   # Directory where evaluation artifacts will be saved
   results_dir: ../../results
 
@@ -24,8 +24,8 @@ data:
   # Optional dataset filter (leave empty for all)
   dataset_name:
   filename:
-  batch_size: 32
-  val_batch_size: 32
+  batch_size: 512
+  val_batch_size: 512
   num_workers: 4
 
 evaluation:

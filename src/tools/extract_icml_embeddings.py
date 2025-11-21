@@ -132,6 +132,7 @@ def _build_module(
         train=True,
         val=True,
         test=True,
+        grouped=True,
     )
 
     module.setup()
