@@ -16,7 +16,7 @@ PRED_LEN = 24 * 4
 class Dataset_ETT_hour(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  features='S', data_path='ETTh1.csv',
-                 target='OT', scale=True, timeenc=0, freq='h', scaler_type='minmax'):
+                 target='OT', scale=True, timeenc=1, freq='h', scaler_type='minmax'):
         # size [seq_len, label_len, pred_len]
         if size == None:
             self.seq_len = SEQ_LEN
@@ -108,7 +108,7 @@ class Dataset_ETT_hour(Dataset):
 class Dataset_ETT_minute(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  features='S', data_path='ETTm1.csv',
-                 target='OT', scale=True, timeenc=0, freq='t', scaler_type='minmax'):
+                 target='OT', scale=True, timeenc=1, freq='m', scaler_type='minmax'):
         # size [seq_len, label_len, pred_len]
         if size == None:
             self.seq_len = SEQ_LEN
@@ -202,7 +202,7 @@ class Dataset_ETT_minute(Dataset):
 class Dataset_Custom(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  features='S', data_path='ETTh1.csv',
-                 target='OT', scale=True, timeenc=0, freq='h', scaler_type='minmax'):
+                 target='OT', scale=True, timeenc=0, freq='m', scaler_type='minmax'):
         # size [seq_len, label_len, pred_len]
         if size == None:
             self.seq_len = SEQ_LEN
@@ -304,7 +304,7 @@ class Dataset_Custom(Dataset):
 class Dataset_PEMS(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  features='S', data_path='ETTh1.csv',
-                 target='OT', scale=True, timeenc=0, freq='h', scaler_type='minmax'):
+                 target='OT', scale=True, timeenc=0, freq='m', scaler_type='minmax'):
         # size [seq_len, label_len, pred_len]
         if size == None:
             self.seq_len = SEQ_LEN
@@ -382,7 +382,7 @@ class Dataset_PEMS(Dataset):
 class Dataset_Solar(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  features='S', data_path='ETTh1.csv',
-                 target='OT', scale=True, timeenc=0, freq='h', scaler_type='minmax'):
+                 target='OT', scale=True, timeenc=0, freq='m', scaler_type='minmax'):
         # size [seq_len, label_len, pred_len]
         if size == None:
             self.seq_len = SEQ_LEN

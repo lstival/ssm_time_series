@@ -113,11 +113,11 @@ if __name__ == '__main__':
 
     # Example usage with the requested settings
     data_root = "../ICML_datasets"
-    dataset_name = "PEMS03.npz"
+    # dataset_name = "PEMS03.npz"
     # dataset_name = "solar_AL.txt"
-    # dataset_name = "ETTh1.csv"
+    dataset_name = "ETTm1.csv"
 
-    module = TimeSeriesDataModule(data_dir=data_root, dataset_name=dataset_name, batch_size=1, train=False, val=False, test=True)
+    module = TimeSeriesDataModule(data_dir=data_root, dataset_name=dataset_name, batch_size=1, train=True, val=True, test=True)
     loaders = module.get_dataloaders()
     for dataset in loaders:
         if dataset.train is not None:
@@ -130,7 +130,14 @@ if __name__ == '__main__':
     aa = next(iter(dataset.test))
     print(aa[0].shape)
 
-    plt.plot(np.arange(aa[0].shape[1]), aa[0][0,:,0])
-    plt.show()
-    plt.plot(np.arange(aa[1][0,:720,0].shape[0]), aa[1][0,:720,0])
+    inp = aa[0][0, :, 0]
+    tgt = aa[1][0, :, 0]
+    inp_x = np.arange(inp.shape[0])
+    tgt_x = np.arange(inp.shape[0], inp.shape[0] + tgt.shape[0])
+
+    plt.figure()
+    plt.plot(inp_x, inp, color='blue', label='input 0')
+    plt.plot(tgt_x, tgt, color='orange', label='target 1)')
+    plt.xlabel('time step')
+    plt.legend()
     plt.show()

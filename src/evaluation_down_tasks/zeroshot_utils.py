@@ -169,8 +169,8 @@ def load_zeroshot_config(config_path: Path) -> ZeroShotConfig:
     evaluation_section = dict(payload.get("evaluation") or {})
     horizons = normalize_horizons(evaluation_section.get("horizons", [96, 192, 336, 720]))
     split = str(evaluation_section.get("split", "test")).lower()
-    if split not in {"test", "val"}:
-        raise ValueError("'evaluation.split' must be either 'test' or 'val'")
+    if split not in {"test", "val", "all"}:
+        raise ValueError("'evaluation.split' must be either 'test', 'all', or 'val'")
     output_prefix = str(evaluation_section.get("output_prefix", "icml_zeroshot_forecast"))
 
     seed_value = payload.get("seed")
@@ -401,6 +401,31 @@ def select_loader(group, preferred_split: str):
             dataset_obj = getattr(loader, "dataset", None)
         return loader, dataset_obj
 
+    if preferred_split == "all":
+        # Concatenate datasets from train, val, and test splits
+        from torch.utils.data import ConcatDataset
+        
+        datasets = []
+        available_splits = []
+        
+        for split_name, loader in [("train", group.train), ("val", group.val), ("test", group.test)]:
+            if loader is not None:
+                _, dataset = _resolve(split_name, loader)
+                if dataset is not None:
+                    datasets.append(dataset)
+                    available_splits.append(split_name)
+        
+        if not datasets:
+            return None, None, "all"
+        
+        concatenated_dataset = ConcatDataset(datasets)
+        split_names = "+".join(available_splits)
+        print(f"  Using concatenated dataset from splits: {split_names}")
+        
+        # Return the first available loader (structure), concatenated dataset, and "all" indicator
+        first_loader = next((loader for loader in [group.train, group.val, group.test] if loader is not None), None)
+        return first_loader, concatenated_dataset, "all"
+    
     if preferred_split == "test":
         primary_loader, fallback_loader = group.test, group.val
         primary_name, fallback_name = "test", "val"

@@ -7,7 +7,7 @@ import os
 from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
-from data_provider.data_loader import Dataset_Custom, Dataset_Solar, Dataset_PEMS
+from data_provider.data_loader import Dataset_Custom, Dataset_Solar, Dataset_PEMS, Dataset_ETT_hour, Dataset_ETT_minute
 
 from .utils import discover_dataset_files, split_dataset
 
@@ -59,31 +59,61 @@ def _try_make_dataset(
                 data_path=data_path,
                 scale=normalize,
             )
-        return Dataset_Custom(
+        if "h1" in path or "h2" in path:
+            return Dataset_ETT_hour(
             root_path=root,
             flag=flag,
             data_path=data_path,
             scale=normalize,
-        )
+            )
+
+        if "m1" in path or "m2" in path:
+            return Dataset_ETT_minute(
+            root_path=root,
+            flag=flag,
+            data_path=data_path,
+            scale=normalize,
+            )
+        # return Dataset_Custom(
+        #     root_path=root,
+        #     flag=flag,
+        #     data_path=data_path,
+        #     scale=normalize,
+        # )
+        
     except TypeError:
+        print("Error in Read data")
         # Backwards compatibility if ``scale`` isn't supported.
         if path.endswith(".txt"):
             return Dataset_Solar(
                 root_path=root,
                 flag=flag,
                 data_path=data_path,
+                scale=normalize,
             )
+
         if path.endswith(".npz"):
             return Dataset_PEMS(
                 root_path=root,
                 flag=flag,
                 data_path=data_path,
+                scale=normalize,
             )
-        return Dataset_Custom(
+        if "h1" in path or "h2" in path:
+            return Dataset_ETT_hour(
             root_path=root,
             flag=flag,
             data_path=data_path,
-        )
+            scale=normalize,
+            )
+
+        if "m1" in path or "m2" in path:
+            return Dataset_ETT_minute(
+            root_path=root,
+            flag=flag,
+            data_path=data_path,
+            scale=normalize,
+            )
 
 
 def _collect_dataset_splits(
