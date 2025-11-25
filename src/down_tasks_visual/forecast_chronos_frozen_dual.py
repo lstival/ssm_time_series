@@ -115,9 +115,12 @@ class DualEncoderForecastRegressor(nn.Module):
         self.visual_encoder.eval()
 
     def forward(self, x: torch.Tensor, horizon: Optional[int] = None) -> torch.Tensor:
+        # Transpose input for encoders (from [batch, seq, features] to [batch, features, seq])
+        x_transposed = x.transpose(1, 2)
+        
         # Encode with both encoders
-        encoder_embedding = self.encoder(x)
-        visual_embedding = self.visual_encoder(x)
+        encoder_embedding = self.encoder(x_transposed)
+        visual_embedding = self.visual_encoder(x_transposed)
         
         # Concatenate embeddings
         combined_embedding = torch.cat([encoder_embedding, visual_embedding], dim=-1)
@@ -154,7 +157,8 @@ def train_dual_encoder_dataset_group(
         print(f"Skipping dataset '{group_name}' because the train loader is empty.")
         return None
 
-    seq_x, seq_y = sample_batch[0], sample_batch[1]
+    seq_x, seq_y, _, _ = sample_batch  # Unpack all batch elements
+    seq_x, seq_y = seq_x.float(), seq_y.float()  # Ensure proper dtype
     target_features = seq_y.size(2)
     available_steps = seq_y.size(1)
     if available_steps < max_horizon:
@@ -219,7 +223,8 @@ def train_dual_encoder_dataset_group(
             num_batches = 0
             
             for batch in train_loader:
-                seq_x, seq_y = batch[0].to(device), batch[1].to(device)
+                seq_x, seq_y, _, _ = batch  # Unpack all batch elements
+                seq_x, seq_y = seq_x.float().to(device), seq_y.float().to(device)
                 
                 optimizer.zero_grad()
                 
@@ -250,7 +255,8 @@ def train_dual_encoder_dataset_group(
                     num_samples = 0
                     
                     for batch in val_loader:
-                        seq_x, seq_y = batch[0].to(device), batch[1].to(device)
+                        seq_x, seq_y, _, _ = batch  # Unpack all batch elements
+                        seq_x, seq_y = seq_x.float().to(device), seq_y.float().to(device)
                         
                         predictions = model(seq_x, horizon=horizon)
                         targets = seq_y[:, :horizon, :]
