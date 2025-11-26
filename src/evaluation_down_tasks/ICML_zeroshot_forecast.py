@@ -209,6 +209,7 @@ if __name__ == "__main__":
 
     module = TimeSeriesDataModule(
         dataset_name=zeroshot_cfg.dataset_name or "",
+        dataset_names=zeroshot_cfg.dataset_names,
         data_dir=zeroshot_cfg.data_dir,
         batch_size=zeroshot_cfg.batch_size,
         val_batch_size=zeroshot_cfg.val_batch_size,
@@ -235,6 +236,7 @@ if __name__ == "__main__":
         try:
             ensure_dataloader_pred_len(loader, max_horizon)
             print(f"\nEvaluating dataset '{group.name}' on '{split_used}' split...")
+            # Do the evaluation
             metrics, payload = evaluate_and_collect(model, loader, device, list(eval_horizons), max_horizon)
             if metrics is None or payload is None:
                 print(f"  No metrics computed for dataset '{group.name}'.")
