@@ -1,0 +1,39 @@
+experiment_name: "chronos_supervised"
+seed: 42
+device: "auto"
+
+model:
+  input_dim: 32
+  model_dim: 128
+  embedding_dim: 128
+  depth: 8
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+
+data:
+  cronos_config: "./cronos_loader_example.yaml"
+  split: "train"
+  patch_length: 1024
+  batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  normalize: true
+  val_ratio: 0.1
+
+training:
+  encoder_type: "temporal"
+  epochs: 100
+  pred_len: 720
+  learning_rate: 0.0005
+  weight_decay: 0.0001
+  optimizer: "adamw"
+  scheduler: "cosine"
+  min_lr: 0.000001
+  max_grad_norm: 1.0
+  use_amp: true
+
+logging:
+  checkpoint_dir: "../../checkpoints"

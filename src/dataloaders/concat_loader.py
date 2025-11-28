@@ -74,12 +74,12 @@ def _try_make_dataset(
             data_path=data_path,
             scale=normalize,
             )
-        # return Dataset_Custom(
-        #     root_path=root,
-        #     flag=flag,
-        #     data_path=data_path,
-        #     scale=normalize,
-        # )
+        return Dataset_Custom(
+            root_path=root,
+            flag=flag,
+            data_path=data_path,
+            scale=normalize,
+        )
         
     except TypeError:
         print("Error in Read data")
@@ -114,6 +114,12 @@ def _try_make_dataset(
             data_path=data_path,
             scale=normalize,
             )
+        return Dataset_Custom(
+            root_path=root,
+            flag=flag,
+            data_path=data_path,
+            scale=normalize,
+        )
 
 
 def _collect_dataset_splits(

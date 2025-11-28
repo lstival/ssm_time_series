@@ -9,8 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+import numpy as np
 import torch
 import yaml
+from sklearn.metrics import mean_absolute_error, mean_squared_error, mean_absolute_percentage_error
 
 SRC_DIR = Path(__file__).resolve().parents[1]
 ROOT_DIR = SRC_DIR.parent
@@ -21,9 +23,219 @@ for path in (SRC_DIR, ROOT_DIR):
         sys.path.insert(0, path_str)
 
 import training_utils as tu
+
+import training_utils as tu
 from moco_training import resolve_path
 from down_tasks.forecast_shared import parse_horizon_values
 from models.classifier import ForecastRegressor, MultiHorizonForecastMLP
+from models.dual_forecast import DualEncoderForecastMLP, DualEncoderForecastRegressor
+
+
+def build_dual_encoder_model_from_checkpoint(
+    *,
+    model_cfg,
+    checkpoint_path: Path,
+    requested_horizons: List[int],
+    device: torch.device,
+    encoder_checkpoint_path: Optional[Path] = None,
+    visual_encoder_checkpoint_path: Optional[Path] = None,
+) -> tuple:
+    """Build dual encoder model from checkpoint."""
+    
+    # Build encoders
+    encoder = tu.build_encoder_from_config(model_cfg).to(device)
+    visual_encoder = tu.build_visual_encoder_from_config(model_cfg).to(device)
+    
+    # Load forecast checkpoint
+    forecast_checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    # Extract model info
+    checkpoint_horizons = forecast_checkpoint.get("horizons", requested_horizons)
+    max_horizon = forecast_checkpoint.get("max_horizon", max(checkpoint_horizons))
+    target_features = forecast_checkpoint.get("target_features", 1)
+    
+    eval_horizons = [h for h in requested_horizons if h in checkpoint_horizons and h <= max_horizon]
+    
+    # Get embedding dimensions
+    encoder_embedding_dim = getattr(encoder, "embedding_dim", None)
+    visual_encoder_embedding_dim = getattr(visual_encoder, "embedding_dim", None)
+    
+    if encoder_embedding_dim is None or visual_encoder_embedding_dim is None:
+        raise AttributeError("Both encoders must expose 'embedding_dim' attribute.")
+    
+    combined_input_dim = encoder_embedding_dim + visual_encoder_embedding_dim
+    
+    # Extract MLP config from checkpoint
+    mlp_hidden_dim = None
+    if "model_state_dict" in forecast_checkpoint:
+        state_dict = forecast_checkpoint["model_state_dict"]
+        for key in state_dict:
+            if "head.shared_layers.0.weight" in key:
+                mlp_hidden_dim = state_dict[key].shape[0]
+                break
+    
+    if mlp_hidden_dim is None:
+        mlp_hidden_dim = 512  # Default fallback
+    
+    # Build forecast head
+    head = DualEncoderForecastMLP(
+        input_dim=combined_input_dim,
+        hidden_dim=mlp_hidden_dim,
+        horizons=checkpoint_horizons,
+        target_features=target_features,
+    ).to(device)
+    
+    # Build full model
+    model = DualEncoderForecastRegressor(
+        encoder=encoder,
+        visual_encoder=visual_encoder,
+        head=head,
+        freeze_encoders=True,
+    ).to(device)
+    
+    # Load encoder checkpoint (for time series encoder)
+    if encoder_checkpoint_path:
+        encoder_checkpoint = torch.load(encoder_checkpoint_path, map_location=device)
+        if "model_state_dict" in encoder_checkpoint:
+            encoder.load_state_dict(encoder_checkpoint["model_state_dict"])
+        else:
+            raise ValueError(f"Expected 'model_state_dict' in encoder checkpoint: {encoder_checkpoint_path}")
+    
+    # Load visual encoder checkpoint (for visual encoder)
+    if visual_encoder_checkpoint_path:
+        visual_checkpoint = torch.load(visual_encoder_checkpoint_path, map_location=device)
+        if "model_state_dict" in visual_checkpoint:
+            visual_encoder.load_state_dict(visual_checkpoint["model_state_dict"])
+        else:
+            raise ValueError(f"Expected 'model_state_dict' in visual encoder checkpoint: {visual_encoder_checkpoint_path}")
+    
+    # Load forecast head weights from the forecast checkpoint
+    model.load_state_dict(forecast_checkpoint["model_state_dict"], strict=False)
+    
+    checkpoint_info = {
+        "horizons": checkpoint_horizons,
+        "target_features": target_features,
+        "mlp_hidden_dim": mlp_hidden_dim,
+        "combined_embedding_dim": combined_input_dim,
+        "encoder_embedding_dim": encoder_embedding_dim,
+        "visual_embedding_dim": visual_encoder_embedding_dim,
+    }
+    
+    return model, checkpoint_info, eval_horizons, max_horizon, False  # sequence_first_input=False
+
+
+def evaluate_and_collect_dual_encoder(
+    model: torch.nn.Module,
+    loader,
+    device: torch.device,
+    horizons: Sequence[int],
+    max_horizon: int,
+) -> Tuple[Optional[Dict[int, Dict[str, float]]], Optional[Dict[str, object]]]:
+    """Specialized evaluation for dual encoder models."""
+    if loader is None:
+        return None, None
+
+    model.eval()
+    total_samples = 0
+
+    contexts: List[torch.Tensor] = []
+    targets_list: List[torch.Tensor] = []
+    predictions_list: List[torch.Tensor] = []
+
+    with torch.no_grad():
+        for batch in loader:
+            seq_x, seq_y, _, _ = batch
+            seq_x_cpu = seq_x.float()
+            seq_x_device = seq_x_cpu.to(device)
+            
+            # Handle multi-channel inputs by taking mean across channels
+            # Input shape: (batch, channels, sequence_length, features)
+            if seq_x_device.dim() == 4 and seq_x_device.size(1) > 1:
+                print(f"Multi-channel input detected: {seq_x_device.shape} -> taking mean across channels")
+                seq_x_device = seq_x_device.mean(dim=1, keepdim=True)
+                seq_x_cpu = seq_x_device.cpu()
+                print(f"Converted to single channel: {seq_x_device.shape}")
+            
+            seq_y_cpu = seq_y.float()
+
+            if seq_y_cpu.size(1) < max_horizon:
+                raise ValueError(
+                    f"Target sequence length {seq_y_cpu.size(1)} smaller than required max horizon {max_horizon}"
+                )
+
+            target_slice = seq_y_cpu[:, -max_horizon:, :].to(device)
+            # For dual encoder models, pass the input directly without transposing
+            preds = model(seq_x_device)  # Model handles transposition internally
+            batch_size = target_slice.size(0)
+            total_samples += batch_size
+
+            contexts.append(seq_x_cpu)
+            targets_list.append(target_slice.cpu())
+            predictions_list.append(preds.cpu())
+
+    if not contexts:
+        return None, None
+
+    # Concatenate all tensors
+    context_tensor = torch.cat(contexts, dim=0).contiguous()
+    targets_tensor = torch.cat(targets_list, dim=0).contiguous()
+    predictions_tensor = torch.cat(predictions_list, dim=0).contiguous()
+
+    # Calculate metrics for each horizon using sklearn
+    results: Dict[int, Dict[str, float]] = {}
+    for horizon in horizons:
+        horizon = int(horizon)
+        
+        # Extract predictions and targets for this horizon
+        pred_horizon = predictions_tensor[:, :horizon, :]
+        target_horizon = targets_tensor[:, :horizon, :]
+        
+        # Flatten for sklearn metrics (which expect 1D arrays)
+        pred_flat = pred_horizon.flatten().numpy()
+        target_flat = target_horizon.flatten().numpy()
+        
+        if len(pred_flat) == 0:
+            results[horizon] = {
+                "mse": float("nan"),
+                "mae": float("nan"),
+                "mape": float("nan"),
+            }
+        else:
+            mse = mean_squared_error(target_flat, pred_flat)
+            mae = mean_absolute_error(target_flat, pred_flat)
+            # Handle MAPE calculation with zero values
+            try:
+                mape = mean_absolute_percentage_error(target_flat, pred_flat)
+            except ZeroDivisionError:
+                mape = float("inf")
+            
+            results[horizon] = {
+                "mse": float(mse),
+                "mae": float(mae), 
+                "mape": float(mape),
+            }
+
+    # Create per_horizon data for compatibility
+    per_horizon: Dict[int, Dict[str, torch.Tensor]] = {}
+    for horizon in horizons:
+        horizon = int(horizon)
+        per_horizon[horizon] = {
+            "targets": targets_tensor[:, :horizon, :].clone(),
+            "predictions": predictions_tensor[:, :horizon, :].clone(),
+        }
+
+    payload = {
+        "context": context_tensor.cpu(),
+        "targets": targets_tensor.cpu(),
+        "predictions": predictions_tensor.cpu(),
+        "eval_horizons": [int(h) for h in horizons],
+        "max_horizon": int(max_horizon),
+        "context_length": int(context_tensor.size(1)),
+        "target_features": int(context_tensor.size(2)),
+        "per_horizon": {h: {key: tensor.cpu() for key, tensor in values.items()} for h, values in per_horizon.items()},
+    }
+
+    return results, payload
 
 
 @dataclass
@@ -33,9 +245,11 @@ class ZeroShotConfig:
     overrides: Dict[str, object]
     forecast_checkpoint_path: Path
     encoder_checkpoint_path: Optional[Path]
+    visual_encoder_checkpoint_path: Optional[Path]
     results_dir: Path
     data_dir: str
     dataset_name: str
+    dataset_names: Optional[List[str]]
     filename: Optional[str]
     batch_size: int
     val_batch_size: int
@@ -132,6 +346,10 @@ def load_zeroshot_config(config_path: Path) -> ZeroShotConfig:
         description="forecast head checkpoint",
     )
     encoder_checkpoint_path = resolve_optional_path(config_dir, paths_section.get("encoder_checkpoint"))
+    visual_encoder_checkpoint_path = resolve_optional_path(
+        config_dir,
+        paths_section.get("visual_encoder_checkpoint"),
+    )
 
     results_candidate = paths_section.get("results_dir")
     if results_candidate is None:
@@ -152,6 +370,10 @@ def load_zeroshot_config(config_path: Path) -> ZeroShotConfig:
         data_dir = str(resolved_data_dir)
 
     dataset_name = str(data_section.get("dataset_name", "") or "")
+    dataset_names_value = data_section.get("dataset_names")
+    dataset_names = None
+    if dataset_names_value and isinstance(dataset_names_value, list):
+        dataset_names = [str(name) for name in dataset_names_value]
     filename_value = data_section.get("filename")
     if filename_value:
         resolved_filename = resolve_path(config_dir, Path(filename_value))
@@ -186,9 +408,11 @@ def load_zeroshot_config(config_path: Path) -> ZeroShotConfig:
         overrides=overrides,
         forecast_checkpoint_path=forecast_checkpoint_path,
         encoder_checkpoint_path=encoder_checkpoint_path,
+        visual_encoder_checkpoint_path=visual_encoder_checkpoint_path,
         results_dir=results_dir,
         data_dir=data_dir,
         dataset_name=dataset_name,
+        dataset_names=dataset_names,
         filename=filename,
         batch_size=batch_size,
         val_batch_size=val_batch_size,
@@ -201,20 +425,18 @@ def load_zeroshot_config(config_path: Path) -> ZeroShotConfig:
 
 
 def evaluate_and_collect(
-    model: ForecastRegressor,
+    model: torch.nn.Module,
     loader,
     device: torch.device,
     horizons: Sequence[int],
     max_horizon: int,
+    *,
+    sequence_first_input: bool = False,
 ) -> Tuple[Optional[Dict[int, Dict[str, float]]], Optional[Dict[str, object]]]:
     if loader is None:
         return None, None
 
     model.eval()
-    running_sse = {int(h): 0.0 for h in horizons}
-    running_sae = {int(h): 0.0 for h in horizons}
-    running_ape = {int(h): 0.0 for h in horizons}
-    counts = {int(h): 0 for h in horizons}
     total_samples = 0
 
     contexts: List[torch.Tensor] = []
@@ -225,7 +447,9 @@ def evaluate_and_collect(
         for batch in loader:
             seq_x, seq_y, _, _ = batch
             seq_x_cpu = seq_x.float()
-            seq_x_enc = seq_x_cpu.to(device).transpose(1, 2)
+            seq_x_device = seq_x_cpu.to(device)
+            if not sequence_first_input:
+                seq_x_device = seq_x_device.transpose(1, 2)
             seq_y_cpu = seq_y.float()
 
             if seq_y_cpu.size(1) < max_horizon:
@@ -234,26 +458,9 @@ def evaluate_and_collect(
                 )
 
             target_slice = seq_y_cpu[:, -max_horizon:, :].to(device)
-            preds = model(seq_x_enc)
+            preds = model(seq_x_device)
             batch_size = target_slice.size(0)
             total_samples += batch_size
-
-            epsilon = 1e-8
-            for horizon in horizons:
-                horizon = int(horizon)
-                pred_sub = preds[:, :horizon, :]
-                target_sub = target_slice[:, :horizon, :]
-                diff = pred_sub - target_sub
-
-                sse = torch.sum(diff.pow(2)).item()
-                sae = torch.sum(torch.abs(diff)).item()
-                ape = torch.sum(torch.abs(diff) / (torch.abs(target_sub) + epsilon)).item()
-                elements = diff.numel()
-
-                running_sse[horizon] += sse
-                running_sae[horizon] += sae
-                running_ape[horizon] += ape
-                counts[horizon] += elements
 
             contexts.append(seq_x_cpu)
             targets_list.append(target_slice.cpu())
@@ -262,10 +469,25 @@ def evaluate_and_collect(
     if not contexts:
         return None, None
 
+    # Concatenate all tensors
+    context_tensor = torch.cat(contexts, dim=0).contiguous()
+    targets_tensor = torch.cat(targets_list, dim=0).contiguous()
+    predictions_tensor = torch.cat(predictions_list, dim=0).contiguous()
+
+    # Calculate metrics for each horizon using sklearn
     results: Dict[int, Dict[str, float]] = {}
     for horizon in horizons:
         horizon = int(horizon)
-        if counts[horizon] == 0:
+        
+        # Extract predictions and targets for this horizon
+        pred_horizon = predictions_tensor[:, :horizon, :]
+        target_horizon = targets_tensor[:, :horizon, :]
+        
+        # Flatten for sklearn metrics (which expect 1D arrays)
+        pred_flat = pred_horizon.flatten().numpy()
+        target_flat = target_horizon.mean(dim=-1).unsqueeze(-1).flatten().numpy()
+        
+        if len(pred_flat) == 0:
             results[horizon] = {
                 "mse": float("nan"),
                 "mae": float("nan"),
@@ -274,22 +496,22 @@ def evaluate_and_collect(
                 "samples": total_samples,
             }
         else:
-            mse = running_sse[horizon] / counts[horizon]
-            mae = running_sae[horizon] / counts[horizon]
-            rmse = math.sqrt(mse)
-            mape = (running_ape[horizon] / counts[horizon]) * 100.0
+            # Calculate metrics using sklearn
+            mse = mean_squared_error(target_flat, pred_flat)
+            mae = mean_absolute_error(target_flat, pred_flat)
+            rmse = np.sqrt(mse)
+            # MAPE calculation with epsilon to avoid division by zero
+            mape = mean_absolute_percentage_error(target_flat, pred_flat) * 100.0
+            
             results[horizon] = {
-                "mse": mse,
-                "mae": mae,
-                "rmse": rmse,
-                "mape": mape,
+                "mse": float(mse),
+                "mae": float(mae), 
+                "rmse": float(rmse),
+                "mape": float(mape),
                 "samples": total_samples,
             }
 
-    context_tensor = torch.cat(contexts, dim=0).contiguous()
-    targets_tensor = torch.cat(targets_list, dim=0).contiguous()
-    predictions_tensor = torch.cat(predictions_list, dim=0).contiguous()
-
+    # Create per_horizon data for compatibility
     per_horizon: Dict[int, Dict[str, torch.Tensor]] = {}
     for horizon in horizons:
         horizon = int(horizon)
@@ -318,19 +540,30 @@ def build_model_from_checkpoint(
     checkpoint_path: Path,
     requested_horizons: Sequence[int],
     device: torch.device,
-) -> Tuple[ForecastRegressor, Dict[str, object], List[int], int]:
+    encoder_checkpoint_path: Optional[Path] = None,
+    visual_encoder_checkpoint_path: Optional[Path] = None,
+    force_dual: Optional[bool] = None,
+) -> Tuple[torch.nn.Module, Dict[str, object], List[int], int, bool]:
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    try:
-        encoder = tu.build_encoder_from_config(model_cfg).to(device)
-    except Exception:
-        encoder = tu.build_visual_encoder_from_config(model_cfg).to(device)
-
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    state_dict = checkpoint.get("model_state_dict")
-    if not isinstance(state_dict, dict):
-        raise KeyError("Checkpoint does not contain 'model_state_dict'.")
+
+    def _resolve_state_dict(obj: object) -> Dict[str, torch.Tensor]:
+        if isinstance(obj, dict):
+            for key in ("model_state_dict", "state_dict"):
+                candidate = obj.get(key)
+                if isinstance(candidate, dict):
+                    return candidate
+            if all(isinstance(k, str) for k in obj.keys()) and all(
+                isinstance(v, torch.Tensor) for v in obj.values()
+            ):
+                return obj  # type: ignore[return-value]
+        raise KeyError("Checkpoint does not contain 'model_state_dict' or compatible weights.")
+
+    state_dict = _resolve_state_dict(checkpoint)
+    has_visual_weights = any(key.startswith("visual_encoder.") for key in state_dict.keys())
+    use_dual = force_dual if force_dual is not None else has_visual_weights
 
     head_weight_key = "head.shared_layers.0.weight"
     if head_weight_key not in state_dict:
@@ -340,11 +573,6 @@ def build_model_from_checkpoint(
 
     hidden_dim = state_dict[head_weight_key].shape[0]
     input_dim = state_dict[head_weight_key].shape[1]
-    if hasattr(encoder, "embedding_dim") and int(encoder.embedding_dim) != int(input_dim):
-        raise ValueError(
-            "Encoder embedding dimension does not match head input dimension: "
-            f"{encoder.embedding_dim} != {input_dim}"
-        )
 
     ckpt_horizons = checkpoint.get("horizons")
     if ckpt_horizons is None:
@@ -363,20 +591,97 @@ def build_model_from_checkpoint(
     target_features = int(checkpoint.get("target_features", 1))
     max_horizon = int(checkpoint.get("max_horizon", max(ckpt_horizons)))
 
-    head = MultiHorizonForecastMLP(
-        input_dim=int(input_dim),
-        hidden_dim=int(hidden_dim),
-        horizons=list(ckpt_horizons),
-        target_features=target_features,
-    ).to(device)
 
-    model = ForecastRegressor(encoder=encoder, head=head, freeze_encoder=True).to(device)
+    if use_dual:
+        encoder = tu.build_encoder_from_config(model_cfg).to(device)
+        visual_encoder = tu.build_visual_encoder_from_config(model_cfg).to(device)
+        embedding_dim = getattr(encoder, "embedding_dim", None)
+        visual_dim = getattr(visual_encoder, "embedding_dim", None)
+        if embedding_dim is None or visual_dim is None:
+            raise AttributeError("Both encoders must expose an 'embedding_dim' attribute for dual checkpoints.")
+        
+        head_input_dim = int(input_dim)
+
+        head = DualEncoderForecastMLP(
+            input_dim=head_input_dim,
+            hidden_dim=int(hidden_dim),
+            horizons=list(ckpt_horizons),
+            target_features=target_features,
+        ).to(device)
+        model: torch.nn.Module = DualEncoderForecastRegressor(
+            encoder=encoder,
+            visual_encoder=visual_encoder,
+            head=head,
+            freeze_encoders=True,
+
+        ).to(device)
+    else:
+        head = MultiHorizonForecastMLP(
+            input_dim=int(input_dim),
+            hidden_dim=int(hidden_dim),
+            horizons=list(ckpt_horizons),
+            target_features=target_features,
+        ).to(device)
+        try:
+            encoder = tu.build_encoder_from_config(model_cfg).to(device)
+        except Exception:
+            encoder = tu.build_visual_encoder_from_config(model_cfg).to(device)
+        if hasattr(encoder, "embedding_dim") and int(encoder.embedding_dim) != int(input_dim):
+            raise ValueError(
+                "Encoder embedding dimension does not match head input dimension: "
+                f"{encoder.embedding_dim} != {input_dim}"
+            )
+        model = ForecastRegressor(encoder=encoder, head=head, freeze_encoder=True).to(device)
+
+    def _load_encoder_weights(module: torch.nn.Module, path: Optional[Path], description: str) -> None:
+        if path is None:
+            raise ValueError(
+                f"Missing weights for {description} and no explicit checkpoint path was provided."
+            )
+        if not path.exists():
+            raise FileNotFoundError(f"{description} checkpoint not found: {path}")
+        encoder_ckpt = torch.load(path, map_location=device)
+        module_state = _resolve_state_dict(encoder_ckpt)
+        module.load_state_dict(module_state, strict=True)
+
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
+
+    unresolved_missing: List[str] = []
     if missing:
-        print(f"Warning: missing weights when loading checkpoint: {sorted(missing)}")
+        encoder_missing = [key for key in missing if key.startswith("encoder.")]
+        visual_missing = [key for key in missing if key.startswith("visual_encoder.")]
+
+        if encoder_missing:
+            if any(key.startswith("encoder.") for key in state_dict.keys()):
+                unresolved_missing.extend(encoder_missing)
+            else:
+                _load_encoder_weights(
+                    getattr(model, "encoder"),
+                    encoder_checkpoint_path,
+                    "encoder",
+                )
+
+        if visual_missing:
+            if any(key.startswith("visual_encoder.") for key in state_dict.keys()):
+                unresolved_missing.extend(visual_missing)
+            else:
+                _load_encoder_weights(
+                    getattr(model, "visual_encoder"),
+                    visual_encoder_checkpoint_path,
+                    "visual encoder",
+                )
+
+        head_missing = [key for key in missing if key.startswith("head.")]
+        unresolved_missing.extend(head_missing)
+
+    if unresolved_missing:
+        print(f"Warning: missing weights when loading checkpoint: {sorted(unresolved_missing)}")
     if unexpected:
         print(f"Warning: unexpected weights when loading checkpoint: {sorted(unexpected)}")
 
+    sequence_first_input = bool(use_dual)
+
+    info_encoder = getattr(model, "encoder", None)
     checkpoint_info = {
         "checkpoint_path": str(checkpoint_path),
         "epoch": checkpoint.get("epoch"),
@@ -388,9 +693,17 @@ def build_model_from_checkpoint(
         "input_dim": int(input_dim),
         "hidden_dim": int(hidden_dim),
         "max_horizon": max_horizon,
-        "encoder_embedding_dim": getattr(encoder, "embedding_dim", None),
+        "encoder_embedding_dim": getattr(info_encoder, "embedding_dim", None),
+        "dual_encoders": use_dual,
     }
-    return model, checkpoint_info, list(evaluation_horizons), max_horizon
+    if use_dual:
+        checkpoint_info["visual_encoder_embedding_dim"] = getattr(
+            getattr(model, "visual_encoder", None),
+            "embedding_dim",
+            None,
+        )
+
+    return model, checkpoint_info, list(evaluation_horizons), max_horizon, sequence_first_input
 
 
 def select_loader(group, preferred_split: str):

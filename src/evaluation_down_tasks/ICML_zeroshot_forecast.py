@@ -175,11 +175,14 @@ if __name__ == "__main__":
         depth=zeroshot_cfg.overrides.get("depth"),
     )
 
-    model, checkpoint_info, eval_horizons, max_horizon = build_model_from_checkpoint(
+    model, checkpoint_info, eval_horizons, max_horizon, sequence_first_input = build_model_from_checkpoint(
         model_cfg=model_cfg,
         checkpoint_path=zeroshot_cfg.forecast_checkpoint_path,
         requested_horizons=horizons,
         device=device,
+        encoder_checkpoint_path=zeroshot_cfg.encoder_checkpoint_path,
+        visual_encoder_checkpoint_path=zeroshot_cfg.visual_encoder_checkpoint_path,
+        force_dual=False,
     )
 
     checkpoint_info.update(
@@ -218,8 +221,8 @@ if __name__ == "__main__":
         normalize=True,
         filename=zeroshot_cfg.filename,
         train=True,
-        val=True,
-        test=True,
+        val=False,
+        test=False,
     )
     dataset_groups = module.get_dataloaders()
     if not dataset_groups:
@@ -237,7 +240,14 @@ if __name__ == "__main__":
             ensure_dataloader_pred_len(loader, max_horizon)
             print(f"\nEvaluating dataset '{group.name}' on '{split_used}' split...")
             # Do the evaluation
-            metrics, payload = evaluate_and_collect(model, loader, device, list(eval_horizons), max_horizon)
+            metrics, payload = evaluate_and_collect(
+                model,
+                loader,
+                device,
+                list(eval_horizons),
+                max_horizon,
+                sequence_first_input=sequence_first_input,
+            )
             if metrics is None or payload is None:
                 print(f"  No metrics computed for dataset '{group.name}'.")
                 continue
@@ -303,6 +313,8 @@ if __name__ == "__main__":
     print(f"  Encoder config: {zeroshot_cfg.model_config_path}")
     if zeroshot_cfg.encoder_checkpoint_path is not None:
         print(f"  Encoder checkpoint: {zeroshot_cfg.encoder_checkpoint_path}")
+    if zeroshot_cfg.visual_encoder_checkpoint_path is not None:
+        print(f"  Visual encoder checkpoint: {zeroshot_cfg.visual_encoder_checkpoint_path}")
     print(f"  Forecast head checkpoint: {zeroshot_cfg.forecast_checkpoint_path}")
 
     print("\nPer-horizon summary (mean metrics across datasets):")

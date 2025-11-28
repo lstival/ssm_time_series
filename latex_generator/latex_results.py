@@ -4,8 +4,10 @@ import os
 
 # -----------------------
 
-file_name = r"C:\WUR\ssm_time_series\results\icml_zeroshot_forecast_20251121_1108.csv"
-df = pd.read_csv(file_name)  # <-- change to your path
+file_name = "icml_zeroshot_forecast_20251125_0943.csv"
+file_path = f"../results/{file_name}"
+df = pd.read_csv(file_path)
+
 
 
 # -----------------------
@@ -107,7 +109,7 @@ latex.append(r"\end{table*}")
 final_latex = "\n".join(latex)
 # print(final_latex)
 
-out_filename = "results_all_ICML_datasets.tex"
+out_filename = f"results_all_ICML_datasets_{file_name.replace('.csv', '')}.tex"
 out_dir = os.path.dirname(file_name) or os.getcwd()
 out_path = os.path.join(out_dir, out_filename)
 

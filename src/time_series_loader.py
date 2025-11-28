@@ -9,6 +9,7 @@ class TimeSeriesDataModule:
     def __init__(
         self,
         dataset_name: str = "",
+        dataset_names: Optional[List[str]] = None,
         data_dir: str = "",
         batch_size: int = 128,
         val_batch_size: int = 256,
@@ -25,6 +26,7 @@ class TimeSeriesDataModule:
     ):
         # assert abs(train_ratio + val_ratio - 1.0) < 1e-6, "train_ratio + val_ratio must equal 1.0"
         self.dataset_name = dataset_name
+        self.dataset_names = dataset_names
         self.data_dir = data_dir
         self.batch_size = batch_size
         self.val_batch_size = val_batch_size
@@ -48,7 +50,19 @@ class TimeSeriesDataModule:
 
     def setup(self):
         dataset_files = discover_dataset_files(self.data_dir, filename=self.filename)
-        if self.dataset_name:
+        
+        # Filter by specific dataset names if provided
+        if self.dataset_names:
+            dataset_files = {
+                key: path
+                for key, path in dataset_files.items()
+                if any(os.path.basename(path) == name or key == name for name in self.dataset_names)
+            }
+            if not dataset_files:
+                raise FileNotFoundError(
+                    f"None of the specified datasets {self.dataset_names} found under '{self.data_dir}'."
+                )
+        elif self.dataset_name:
             dataset_files = {
                 key: path
                 for key, path in dataset_files.items()
@@ -115,7 +129,8 @@ if __name__ == '__main__':
     data_root = "../ICML_datasets"
     # dataset_name = "PEMS03.npz"
     # dataset_name = "solar_AL.txt"
-    dataset_name = "ETTm1.csv"
+    # dataset_name = "ETTm1.csv"
+    dataset_name = "electricity.csv"
 
     module = TimeSeriesDataModule(data_dir=data_root, dataset_name=dataset_name, batch_size=1, train=True, val=True, test=True)
     loaders = module.get_dataloaders()
