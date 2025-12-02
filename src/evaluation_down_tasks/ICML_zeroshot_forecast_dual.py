@@ -119,7 +119,7 @@ if __name__ == "__main__":
     prediction_payloads: Dict[str, Dict[str, object]] = {}
     
     for group in dataset_groups:
-        loader, _, split_used = select_loader(group, zeroshot_cfg.split)
+        loader, dataset_obj, split_used = select_loader(group, zeroshot_cfg.split)
         if loader is None:
             print(f"Skipping dataset '{group.name}' - no {zeroshot_cfg.split} split available.")
             continue
@@ -134,6 +134,8 @@ if __name__ == "__main__":
                 device,
                 list(eval_horizons),
                 max_horizon,
+                dataset=dataset_obj,
+                dataset_name=group.name,
             )
             
             if metrics is None or payload is None:

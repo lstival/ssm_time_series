@@ -231,7 +231,7 @@ if __name__ == "__main__":
     results_by_dataset: Dict[str, Dict[int, Dict[str, float]]] = {}
     prediction_payloads: Dict[str, Dict[str, object]] = {}
     for group in dataset_groups:
-        loader, _, split_used = select_loader(group, zeroshot_cfg.split)
+        loader, dataset_obj, split_used = select_loader(group, zeroshot_cfg.split)
         if loader is None:
             print(f"Skipping dataset '{group.name}' because neither val nor test splits are available.")
             continue
@@ -247,6 +247,8 @@ if __name__ == "__main__":
                 list(eval_horizons),
                 max_horizon,
                 sequence_first_input=sequence_first_input,
+                dataset=dataset_obj,
+                dataset_name=group.name,
             )
             if metrics is None or payload is None:
                 print(f"  No metrics computed for dataset '{group.name}'.")

@@ -7,7 +7,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -124,14 +124,42 @@ def build_dual_encoder_model_from_checkpoint(
     return model, checkpoint_info, eval_horizons, max_horizon, False  # sequence_first_input=False
 
 
+def _apply_inverse_transform(
+    tensor: torch.Tensor,
+    inverse_fn: Optional[Callable[[np.ndarray], np.ndarray]],
+    *,
+    dataset_name: Optional[str],
+    tensor_label: str,
+) -> Tuple[torch.Tensor, bool]:
+    """Apply dataset-level inverse transform (RevIN-style) when available."""
+
+    if inverse_fn is None:
+        return tensor, False
+
+    try:
+        shape = tuple(tensor.shape)
+        flat = tensor.detach().cpu().contiguous().view(-1, shape[-1]).numpy()
+        restored = inverse_fn(flat)
+        restored_tensor = torch.as_tensor(restored, dtype=tensor.dtype)
+        restored_tensor = restored_tensor.reshape(*shape)
+        return restored_tensor, True
+    except Exception as exc:  # pragma: no cover - defensive logging
+        dataset_ref = f" for dataset '{dataset_name}'" if dataset_name else ""
+        print(f"Warning: inverse_transform failed on {tensor_label}{dataset_ref}: {exc}")
+        return tensor, False
+
+
 def evaluate_and_collect_dual_encoder(
     model: torch.nn.Module,
     loader,
     device: torch.device,
     horizons: Sequence[int],
     max_horizon: int,
+    *,
+    dataset=None,
+    dataset_name: Optional[str] = None,
 ) -> Tuple[Optional[Dict[int, Dict[str, float]]], Optional[Dict[str, object]]]:
-    """Specialized evaluation for dual encoder models."""
+    """Specialized evaluation for dual encoder models with optional RevIN reversal."""
     if loader is None:
         return None, None
 
@@ -181,14 +209,26 @@ def evaluate_and_collect_dual_encoder(
     targets_tensor = torch.cat(targets_list, dim=0).contiguous()
     predictions_tensor = torch.cat(predictions_list, dim=0).contiguous()
 
+    inverse_fn = getattr(dataset, "inverse_transform", None) if dataset is not None else None
+    denorm_context, ctx_applied = _apply_inverse_transform(
+        context_tensor, inverse_fn, dataset_name=dataset_name, tensor_label="context"
+    )
+    denorm_targets, tgt_applied = _apply_inverse_transform(
+        targets_tensor, inverse_fn, dataset_name=dataset_name, tensor_label="targets"
+    )
+    denorm_predictions, pred_applied = _apply_inverse_transform(
+        predictions_tensor, inverse_fn, dataset_name=dataset_name, tensor_label="predictions"
+    )
+    denorm_applied = ctx_applied or tgt_applied or pred_applied
+
     # Calculate metrics for each horizon using sklearn
     results: Dict[int, Dict[str, float]] = {}
     for horizon in horizons:
         horizon = int(horizon)
         
         # Extract predictions and targets for this horizon
-        pred_horizon = predictions_tensor[:, :horizon, :]
-        target_horizon = targets_tensor[:, :horizon, :]
+        pred_horizon = denorm_predictions[:, :horizon, :]
+        target_horizon = denorm_targets[:, :horizon, :]
         if target_horizon.shape[-1] > 1:
             target_horizon = target_horizon.mean(dim=-1, keepdim=True)
         # Flatten for sklearn metrics (which expect 1D arrays)
@@ -222,20 +262,25 @@ def evaluate_and_collect_dual_encoder(
     for horizon in horizons:
         horizon = int(horizon)
         per_horizon[horizon] = {
-            "targets": targets_tensor[:, :horizon, :].clone(),
-            "predictions": predictions_tensor[:, :horizon, :].clone(),
+            "targets": denorm_targets[:, :horizon, :].clone(),
+            "predictions": denorm_predictions[:, :horizon, :].clone(),
         }
 
     payload = {
-        "context": context_tensor.cpu(),
-        "targets": targets_tensor.cpu(),
-        "predictions": predictions_tensor.cpu(),
+        "context": denorm_context.cpu(),
+        "targets": denorm_targets.cpu(),
+        "predictions": denorm_predictions.cpu(),
         "eval_horizons": [int(h) for h in horizons],
         "max_horizon": int(max_horizon),
         "context_length": int(context_tensor.size(1)),
         "target_features": int(context_tensor.size(2)),
         "per_horizon": {h: {key: tensor.cpu() for key, tensor in values.items()} for h, values in per_horizon.items()},
     }
+
+    if denorm_applied:
+        payload["context_normalized"] = context_tensor.cpu()
+        payload["targets_normalized"] = targets_tensor.cpu()
+        payload["predictions_normalized"] = predictions_tensor.cpu()
 
     return results, payload
 
@@ -434,6 +479,8 @@ def evaluate_and_collect(
     max_horizon: int,
     *,
     sequence_first_input: bool = False,
+    dataset=None,
+    dataset_name: Optional[str] = None,
 ) -> Tuple[Optional[Dict[int, Dict[str, float]]], Optional[Dict[str, object]]]:
     if loader is None:
         return None, None
@@ -476,14 +523,26 @@ def evaluate_and_collect(
     targets_tensor = torch.cat(targets_list, dim=0).contiguous()
     predictions_tensor = torch.cat(predictions_list, dim=0).contiguous()
 
+    inverse_fn = getattr(dataset, "inverse_transform", None) if dataset is not None else None
+    denorm_context, ctx_applied = _apply_inverse_transform(
+        context_tensor, inverse_fn, dataset_name=dataset_name, tensor_label="context"
+    )
+    denorm_targets, tgt_applied = _apply_inverse_transform(
+        targets_tensor, inverse_fn, dataset_name=dataset_name, tensor_label="targets"
+    )
+    denorm_predictions, pred_applied = _apply_inverse_transform(
+        predictions_tensor, inverse_fn, dataset_name=dataset_name, tensor_label="predictions"
+    )
+    denorm_applied = ctx_applied or tgt_applied or pred_applied
+
     # Calculate metrics for each horizon using sklearn
     results: Dict[int, Dict[str, float]] = {}
     for horizon in horizons:
         horizon = int(horizon)
         
         # Extract predictions and targets for this horizon
-        pred_horizon = predictions_tensor[:, :horizon, :]
-        target_horizon = targets_tensor[:, :horizon, :]
+        pred_horizon = denorm_predictions[:, :horizon, :]
+        target_horizon = denorm_targets[:, :horizon, :]
         
         # Flatten for sklearn metrics (which expect 1D arrays)
         pred_flat = pred_horizon.flatten().numpy()
@@ -518,20 +577,25 @@ def evaluate_and_collect(
     for horizon in horizons:
         horizon = int(horizon)
         per_horizon[horizon] = {
-            "targets": targets_tensor[:, :horizon, :].clone(),
-            "predictions": predictions_tensor[:, :horizon, :].clone(),
+            "targets": denorm_targets[:, :horizon, :].clone(),
+            "predictions": denorm_predictions[:, :horizon, :].clone(),
         }
 
     payload = {
-        "context": context_tensor.cpu(),
-        "targets": targets_tensor.cpu(),
-        "predictions": predictions_tensor.cpu(),
+        "context": denorm_context.cpu(),
+        "targets": denorm_targets.cpu(),
+        "predictions": denorm_predictions.cpu(),
         "eval_horizons": [int(h) for h in horizons],
         "max_horizon": int(max_horizon),
         "context_length": int(context_tensor.size(1)),
         "target_features": int(context_tensor.size(2)),
         "per_horizon": {h: {key: tensor.cpu() for key, tensor in values.items()} for h, values in per_horizon.items()},
     }
+
+    if denorm_applied:
+        payload["context_normalized"] = context_tensor.cpu()
+        payload["targets_normalized"] = targets_tensor.cpu()
+        payload["predictions_normalized"] = predictions_tensor.cpu()
 
     return results, payload
 
