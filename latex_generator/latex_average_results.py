@@ -5,7 +5,7 @@ import os
 # -----------------------
 # 1. Load CSV with metrics
 # -----------------------
-file_name = "icml_zeroshot_forecast_20251125_0943.csv"
+file_name = "icml_zeroshot_forecast_20251120_1310.csv"
 file_path = f"../results/{file_name}"
 df = pd.read_csv(file_path)
 
@@ -25,7 +25,7 @@ def clean_name(path):
         return "ETTh1"
     if "etth2" in name.lower():
         return "ETTh2"
-    if "traffic" in name.lower():
+    if "traffic" in name.lower() or "PEMS04".lower() in name.lower():
         return "Traffic"
     if "weather" in name.lower():
         return "Weather"

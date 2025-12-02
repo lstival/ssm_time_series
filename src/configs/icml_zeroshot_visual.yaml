@@ -12,13 +12,12 @@ model:
 
 paths:
   # Chronos-trained forecasting checkpoint containing encoder + head weights
-  forecast_checkpoint: ../../checkpoints/multi_horizon_forecast_dual_frozen_20251125_1347/all_datasets/best_model.pt
+  forecast_checkpoint: ../../checkpoints/multi_horizon_forecast_chronos_20251120_1310/all_datasets/best_model.pt
   # Optional: direct encoder checkpoint if stored separately (None uses forecast checkpoint)
-  encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100_ep31/time_series_best.pt
+  # encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100_ep31/time_series_best.pt
   visual_encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100_ep31/visual_encoder_best.pt
   # Directory where evaluation artifacts will be saved
   results_dir: ../../results
-  
 
 data:
   # Root directory containing ICML datasets
@@ -44,4 +43,4 @@ data:
 evaluation:
   horizons: [96, 192, 336, 720]
   split: all
-  output_prefix: icml_zeroshot_forecast_dual
+  output_prefix: icml_zeroshot_forecast

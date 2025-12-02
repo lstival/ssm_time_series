@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -33,6 +34,7 @@ from evaluation_down_tasks.zeroshot_utils import (
     select_loader,
     evaluate_and_collect_dual_encoder,
     build_dual_encoder_model_from_checkpoint,
+    dataset_slug,
 )
 from evaluation_down_tasks.ICML_zeroshot_forecast import (
     _aggregate_results_by_horizon,
@@ -55,7 +57,8 @@ if __name__ == "__main__":
     print(f"Using device: {device}")
     print(f"Requested horizons: {zeroshot_cfg.horizons}")
 
-    zeroshot_cfg.results_dir.mkdir(parents=True, exist_ok=True)
+    results_dir = zeroshot_cfg.results_dir
+    results_dir.mkdir(parents=True, exist_ok=True)
 
     model_cfg = apply_model_overrides(
         base_config.model,
@@ -87,7 +90,11 @@ if __name__ == "__main__":
     checkpoint_timestamp = extract_checkpoint_timestamp(zeroshot_cfg.forecast_checkpoint_path)
     if checkpoint_timestamp is None:
         from datetime import datetime
+
         checkpoint_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    predictions_dir = results_dir / f"{zeroshot_cfg.output_prefix}_{checkpoint_timestamp}_predictions"
+    predictions_dir.mkdir(parents=True, exist_ok=True)
 
     module = TimeSeriesDataModule(
         dataset_name=zeroshot_cfg.dataset_name or "",
@@ -99,8 +106,8 @@ if __name__ == "__main__":
         pin_memory=True,
         normalize=True,
         filename=zeroshot_cfg.filename,
-        train=True,
-        val=True,
+        train=False,
+        val=False,
         test=True,
     )
     
@@ -109,6 +116,7 @@ if __name__ == "__main__":
         raise RuntimeError("No datasets available for evaluation.")
 
     results_by_dataset: Dict[str, Dict[int, Dict[str, float]]] = {}
+    prediction_payloads: Dict[str, Dict[str, object]] = {}
     
     for group in dataset_groups:
         loader, _, split_used = select_loader(group, zeroshot_cfg.split)
@@ -119,8 +127,8 @@ if __name__ == "__main__":
         try:
             ensure_dataloader_pred_len(loader, max_horizon)
             print(f"Evaluating dataset '{group.name}' on '{split_used}' split...")
-            
-            metrics, _ = evaluate_and_collect_dual_encoder(
+
+            metrics, payload = evaluate_and_collect_dual_encoder(
                 model,
                 loader,
                 device,
@@ -128,12 +136,28 @@ if __name__ == "__main__":
                 max_horizon,
             )
             
-            if metrics is not None:
-                results_by_dataset[group.name] = metrics
-                for horizon in eval_horizons:
-                    if horizon in metrics:
-                        mse, mae = metrics[horizon]["mse"], metrics[horizon]["mae"]
-                        print(f"  H{horizon}: MSE={mse:.6f}, MAE={mae:.6f}")
+            if metrics is None or payload is None:
+                print(f"  No metrics computed for dataset '{group.name}'.")
+                continue
+
+            results_by_dataset[group.name] = metrics
+            payload["dataset"] = group.name
+            payload["dataset_slug"] = dataset_slug(group.name)
+            payload["split"] = split_used
+            prediction_payloads[group.name] = payload
+
+            dataset_dir = predictions_dir / payload["dataset_slug"]
+            dataset_dir.mkdir(parents=True, exist_ok=True)
+            torch.save(payload, dataset_dir / "data.pt")
+            print(f"  Saved predictions to: {dataset_dir / 'data.pt'}")
+
+            for horizon in eval_horizons:
+                if horizon in metrics:
+                    mse = metrics[horizon]["mse"]
+                    mae = metrics[horizon]["mae"]
+                    mse_str = f"{mse:.6f}" if not math.isnan(mse) else "nan"
+                    mae_str = f"{mae:.6f}" if not math.isnan(mae) else "nan"
+                    print(f"  H{horizon}: MSE={mse_str}, MAE={mae_str}")
                         
         except Exception as exc:
             if "out of memory" in str(exc).lower():
@@ -151,7 +175,7 @@ if __name__ == "__main__":
     dataset_json_path, dataset_csv_path = save_evaluation_results(
         results_by_dataset,
         checkpoint_info,
-        zeroshot_cfg.results_dir,
+        results_dir,
         prefix=f"{zeroshot_cfg.output_prefix}_dual",
         timestamp=checkpoint_timestamp,
     )
@@ -161,7 +185,7 @@ if __name__ == "__main__":
     horizon_summary = _aggregate_results_by_horizon(results_by_dataset)
     horizon_json_path, horizon_csv_path = _save_horizon_summary(
         horizon_summary,
-        results_dir=zeroshot_cfg.results_dir,
+        results_dir=results_dir,
         prefix=f"{zeroshot_cfg.output_prefix}_dual",
         timestamp=checkpoint_timestamp,
     )
@@ -171,6 +195,7 @@ if __name__ == "__main__":
     print(f"  Per-dataset CSV:  {dataset_csv_path}")
     print(f"  Per-horizon JSON: {horizon_json_path}")
     print(f"  Per-horizon CSV:  {horizon_csv_path}")
+    print(f"  Predictions dir:  {predictions_dir}")
 
     print("\nPer-horizon summary (mean metrics across datasets):")
     for horizon in sorted(horizon_summary.keys()):

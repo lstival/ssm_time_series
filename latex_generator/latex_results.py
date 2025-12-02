@@ -4,7 +4,7 @@ import os
 
 # -----------------------
 
-file_name = "icml_zeroshot_forecast_20251125_0943.csv"
+file_name = "icml_zeroshot_forecast_20251120_1310.csv"
 file_path = f"../results/{file_name}"
 df = pd.read_csv(file_path)
 
@@ -15,7 +15,7 @@ def clean_name(path):
     filename = path.replace("\\", "/").split("/")[-1]
     name = re.sub(r"\.(csv|txt|npz)$", "", filename)
 
-    # Standardize electricity group
+    # Standardize
     if "behind_electricity" in name:
         return "Electricity (behind)"
     if "middle_electricity" in name:
@@ -26,6 +26,8 @@ def clean_name(path):
         return "Exchange"
     if name == "solar_AL":
         return "Solar"
+    if name == "PEMS04":
+        return "Traffic"
 
     return name
 

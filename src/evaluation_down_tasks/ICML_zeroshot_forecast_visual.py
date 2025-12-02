@@ -1,4 +1,4 @@
-"""Zero-shot evaluation of Chronos-trained forecasting heads on ICML datasets."""
+"""Zero-shot evaluation of Chronos-trained forecasting heads (visual) on ICML datasets."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ from evaluation_down_tasks.zeroshot_utils import (
 )
 
 CONFIG_ENV_VAR = "ICML_ZEROSHOT_CONFIG"
-DEFAULT_CONFIG_PATH = SRC_DIR / "configs" / "icml_zeroshot.yaml"
+DEFAULT_CONFIG_PATH = SRC_DIR / "configs" / "icml_zeroshot_visual.yaml"
 
 
 def _sanitize_for_json(obj: object) -> object:
@@ -180,8 +180,8 @@ if __name__ == "__main__":
         checkpoint_path=zeroshot_cfg.forecast_checkpoint_path,
         requested_horizons=horizons,
         device=device,
-        encoder_checkpoint_path=zeroshot_cfg.encoder_checkpoint_path,
-        visual_encoder_checkpoint_path=None,
+        encoder_checkpoint_path=None,
+        visual_encoder_checkpoint_path=zeroshot_cfg.visual_encoder_checkpoint_path,
         force_dual=False,
     )
 
@@ -220,9 +220,9 @@ if __name__ == "__main__":
         pin_memory=True,
         normalize=True,
         filename=zeroshot_cfg.filename,
-        train=True,
+        train=False,
         val=False,
-        test=False,
+        test=True,
     )
     dataset_groups = module.get_dataloaders()
     if not dataset_groups:

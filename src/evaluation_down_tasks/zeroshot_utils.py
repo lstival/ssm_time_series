@@ -189,7 +189,8 @@ def evaluate_and_collect_dual_encoder(
         # Extract predictions and targets for this horizon
         pred_horizon = predictions_tensor[:, :horizon, :]
         target_horizon = targets_tensor[:, :horizon, :]
-        
+        if target_horizon.shape[-1] > 1:
+            target_horizon = target_horizon.mean(dim=-1, keepdim=True)
         # Flatten for sklearn metrics (which expect 1D arrays)
         pred_flat = pred_horizon.flatten().numpy()
         target_flat = target_horizon.flatten().numpy()
@@ -198,21 +199,22 @@ def evaluate_and_collect_dual_encoder(
             results[horizon] = {
                 "mse": float("nan"),
                 "mae": float("nan"),
+                "rmse": float("nan"),
                 "mape": float("nan"),
+                "samples": total_samples,
             }
         else:
             mse = mean_squared_error(target_flat, pred_flat)
             mae = mean_absolute_error(target_flat, pred_flat)
-            # Handle MAPE calculation with zero values
-            try:
-                mape = mean_absolute_percentage_error(target_flat, pred_flat)
-            except ZeroDivisionError:
-                mape = float("inf")
+            rmse = np.sqrt(mse)
+            mape = mean_absolute_percentage_error(target_flat, pred_flat) * 100.0
             
             results[horizon] = {
                 "mse": float(mse),
                 "mae": float(mae), 
+                "rmse": float(rmse),
                 "mape": float(mape),
+                "samples": total_samples,
             }
 
     # Create per_horizon data for compatibility
@@ -622,10 +624,11 @@ def build_model_from_checkpoint(
             horizons=list(ckpt_horizons),
             target_features=target_features,
         ).to(device)
-        try:
-            encoder = tu.build_encoder_from_config(model_cfg).to(device)
-        except Exception:
+        if visual_encoder_checkpoint_path:
             encoder = tu.build_visual_encoder_from_config(model_cfg).to(device)
+        else:
+            encoder = tu.build_encoder_from_config(model_cfg).to(device)
+            
         if hasattr(encoder, "embedding_dim") and int(encoder.embedding_dim) != int(input_dim):
             raise ValueError(
                 "Encoder embedding dimension does not match head input dimension: "
@@ -665,11 +668,18 @@ def build_model_from_checkpoint(
             if any(key.startswith("visual_encoder.") for key in state_dict.keys()):
                 unresolved_missing.extend(visual_missing)
             else:
-                _load_encoder_weights(
-                    getattr(model, "visual_encoder"),
-                    visual_encoder_checkpoint_path,
-                    "visual encoder",
-                )
+                if visual_encoder_checkpoint_path is not None:
+                    _load_encoder_weights(
+                        getattr(model, "visual_encoder"),
+                        visual_encoder_checkpoint_path,
+                        "visual encoder",
+                    )
+                else:
+                    _load_encoder_weights(
+                        getattr(model, "visual_encoder"),
+                        encoder_checkpoint_path,
+                        "visual encoder",
+                    )
 
         head_missing = [key for key in missing if key.startswith("head.")]
         unresolved_missing.extend(head_missing)

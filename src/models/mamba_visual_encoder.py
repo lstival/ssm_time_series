@@ -215,12 +215,12 @@ class MambaVisualEncoder(nn.Module):
     def forward_sequence(self, x: torch.Tensor) -> torch.Tensor:
         """Return the sequence of hidden states before pooling."""
         tokens = self.tokenizer(x)
-        img_from_patches = self._time_series_2_image(tokens)
-        img_from_patches = torch.from_numpy(img_from_patches).float().to(x.device)
-
         if tokens.ndim == 4:
             batch, windows, window_len, feat_dim = tokens.shape
             tokens = tokens.reshape(batch, windows * window_len, feat_dim)
+        img_from_patches = self._time_series_2_image(tokens)
+        img_from_patches = torch.from_numpy(img_from_patches).float().to(x.device)
+
         x = self.input_proj(img_from_patches) # Change here to use pre_trained model to feature exctration
 
         for block in self.blocks:
@@ -260,7 +260,7 @@ if __name__ == "__main__":
     )
     
     # print(f"Trainable parameters: {encoder.count_parameters():,}")
-    dummy = torch.randn(4, 1, 384)
+    dummy = torch.randn(4, 307, 96)
     out = encoder(dummy)
     print("Output embedding shape:", out.shape)
     tokens = tokenize_sequence(dummy, token_size=tokens_dim)
