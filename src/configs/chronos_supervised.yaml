@@ -24,7 +24,7 @@ data:
   val_ratio: 0.1
 
 training:
-  encoder_type: "temporal"
+  encoder_type: "visual"
   epochs: 100
   pred_len: 720
   learning_rate: 0.0005

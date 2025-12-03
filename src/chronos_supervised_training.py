@@ -81,15 +81,15 @@ def train_one_epoch(
     for batch in tqdm(loader, desc="Train", leave=False):
         context, target = _prepare_forecast_batch(batch, pred_len, device)
         optimizer.zero_grad(set_to_none=True)
-        with autocast(enabled=amp_enabled):
+        with autocast(enabled=amp_enabled): # Active the autocast to use mixed precision inside the training
             preds = model(context)
             loss = criterion(preds, target)
-        scaler.scale(loss).backward()
+        scaler.scale(loss).backward() # Use scale fator to avoid zero (gradient vanishing) in the update pass (because float16 can round the values to 0 when too small)
         if max_grad_norm is not None:
-            scaler.unscale_(optimizer)
-            clip_grad_norm_(model.parameters(), max_grad_norm)
-        scaler.step(optimizer)
-        scaler.update()
+            scaler.unscale_(optimizer) # Remove the scale factor to avoid (inf and Nan) when clipping to a correct range
+            clip_grad_norm_(model.parameters(), max_grad_norm) # Create a clip in the max and min in the gradient after the unscaling process
+        scaler.step(optimizer) # Verify that gradient are in normal scalle e avoid Nan values
+        scaler.update() # Update the gradient 
         running += loss.item()
         steps += 1
     return running / max(1, steps)
