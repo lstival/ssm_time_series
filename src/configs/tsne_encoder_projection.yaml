@@ -1,0 +1,34 @@
+paths:
+  output_dir: ../../results/tsne_encoder
+  encoder_checkpoint: ../../checkpoints/ts_encoder_20251126_1750/time_series_best.pt
+  projection_checkpoint: ../../checkpoints/ts_encoder_20251126_1750/time_series_projection_best.pt
+
+tsne:
+  samples_per_dataset: 1000
+  perplexity: 35.0
+  learning_rate: 200.0
+  n_iter: 1000
+  device: auto
+  seed: 42
+  show: false
+
+data:
+  # Root directory containing ICML datasets
+  data_dir: ../../ICML_datasets
+  # Specific datasets to evaluate (list of dataset names)
+  dataset_names:
+    - ETTh1.csv
+    - ETTh2.csv
+    - ETTm1.csv 
+    - ETTm2.csv
+    - PEMS04.npz
+    - weather.csv
+    - exchange_rate.csv
+    - electricity.csv
+    - solar_AL.txt
+  # Optional dataset filter (leave empty for all, or use dataset_names for specific datasets)
+  dataset_name:
+  filename:
+  batch_size: 512
+  val_batch_size: 512
+  num_workers: 4
