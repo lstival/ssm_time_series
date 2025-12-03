@@ -3,6 +3,9 @@ paths:
   encoder_checkpoint: ../../checkpoints/ts_encoder_20251126_1750/time_series_best.pt
   projection_checkpoint: ../../checkpoints/ts_encoder_20251126_1750/time_series_projection_best.pt
 
+  visual_encoder_checkpoint: ../../checkpoints/ts_encoder_20251126_1750/visual_encoder_best.pt
+  visual_projection_checkpoint: ../../checkpoints/ts_encoder_20251126_1750/visual_projection_best.pt
+
 tsne:
   samples_per_dataset: 1000
   perplexity: 35.0

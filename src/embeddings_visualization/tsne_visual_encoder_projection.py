@@ -1,4 +1,4 @@
-"""Project ICML encoder embeddings via t-SNE with dataset-type coloring."""
+"""Project ICML visual encoder embeddings via t-SNE with dataset-type coloring."""
 
 from __future__ import annotations
 
@@ -33,11 +33,11 @@ from embeddings_visualization.projection_utils import (
 from time_series_loader import TimeSeriesDataModule
 from util import default_device, load_encoder_checkpoint
 
-TSNE_CONFIG_ENV_VAR = "TSNE_ENCODER_CONFIG"
+TSNE_CONFIG_ENV_VAR = "TSNE_VISUAL_ENCODER_CONFIG"
 DEFAULT_TSNE_CONFIG_PATH = SRC_DIR / "configs" / "tsne_encoder_projection.yaml"
 DEFAULT_MODEL_CONFIG_PATH = SRC_DIR / "configs" / "mamba_encoder.yaml"
-DEFAULT_OUTPUT_PREFIX = "tsne_encoder_projection"
-DEFAULT_OUTPUT_DIR = ROOT_DIR / "results" / "tsne_encoder"
+DEFAULT_OUTPUT_PREFIX = "tsne_visual_encoder_projection"
+DEFAULT_OUTPUT_DIR = ROOT_DIR / "results" / "tsne_visual_encoder"
 DEFAULT_DATA_DIR = ROOT_DIR / "ICML_datasets"
 DEFAULT_SPLIT = "all"
 
@@ -57,6 +57,11 @@ def main() -> None:
     )
     base_config = tu.load_config(proj_cfg.model_config_path)
 
+    visual_encoder_checkpoint = proj_cfg.visual_encoder_checkpoint or proj_cfg.encoder_checkpoint
+    visual_projection_checkpoint = proj_cfg.visual_projection_checkpoint or proj_cfg.projection_checkpoint
+    if visual_encoder_checkpoint is None:
+        raise ValueError("Visual encoder checkpoint path is required for visual projection")
+
     seed = proj_cfg.seed if proj_cfg.seed is not None else base_config.seed
     if seed is not None:
         tu.set_seed(seed)
@@ -73,13 +78,13 @@ def main() -> None:
     results_dir = proj_cfg.output_dir
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    encoder = tu.build_encoder_from_config(base_config.model).to(device)
-    load_encoder_checkpoint(encoder, proj_cfg.encoder_checkpoint, device)
+    encoder = tu.build_visual_encoder_from_config(base_config.model).to(device)
+    load_encoder_checkpoint(encoder, visual_encoder_checkpoint, device)
     encoder.eval()
 
     projection_head = load_projection_head(
         encoder=encoder,
-        projection_checkpoint_path=proj_cfg.projection_checkpoint,
+        projection_checkpoint_path=visual_projection_checkpoint,
         device=device,
     )
 
@@ -177,7 +182,7 @@ def main() -> None:
     coords_df["tsne_x"] = coords[:, 0]
     coords_df["tsne_y"] = coords[:, 1]
 
-    output_dir = build_output_dir(results_dir, proj_cfg.output_prefix, proj_cfg.encoder_checkpoint)
+    output_dir = build_output_dir(results_dir, proj_cfg.output_prefix, visual_encoder_checkpoint)
     csv_path = output_dir / "tsne_coordinates.csv"
     plot_path = output_dir / "tsne_plot.png"
 
@@ -198,7 +203,7 @@ def main() -> None:
             color=color,
         )
 
-    ax.set_title("ICML Encoder Embeddings (t-SNE)")
+    ax.set_title("ICML Visual Encoder Embeddings (t-SNE)")
     ax.set_xlabel("Component 1")
     ax.set_ylabel("Component 2")
     ax.legend(loc="best", fontsize="small", ncol=2)
@@ -216,9 +221,9 @@ def main() -> None:
     print("\nModel references:")
     print(f"  TSNE config:      {projection_config_path}")
     print(f"  Encoder config:   {proj_cfg.model_config_path}")
-    print(f"  Encoder checkpoint: {proj_cfg.encoder_checkpoint}")
-    if proj_cfg.projection_checkpoint is not None:
-        print(f"  Projection head:  {proj_cfg.projection_checkpoint}")
+    print(f"  Visual checkpoint: {visual_encoder_checkpoint}")
+    if visual_projection_checkpoint is not None:
+        print(f"  Projection head:  {visual_projection_checkpoint}")
 
 
 if __name__ == "__main__":
