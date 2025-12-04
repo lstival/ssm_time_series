@@ -1,0 +1,32 @@
+# Configuration to evaluate Chronos-supervised checkpoints on ICML datasets
+seed: 42
+
+training_config: ../configs/chronos_supervised.yaml
+encoder_type: visual
+
+paths:
+  checkpoint: ../../checkpoints/chronos_supervised_20251203_1018/visual/best.pt
+  results_dir: ../../results
+
+data:
+  data_dir: ../../ICML_datasets
+  dataset_names:
+    - ETTh1.csv
+    - ETTh2.csv
+    - ETTm1.csv
+    - ETTm2.csv
+    - PEMS04.npz
+    - weather.csv
+    - exchange_rate.csv
+    - electricity.csv
+    - solar_AL.txt
+  dataset_name:
+  filename:
+  batch_size: 512
+  val_batch_size: 512
+  num_workers: 4
+
+evaluation:
+  horizons: [96, 192, 336, 720]
+  split: all
+  output_prefix: chronos_supervised_zeroshot

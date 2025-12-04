@@ -497,9 +497,18 @@ def evaluate_and_collect(
             seq_x, seq_y, _, _ = batch
             seq_x_cpu = seq_x.float()
             seq_x_device = seq_x_cpu.to(device)
+
+            if seq_x_device.shape[-1] > 1:
+                seq_x_device = seq_x_device.mean(dim=-1, keepdim=True)
+                seq_x_cpu = seq_x_device.cpu()
+
             if not sequence_first_input:
                 seq_x_device = seq_x_device.transpose(1, 2)
             seq_y_cpu = seq_y.float()
+
+            if seq_y_cpu.shape[-1] > 1:
+                seq_y_cpu = seq_y_cpu.mean(dim=-1, keepdim=True)
+                seq_y_cpu = seq_y_cpu.cpu()
 
             if seq_y_cpu.size(1) < max_horizon:
                 raise ValueError(
