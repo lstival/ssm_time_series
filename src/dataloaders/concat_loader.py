@@ -40,6 +40,7 @@ def _try_make_dataset(
     data_path: str,
     flag: str,
     normalize: bool,
+    sample_size: Optional[Tuple[int, int, int]],
 ) -> Dataset:
     """Instantiate ``Dataset_Custom`` while being tolerant to optional kwargs."""
     path = (data_path or "").lower()
@@ -50,6 +51,7 @@ def _try_make_dataset(
                 flag=flag,
                 data_path=data_path,
                 scale=normalize,
+                size=sample_size,
             )
 
         if path.endswith(".npz"):
@@ -58,6 +60,7 @@ def _try_make_dataset(
                 flag=flag,
                 data_path=data_path,
                 scale=normalize,
+                size=sample_size,
             )
         if "h1" in path or "h2" in path:
             return Dataset_ETT_hour(
@@ -65,6 +68,7 @@ def _try_make_dataset(
             flag=flag,
             data_path=data_path,
             scale=normalize,
+            size=sample_size,
             )
 
         if "m1" in path or "m2" in path:
@@ -73,12 +77,14 @@ def _try_make_dataset(
             flag=flag,
             data_path=data_path,
             scale=normalize,
+            size=sample_size,
             )
         return Dataset_Custom(
             root_path=root,
             flag=flag,
             data_path=data_path,
             scale=normalize,
+            size=sample_size,
         )
         
     except TypeError:
@@ -90,6 +96,7 @@ def _try_make_dataset(
                 flag=flag,
                 data_path=data_path,
                 scale=normalize,
+                size=sample_size,
             )
 
         if path.endswith(".npz"):
@@ -98,6 +105,7 @@ def _try_make_dataset(
                 flag=flag,
                 data_path=data_path,
                 scale=normalize,
+                size=sample_size,
             )
         if "h1" in path or "h2" in path:
             return Dataset_ETT_hour(
@@ -105,6 +113,7 @@ def _try_make_dataset(
             flag=flag,
             data_path=data_path,
             scale=normalize,
+            size=sample_size,
             )
 
         if "m1" in path or "m2" in path:
@@ -113,12 +122,14 @@ def _try_make_dataset(
             flag=flag,
             data_path=data_path,
             scale=normalize,
+            size=sample_size,
             )
         return Dataset_Custom(
             root_path=root,
             flag=flag,
             data_path=data_path,
             scale=normalize,
+            size=sample_size,
         )
 
 
@@ -133,6 +144,7 @@ def _collect_dataset_splits(
     include_test: bool = False,
     filename: Optional[str] = None,
     dataset_files: Optional[Dict[str, str]] = None,
+    sample_size: Optional[Tuple[int, int, int]] = None,
 ) -> Tuple[List[_DatasetSplits], Dict[str, str]]:
     """Create dataset splits for each discovered dataset prior to building loaders."""
     # assert abs(train_ratio + val_ratio - 1.0) < 1e-6, "train_ratio + val_ratio must equal 1.0"
@@ -149,7 +161,13 @@ def _collect_dataset_splits(
         file_name = os.path.basename(absolute_path)
 
         try:
-            train_dataset = _try_make_dataset(data_root, file_name, "train", normalize)
+            train_dataset = _try_make_dataset(
+                data_root,
+                file_name,
+                "train",
+                normalize,
+                sample_size,
+            )
         except Exception as exc:  # pragma: no cover - logging warning path
             skipped[relative_path] = str(exc)
             logger.warning("Skipping %s: failed to create train split (%s)", relative_path, exc)
@@ -160,13 +178,25 @@ def _collect_dataset_splits(
 
         if include_val:
             try:
-                val_dataset = _try_make_dataset(data_root, file_name, "val", normalize)
+                val_dataset = _try_make_dataset(
+                    data_root,
+                    file_name,
+                    "val",
+                    normalize,
+                    sample_size,
+                )
             except Exception:
                 val_dataset = None
 
         if include_test:
             try:
-                test_dataset = _try_make_dataset(data_root, file_name, "test", normalize)
+                test_dataset = _try_make_dataset(
+                    data_root,
+                    file_name,
+                    "test",
+                    normalize,
+                    sample_size,
+                )
 
             except Exception:
                 test_dataset = None
@@ -235,6 +265,7 @@ def build_concat_dataloaders(
     filename: Optional[str] = None,
     dataset_files: Optional[Dict[str, str]] = None,
     collate_fn: Optional[Callable] = None,
+    sample_size: Optional[Tuple[int, int, int]] = None,
 ) -> Tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
     """Create dataloaders that concatenate every dataset discovered under ``root_path``."""
     dataset_splits, skipped = _collect_dataset_splits(
@@ -247,6 +278,7 @@ def build_concat_dataloaders(
         include_test=include_test,
         filename=filename,
         dataset_files=dataset_files,
+        sample_size=sample_size,
     )
 
     if skipped:
@@ -308,6 +340,7 @@ def build_dataset_loader_list(
     filename: Optional[str] = None,
     dataset_files: Optional[Dict[str, str]] = None,
     collate_fn: Optional[Callable] = None,
+    sample_size: Optional[Tuple[int, int, int]] = None,
 ) -> List[DatasetLoaders]:
     """Build a list of dataloaders, one entry per dataset under ``root_path``."""
     dataset_splits, skipped = _collect_dataset_splits(
@@ -320,6 +353,7 @@ def build_dataset_loader_list(
         include_test=include_test,
         filename=filename,
         dataset_files=dataset_files,
+        sample_size=sample_size,
     )
 
     if skipped:

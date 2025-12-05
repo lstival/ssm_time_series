@@ -7,7 +7,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
@@ -301,6 +301,7 @@ class ZeroShotConfig:
     batch_size: int
     val_batch_size: int
     num_workers: int
+    sample_size: Optional[Union[int, Sequence[int]]]
     horizons: List[int]
     split: str
     output_prefix: str
@@ -435,6 +436,18 @@ def load_zeroshot_config(config_path: Path) -> ZeroShotConfig:
     val_batch_size = int(data_section.get("val_batch_size", batch_size))
     num_workers = int(data_section.get("num_workers", 4))
 
+    sample_size_value = data_section.get("sample_size")
+    sample_size: Optional[Union[int, Sequence[int]]] = None
+    if sample_size_value is not None:
+        if isinstance(sample_size_value, int):
+            sample_size = int(sample_size_value)
+        elif isinstance(sample_size_value, (list, tuple)):
+            if not sample_size_value:
+                raise ValueError("data.sample_size cannot be an empty sequence")
+            sample_size = tuple(int(v) for v in sample_size_value)
+        else:
+            raise TypeError("data.sample_size must be an integer or a sequence of integers")
+
     evaluation_section = dict(payload.get("evaluation") or {})
     horizons = normalize_horizons(evaluation_section.get("horizons", [96, 192, 336, 720]))
     split = str(evaluation_section.get("split", "test")).lower()
@@ -464,6 +477,7 @@ def load_zeroshot_config(config_path: Path) -> ZeroShotConfig:
         batch_size=batch_size,
         val_batch_size=val_batch_size,
         num_workers=num_workers,
+        sample_size=sample_size,
         horizons=horizons,
         split=split,
         output_prefix=output_prefix,

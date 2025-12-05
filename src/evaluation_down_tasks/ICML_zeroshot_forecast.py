@@ -7,7 +7,7 @@ import math
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
 import torch
@@ -47,6 +47,19 @@ CONFIG_ENV_VAR = "ICML_ZEROSHOT_CONFIG"
 DEFAULT_CONFIG_PATH = SRC_DIR / "configs" / "icml_zeroshot.yaml"
 
 
+def _context_length_from_sample_size(
+    sample_size: Optional[Union[int, Sequence[int]]]
+) -> Optional[int]:
+    if sample_size is None:
+        return None
+    if isinstance(sample_size, int):
+        return int(sample_size)
+    values = list(sample_size)
+    if not values:
+        return None
+    return int(values[0])
+
+
 
 if __name__ == "__main__":
     config_path = determine_config_path(DEFAULT_CONFIG_PATH)
@@ -59,11 +72,17 @@ if __name__ == "__main__":
     torch.manual_seed(seed)
 
     horizons = zeroshot_cfg.horizons
+    context_length = _context_length_from_sample_size(zeroshot_cfg.sample_size)
+    effective_prefix = zeroshot_cfg.output_prefix
+    if context_length is not None:
+        effective_prefix = f"{effective_prefix}_input{context_length}"
     device = default_device()
     print(f"Using device: {device}")
     print(f"Requested horizons: {horizons}")
     print(f"Using zero-shot configuration: {zeroshot_cfg.config_path}")
     print(f"Using encoder configuration: {zeroshot_cfg.model_config_path}")
+    if context_length is not None:
+        print(f"Using context length override: {context_length}")
 
     results_dir = zeroshot_cfg.results_dir
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -108,7 +127,7 @@ if __name__ == "__main__":
         checkpoint_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     # Create predictions directory early
-    predictions_dir = results_dir / f"{zeroshot_cfg.output_prefix}_{checkpoint_timestamp}_predictions"
+    predictions_dir = results_dir / f"{effective_prefix}_{checkpoint_timestamp}_predictions"
     predictions_dir.mkdir(parents=True, exist_ok=True)
 
     module = TimeSeriesDataModule(
@@ -121,9 +140,10 @@ if __name__ == "__main__":
         pin_memory=True,
         normalize=True,
         filename=zeroshot_cfg.filename,
+        sample_size=zeroshot_cfg.sample_size,
         train=True,
-        val=False,
-        test=False,
+        val=True,
+        test=True,
     )
     dataset_groups = module.get_dataloaders()
     if not dataset_groups:
@@ -191,7 +211,7 @@ if __name__ == "__main__":
         results_by_dataset,
         checkpoint_info,
         results_dir,
-        prefix=zeroshot_cfg.output_prefix,
+        prefix=effective_prefix,
         timestamp=checkpoint_timestamp,
     )
 
@@ -201,7 +221,7 @@ if __name__ == "__main__":
     horizon_json_path, horizon_csv_path = save_horizon_summary(
         horizon_summary,
         results_dir=results_dir,
-        prefix=zeroshot_cfg.output_prefix,
+        prefix=effective_prefix,
         timestamp=checkpoint_timestamp,
     )
 

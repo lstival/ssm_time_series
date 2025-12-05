@@ -4,7 +4,7 @@ import os
 
 # -----------------------
 
-file_name = "chronos_supervised_zeroshot_20251202_0931.csv"
+file_name = "icml_zeroshot_forecast_20251125_0943.csv"
 file_path = f"../results/{file_name}"
 df = pd.read_csv(file_path)
 

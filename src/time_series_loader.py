@@ -1,9 +1,10 @@
 import os
-from typing import List, Optional
+from typing import List, Optional, Sequence, Tuple, Union
 
 from torch.utils.data import DataLoader
 from dataloaders import DatasetLoaders, build_dataset_loader_list
 from dataloaders.utils import discover_dataset_files
+from data_provider.data_loader import LABEL_LEN, PRED_LEN
 
 class TimeSeriesDataModule:
     def __init__(
@@ -19,6 +20,7 @@ class TimeSeriesDataModule:
         # train_ratio: float = 0.8,
         # val_ratio: float = 0.2,
         filename: Optional[str] = None,
+        sample_size: Optional[Union[int, Sequence[int]]] = None,
         # new flags to request specific splits from Dataset_Custom
         train: bool = True,
         val: bool = True,
@@ -35,6 +37,7 @@ class TimeSeriesDataModule:
         self.normalize = normalize
         # self.train_ratio = train_ratio
         # self.val_ratio = val_ratio
+        self.sample_size = self._normalize_sample_size(sample_size)
         self.train = train
         self.val = val
         self.test = test
@@ -87,6 +90,7 @@ class TimeSeriesDataModule:
             include_test=self.test,
             dataset_files=dataset_files,
             filename=self.filename,
+            sample_size=self.sample_size,
         )
 
         self.dataset_loaders = dataset_loaders
@@ -120,6 +124,41 @@ class TimeSeriesDataModule:
             self.setup()
         return self.test_loaders
 
+    @staticmethod
+    def _normalize_sample_size(
+        sample_size: Optional[Union[int, Sequence[int]]]
+    ) -> Optional[Tuple[int, int, int]]:
+        if sample_size is None:
+            return None
+
+        if isinstance(sample_size, (str, bytes)):
+            raise TypeError("sample_size must be an int or a sequence of ints, not a string")
+
+        if isinstance(sample_size, int):
+            seq_len = sample_size
+            label_len = LABEL_LEN
+            pred_len = PRED_LEN
+        else:
+            values = list(sample_size)
+            if not values:
+                raise ValueError("sample_size sequence cannot be empty")
+            seq_len = values[0]
+            label_len = values[1] if len(values) > 1 else LABEL_LEN
+            pred_len = values[2] if len(values) > 2 else PRED_LEN
+
+        seq_len = int(seq_len)
+        label_len = int(label_len)
+        pred_len = int(pred_len)
+
+        if seq_len <= 0:
+            raise ValueError("sequence length in sample_size must be positive")
+        if label_len < 0:
+            raise ValueError("label length in sample_size cannot be negative")
+        if pred_len <= 0:
+            raise ValueError("prediction length in sample_size must be positive")
+
+        return seq_len, label_len, pred_len
+
 if __name__ == '__main__':
     
     import matplotlib.pyplot as plt
@@ -129,10 +168,18 @@ if __name__ == '__main__':
     data_root = "../ICML_datasets"
     # dataset_name = "PEMS03.npz"
     # dataset_name = "solar_AL.txt"
-    # dataset_name = "ETTm1.csv"
-    dataset_name = "electricity.csv"
+    dataset_name = "ETTm1.csv"
+    # dataset_name = "electricity.csv"
 
-    module = TimeSeriesDataModule(data_dir=data_root, dataset_name=dataset_name, batch_size=1, train=True, val=True, test=True)
+    module = TimeSeriesDataModule(
+        data_dir=data_root,
+        dataset_name=dataset_name,
+        batch_size=1,
+        train=True,
+        val=True,
+        test=True,
+        sample_size=48,  # override default 96-step context to 48 steps
+    )
     loaders = module.get_dataloaders()
     for dataset in loaders:
         if dataset.train is not None:
