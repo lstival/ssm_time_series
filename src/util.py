@@ -552,6 +552,7 @@ def run_clip_training(
     optimizer: Optional[Optimizer] = None,
     initial_epoch: int = 0,
     best_loss: Optional[float] = None,
+    experiment: Optional[Any] = None,  # comet_ml.Experiment
 ) -> None:
     """Training loop that optimizes a CLIP-style contrastive objective."""
 
@@ -653,6 +654,15 @@ def run_clip_training(
             visual_encoder.train()
             projection_head.train()
             visual_projection_head.train()
+        
+        # Log metrics to Comet ML
+        if experiment is not None:
+            experiment.log_metric("train_loss", train_loss, step=epoch + 1)
+            if val_loss is not None:
+                experiment.log_metric("val_loss", val_loss, step=epoch + 1)
+            # Log learning rate
+            current_lr = optimizer.param_groups[0]["lr"]
+            experiment.log_metric("learning_rate", current_lr, step=epoch + 1)
 
         models_to_save = {
             "time_series": encoder,

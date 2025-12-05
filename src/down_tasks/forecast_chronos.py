@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List
 
+import comet_ml
 import torch
 import torch.nn as nn
 
@@ -34,10 +35,22 @@ from models.utils import load_chronos_forecast_config
 
 
 if __name__ == "__main__":
+    # Initialize Comet ML experiment from config
+    from comet_utils import create_comet_experiment
+    experiment = create_comet_experiment("forecast_chronos_temporal")
+    
     config = load_chronos_forecast_config()
 
     print(f"Training on horizons: {config.horizons} (max horizon: {config.max_horizon})")
     print(f"Gradient clipping max norm: {config.grad_clip}")
+    
+    # Log configuration to Comet
+    experiment.log_parameters({
+        "horizons": config.horizons,
+        "max_horizon": config.max_horizon,
+        "grad_clip": config.grad_clip,
+        "seed": config.seed,
+    })
 
     tu.set_seed(config.seed)
     torch.manual_seed(config.seed)
@@ -70,6 +83,20 @@ if __name__ == "__main__":
 
     config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     config.results_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Log additional configuration to Comet
+    experiment.log_parameters({
+        "context_length": config.context_length,
+        "stride": config.stride,
+        "split": config.split,
+        "batch_size": config.batch_size,
+        "val_batch_size": config.val_batch_size,
+        "epochs": config.epochs,
+        "lr": config.lr,
+        "weight_decay": config.weight_decay,
+        "mlp_hidden_dim": config.mlp_hidden_dim,
+        "encoder_checkpoint": str(config.encoder_checkpoint_path),
+    })
 
     criterion = nn.MSELoss()
     run_root = prepare_run_directory(config.checkpoint_dir, "multi_horizon_forecast_chronos")
@@ -159,9 +186,13 @@ if __name__ == "__main__":
             run_root=run_root,
             max_horizon=config.max_horizon,
             criterion=criterion,
+            experiment=experiment,
         )
         if record is not None:
             dataset_records.append(record)
+    
+    # End Comet experiment
+    experiment.end()
 
     if not dataset_records:
         print("No datasets were trained. Check dataset filters or availability.")

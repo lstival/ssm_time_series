@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Iterable, Optional
 
+import comet_ml
 import torch
 
 import training_utils as tu
@@ -38,6 +39,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_args(argv)
+    
+    # Initialize Comet ML experiment from config
+    from comet_utils import create_comet_experiment
+    experiment = create_comet_experiment("cosine_clip")
 
     config_path = resolve_path(Path.cwd(), args.config)
     if config_path is None or not config_path.exists():
@@ -47,10 +52,25 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     tu.set_seed(config.seed)
     device = tu.prepare_device(config.device)
     print(f"Using device: {device}")
+    
+    # Log configuration to Comet
+    experiment.log_parameters({
+        "seed": config.seed,
+        "config_file": str(config_path),
+        "device": str(device),
+    })
 
     training_cfg = config.training
     epochs = args.epochs if args.epochs is not None else int(training_cfg.get("epochs", 100))
     noise_std = args.noise_std if args.noise_std is not None else float(training_cfg.get("noise_std", 0.01))
+    
+    # Log training hyperparameters to Comet
+    experiment.log_parameters({
+        "epochs": epochs,
+        "noise_std": noise_std,
+        "learning_rate": float(training_cfg.get("learning_rate", 1e-3)),
+        "weight_decay": float(training_cfg.get("weight_decay", 0.0)),
+    })
 
     data_cfg = config.data
     dataset = prepare_dataset(config_path, data_cfg)
@@ -61,6 +81,14 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     batch_size = int(data_cfg.get("batch_size", 128))
     num_workers = int(data_cfg.get("num_workers", 0))
     pin_memory = bool(data_cfg.get("pin_memory", False))
+    
+    # Log data configuration to Comet
+    experiment.log_parameters({
+        "batch_size": batch_size,
+        "num_workers": num_workers,
+        "pin_memory": pin_memory,
+        "val_ratio": val_ratio,
+    })
 
     train_loader, val_loader = build_dataloaders(
         train_dataset,
@@ -73,6 +101,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     feature_dim = infer_feature_dim(train_loader)
     print(f"Inferred feature dimension: {feature_dim}")
+    
+    experiment.log_parameter("feature_dim", feature_dim)
 
     encoder = tu.build_encoder_from_config(config.model)
     visual_encoder = tu.build_visual_encoder_from_config(config.model)
@@ -155,7 +185,11 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         optimizer=optimizer,
         initial_epoch=initial_epoch,
         best_loss=best_loss,
+        experiment=experiment,
     )
+    
+    # End Comet experiment
+    experiment.end()
 
 
 if __name__ == "__main__":

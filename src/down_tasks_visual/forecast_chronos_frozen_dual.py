@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import comet_ml
 import torch
 import torch.nn as nn
 
@@ -57,6 +58,7 @@ def train_dual_encoder_dataset_group(
     run_root: Path,
     max_horizon: int,
     criterion: nn.Module,
+    experiment: Optional[comet_ml.Experiment] = None,
 ) -> Optional[Dict[str, object]]:
     """Train a dual encoder forecasting model on a dataset group."""
     if train_loader is None:
@@ -118,6 +120,22 @@ def train_dual_encoder_dataset_group(
     dataset_dir.mkdir(parents=True, exist_ok=True)
     best_checkpoint_path = dataset_dir / "best_model.pt"
     print(f"Training dual encoder model on dataset '{group_name}' (artifacts -> {dataset_dir})")
+    
+    # Log hyperparameters to Comet
+    if experiment is not None:
+        experiment.log_parameters({
+            "dataset": group_name,
+            "horizons": list(horizons),
+            "max_horizon": max_horizon,
+            "mlp_hidden_dim": mlp_hidden_dim,
+            "lr": lr,
+            "weight_decay": weight_decay,
+            "epochs": epochs,
+            "target_features": target_features,
+            "encoder_embedding_dim": encoder_embedding_dim,
+            "visual_encoder_embedding_dim": visual_encoder_embedding_dim,
+            "combined_input_dim": combined_input_dim,
+        })
 
     best_metric = float("inf")
     best_state: Optional[Dict[str, object]] = None
@@ -213,6 +231,27 @@ def train_dual_encoder_dataset_group(
         else:
             print("  Val   - unavailable")
         print(f"  Avg Train: {avg_train_loss:.4f}, Avg Val MSE: {avg_val_mse:.4f}")
+        
+        # Log metrics to Comet
+        if experiment is not None:
+            # Log per-horizon training losses
+            for h in horizons:
+                experiment.log_metric(f"{group_name}_train_loss_H{h}", train_losses[h], step=epoch + 1)
+            # Log average training loss
+            experiment.log_metric(f"{group_name}_avg_train_loss", avg_train_loss, step=epoch + 1)
+            
+            # Log validation metrics if available
+            if val_metrics:
+                for h in horizons:
+                    if h in val_metrics:
+                        experiment.log_metric(f"{group_name}_val_mse_H{h}", val_metrics[h]["mse"], step=epoch + 1)
+                        experiment.log_metric(f"{group_name}_val_mae_H{h}", val_metrics[h]["mae"], step=epoch + 1)
+                # Log average validation MSE
+                experiment.log_metric(f"{group_name}_avg_val_mse", avg_val_mse, step=epoch + 1)
+            
+            # Log learning rate
+            current_lr = optimizer.param_groups[0]["lr"]
+            experiment.log_metric(f"{group_name}_learning_rate", current_lr, step=epoch + 1)
 
         # Save best model
         metric_to_compare = avg_val_mse if not torch.isnan(torch.tensor(avg_val_mse)) else avg_train_loss
@@ -252,10 +291,21 @@ def train_dual_encoder_dataset_group(
 
 
 if __name__ == "__main__":
+    # Initialize Comet ML experiment from config
+    from comet_utils import create_comet_experiment
+    experiment = create_comet_experiment("forecast_chronos_dual")
+    
     # Load configuration using the shared config parser
     config = load_chronos_forecast_config()
     
     print(f"Training dual encoder model on horizons: {config.horizons} (max horizon: {config.max_horizon})")
+    
+    # Log configuration to Comet
+    experiment.log_parameters({
+        "horizons": config.horizons,
+        "max_horizon": config.max_horizon,
+        "seed": config.seed,
+    })
     
     # Set up random seeds
     tu.set_seed(config.seed)
@@ -329,6 +379,20 @@ if __name__ == "__main__":
     run_root = prepare_run_directory(config.checkpoint_dir, "multi_horizon_forecast_dual_frozen")
     print(f"Checkpoint root directory: {run_root}")
     print(f"Results directory: {config.results_dir}")
+    
+    # Log additional configuration to Comet
+    experiment.log_parameters({
+        "context_length": config.context_length,
+        "stride": config.stride,
+        "split": config.split,
+        "batch_size": config.batch_size,
+        "val_batch_size": config.val_batch_size,
+        "epochs": config.epochs,
+        "lr": config.lr,
+        "weight_decay": config.weight_decay,
+        "mlp_hidden_dim": config.mlp_hidden_dim,
+        "visual_mamba_checkpoint": str(config.visual_mamba_checkpoint_path),
+    })
 
     torch_dtype = torch.float32
 
@@ -415,9 +479,13 @@ if __name__ == "__main__":
             run_root=run_root,
             max_horizon=config.max_horizon,
             criterion=criterion,
+            experiment=experiment,
         )
         if record is not None:
             dataset_records.append(record)
+    
+    # End Comet experiment
+    experiment.end()
 
     if not dataset_records:
         print("No datasets were trained. Check dataset filters or availability.")

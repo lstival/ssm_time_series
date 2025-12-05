@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List
 
+import comet_ml
 import torch
 import torch.nn as nn
 
@@ -41,10 +42,21 @@ from dataloaders.utils import (
 
 
 if __name__ == "__main__":
+    # Initialize Comet ML experiment from config
+    from comet_utils import create_comet_experiment
+    experiment = create_comet_experiment("forecast_chronos_visual")
+    
     # Load configuration using the shared config parser
     config = load_chronos_forecast_config()
     
     print(f"Training on horizons: {config.horizons} (max horizon: {config.max_horizon})")
+    
+    # Log configuration to Comet
+    experiment.log_parameters({
+        "horizons": config.horizons,
+        "max_horizon": config.max_horizon,
+        "seed": config.seed,
+    })
     
     # Set up random seeds
     tu.set_seed(config.seed)
@@ -79,6 +91,20 @@ if __name__ == "__main__":
 
     config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     config.results_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Log additional configuration to Comet
+    experiment.log_parameters({
+        "context_length": config.context_length,
+        "stride": config.stride,
+        "split": config.split,
+        "batch_size": config.batch_size,
+        "val_batch_size": config.val_batch_size,
+        "epochs": config.epochs,
+        "lr": config.lr,
+        "weight_decay": config.weight_decay,
+        "mlp_hidden_dim": config.mlp_hidden_dim,
+        "visual_mamba_checkpoint": str(config.visual_mamba_checkpoint_path),
+    })
 
     criterion = nn.MSELoss()
     run_root = prepare_run_directory(config.checkpoint_dir, "multi_horizon_forecast_chronos")
@@ -168,9 +194,13 @@ if __name__ == "__main__":
             run_root=run_root,
             max_horizon=config.max_horizon,
             criterion=criterion,
+            experiment=experiment,
         )
         if record is not None:
             dataset_records.append(record)
+    
+    # End Comet experiment
+    experiment.end()
 
     if not dataset_records:
         print("No datasets were trained. Check dataset filters or availability.")

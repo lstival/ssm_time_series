@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+import comet_ml
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
@@ -67,6 +68,7 @@ def train_dataset_group(
     run_root: Path,
     max_horizon: int,
     criterion: nn.Module,
+    experiment: Optional[comet_ml.Experiment] = None,
 ) -> Optional[Dict[str, object]]:
     if train_loader is None:
         print(f"Skipping dataset '{group_name}' because no train loader is available.")
@@ -120,6 +122,20 @@ def train_dataset_group(
     last_val_metrics: Optional[Dict[int, Dict[str, float]]] = None
     last_avg_train = float("nan")
     last_avg_val = float("nan")
+    
+    # Log hyperparameters to Comet
+    if experiment is not None:
+        experiment.log_parameters({
+            "dataset": group_name,
+            "horizons": list(horizons),
+            "max_horizon": max_horizon,
+            "mlp_hidden_dim": mlp_hidden_dim,
+            "lr": lr,
+            "weight_decay": weight_decay,
+            "epochs": epochs,
+            "target_features": target_features,
+            "embedding_dim": embedding_dim,
+        })
 
     for epoch in range(epochs):
         print(f"\n[{group_name}] Epoch {epoch + 1}/{epochs}")
@@ -155,6 +171,27 @@ def train_dataset_group(
         else:
             print("  Val   - unavailable")
         print(f"  Avg Train: {avg_train_loss:.4f}, Avg Val MSE: {avg_val_mse:.4f}")
+        
+        # Log metrics to Comet
+        if experiment is not None:
+            # Log per-horizon training losses
+            for h in horizons:
+                experiment.log_metric(f"{group_name}_train_loss_H{h}", train_losses[h], step=epoch + 1)
+            # Log average training loss
+            experiment.log_metric(f"{group_name}_avg_train_loss", avg_train_loss, step=epoch + 1)
+            
+            # Log validation metrics if available
+            if val_metrics is not None:
+                for h in horizons:
+                    if h in val_metrics:
+                        experiment.log_metric(f"{group_name}_val_mse_H{h}", val_metrics[h]["mse"], step=epoch + 1)
+                        experiment.log_metric(f"{group_name}_val_mae_H{h}", val_metrics[h]["mae"], step=epoch + 1)
+                # Log average validation MSE
+                experiment.log_metric(f"{group_name}_avg_val_mse", avg_val_mse, step=epoch + 1)
+            
+            # Log learning rate
+            current_lr = optimizer.param_groups[0]["lr"]
+            experiment.log_metric(f"{group_name}_learning_rate", current_lr, step=epoch + 1)
 
         metric_to_compare = avg_val_mse
         if math.isnan(metric_to_compare):

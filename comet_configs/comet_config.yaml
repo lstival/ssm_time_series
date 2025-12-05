@@ -1,0 +1,15 @@
+# Comet ML Configuration
+# This file contains the configuration for Comet ML experiment tracking
+
+comet:
+  api_key: "SNv4ks5JjUxZ1X0FhARDGt4SY"
+  project_name: "ssm_mamba"
+  workspace: "lstival"
+  
+  # Experiment names for different training scripts
+  experiment_names:
+    chronos_supervised: "chronos_supervised_training"
+    cosine_clip: "cosine_clip_training"
+    forecast_chronos_temporal: "forecast_chronos_temporal"
+    forecast_chronos_visual: "forecast_chronos_visual"
+    forecast_chronos_dual: "forecast_chronos_dual_frozen"

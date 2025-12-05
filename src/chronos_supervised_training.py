@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import comet_ml
 import torch
 from torch import nn
 from torch.cuda.amp import GradScaler, autocast
@@ -128,6 +129,7 @@ def _train_encoder(
     epochs: int,
     pred_len: int,
     checkpoint_dir: Path,
+    experiment: Optional[comet_ml.Experiment] = None,
 ) -> None:
     optimizer = tu.build_optimizer(model, training_cfg)
     scheduler = tu.build_scheduler(optimizer, training_cfg, epochs)
@@ -138,6 +140,21 @@ def _train_encoder(
 
     model.to(device)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    # Log hyperparameters to Comet
+    if experiment is not None:
+        experiment.log_parameters({
+            "epochs": epochs,
+            "pred_len": pred_len,
+            "learning_rate": training_cfg.get("learning_rate", "N/A"),
+            "weight_decay": training_cfg.get("weight_decay", 0.0),
+            "batch_size": training_cfg.get("batch_size", "N/A"),
+            "use_amp": amp_enabled,
+            "max_grad_norm": max_grad_norm,
+            "optimizer": training_cfg.get("optimizer", "AdamW"),
+            "scheduler": training_cfg.get("scheduler", "None"),
+            "device": str(device),
+        })
 
     best_metric = float("inf")
     for epoch in range(epochs):
@@ -158,6 +175,15 @@ def _train_encoder(
             scheduler.step(val_loss if val_loss is not None else train_loss)
         elif scheduler is not None:
             scheduler.step()
+
+        # Log metrics to Comet
+        if experiment is not None:
+            experiment.log_metric("train_loss", train_loss, step=epoch + 1)
+            if val_loss is not None:
+                experiment.log_metric("val_loss", val_loss, step=epoch + 1)
+            # Log learning rate
+            current_lr = optimizer.param_groups[0]["lr"]
+            experiment.log_metric("learning_rate", current_lr, step=epoch + 1)
 
         metric = val_loss if val_loss is not None else train_loss
         print(
@@ -190,6 +216,7 @@ def train_temporal_encoder(
     pred_len: int,
     feature_dim: int,
     checkpoint_dir: Path,
+    experiment: Optional[comet_ml.Experiment] = None,
 ) -> None:
     encoder = tu.build_encoder_from_config(config.model)
     model = ChronosForecastModel(encoder, feature_dim, target_dim=feature_dim, pred_len=pred_len)
@@ -202,6 +229,7 @@ def train_temporal_encoder(
         epochs=epochs,
         pred_len=pred_len,
         checkpoint_dir=checkpoint_dir,
+        experiment=experiment,
     )
 
 
@@ -216,6 +244,7 @@ def train_visual_encoder(
     pred_len: int,
     feature_dim: int,
     checkpoint_dir: Path,
+    experiment: Optional[comet_ml.Experiment] = None,
 ) -> None:
     encoder = tu.build_visual_encoder_from_config(config.model)
     model = ChronosForecastModel(encoder, feature_dim, target_dim=feature_dim, pred_len=pred_len)
@@ -228,10 +257,15 @@ def train_visual_encoder(
         epochs=epochs,
         pred_len=pred_len,
         checkpoint_dir=checkpoint_dir,
+        experiment=experiment,
     )
 
 
 def main() -> None:
+    # Initialize Comet ML experiment from config
+    from comet_utils import create_comet_experiment
+    experiment = create_comet_experiment("chronos_supervised")
+    
     default_cfg = Path(__file__).resolve().parent / "configs" / "chronos_supervised.yaml"
     config_path = resolve_path(Path.cwd(), default_cfg)
     if config_path is None or not config_path.exists():
@@ -241,6 +275,12 @@ def main() -> None:
     tu.set_seed(config.seed)
     device = tu.prepare_device(config.device)
     print(f"Using device: {device}")
+    
+    # Log configuration to Comet
+    experiment.log_parameters({
+        "seed": config.seed,
+        "config_file": str(config_path),
+    })
 
     data_cfg = config.data
     dataset = prepare_dataset(config_path, data_cfg)
@@ -283,6 +323,14 @@ def main() -> None:
     checkpoint_dir = (checkpoint_root / encoder_choice).resolve()
     print(f"Checkpoints: {checkpoint_dir}")
 
+    # Log encoder type and dataset info to Comet
+    experiment.log_parameters({
+        "encoder_type": encoder_choice,
+        "feature_dim": feature_dim,
+        "seq_len": seq_len,
+        "pred_len": pred_len,
+    })
+    
     trainer_kwargs = dict(
         config=config,
         training_cfg=training_cfg,
@@ -293,12 +341,16 @@ def main() -> None:
         pred_len=pred_len,
         feature_dim=feature_dim,
         checkpoint_dir=checkpoint_dir,
+        experiment=experiment,
     )
 
     if encoder_choice == "temporal":
         train_temporal_encoder(**trainer_kwargs)
     else:
         train_visual_encoder(**trainer_kwargs)
+    
+    # End Comet experiment
+    experiment.end()
 
 
 if __name__ == "__main__":
