@@ -1,0 +1,24 @@
+# YAML configuration for computing clustering metrics over t-SNE projections.
+# Adjust file paths and model names as needed.
+
+tsne:
+  files:
+    - ../../results/tsne_encoder/tsne_encoder_projection_20251126_1750_tsne/tsne_coordinates.csv
+    - ../../results/tsne_encoder/tsne_visual_encoder_projection_20251126_1750_tsne/tsne_coordinates.csv
+    - ../../results/tsne_encoder/tsne_dual_encoder_projection_20251126_1750_tsne/tsne_coordinates.csv
+
+models:
+  # Option 1: provide names explicitly (ensure it matches the number/order of tsne.files)
+  names:
+    - Temporal
+    - Visual
+    - Combination
+  # Option 2: derive names from a model config (uncomment and edit the fields below)
+  # config: ../../path/to/evaluation_config.yaml
+  # key: evaluation.models
+  # name_field: name
+
+output:
+  path: ../../results/latex/tsne_dual_encoder_projection_20251126_1750_tsne/tsne_clustering_metrics.tex
+  caption: Clustering metrics for dual encoder t-SNE projections.
+  label: tab:tsne-dual-cluster
