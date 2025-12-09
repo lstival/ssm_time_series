@@ -322,6 +322,13 @@ def load_chronos_forecast_config(
         must_exist=True,
         description="Visual Mamba encoder checkpoint",
     )
+    
+    temporal_encoder_checkpoint = _coerce_path(
+        config_dir,
+        visual_candidate,
+        must_exist=True,
+        description="Temporal encoder checkpoint",
+    )
 
     encoder_candidate = paths_section.get(
         "encoder_checkpoint",

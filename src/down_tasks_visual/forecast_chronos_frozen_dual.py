@@ -338,39 +338,11 @@ if __name__ == "__main__":
             f"context_length {config.context_length} must be >= encoder token size {getattr(encoder, 'input_dim', '?')}."
         )
 
-    print(f"Loading encoder checkpoint: {config.visual_mamba_checkpoint_path}")
-    
-    # Load checkpoints for both encoders
-    # The checkpoint should contain both encoders from cosine training
-    checkpoint = torch.load(config.visual_mamba_checkpoint_path, map_location=device)
-    
-    # Try to load encoder states from the checkpoint
-    try:
-        if "time_series" in checkpoint:
-            # Checkpoint from cosine training with separate components
-            encoder.load_state_dict(checkpoint["time_series"]["model_state_dict"])
-            visual_encoder.load_state_dict(checkpoint["visual_encoder"]["model_state_dict"])
-            print("Loaded encoder states from cosine training checkpoint")
-        else:
-            # Try to load from a unified checkpoint
-            encoder.load_state_dict(checkpoint["model_state_dict"])
-            print("Warning: Could not find separate visual encoder in checkpoint, using same weights for both")
-    except Exception as e:
-        print(f"Error loading checkpoint: {e}")
-        print("Attempting alternative checkpoint loading...")
-        # Try to load individual checkpoint files if they exist
-        checkpoint_dir = Path(config.visual_mamba_checkpoint_path).parent
-        time_series_path = checkpoint_dir / "time_series_best.pt"
-        visual_encoder_path = checkpoint_dir / "visual_encoder_best.pt"
-        
-        if time_series_path.exists() and visual_encoder_path.exists():
-            encoder_state = torch.load(time_series_path, map_location=device)
-            visual_state = torch.load(visual_encoder_path, map_location=device)
-            encoder.load_state_dict(encoder_state["model_state_dict"])
-            visual_encoder.load_state_dict(visual_state["model_state_dict"])
-            print("Loaded separate encoder checkpoints")
-        else:
-            raise ValueError(f"Could not load encoder checkpoints from {config.visual_mamba_checkpoint_path}")
+    print(f"Loading temporal encoder checkpoint: {config.encoder_checkpoint_path}")
+    load_encoder_checkpoint(encoder, config.encoder_checkpoint_path, device)
+
+    print(f"Loading visual encoder checkpoint: {config.visual_mamba_checkpoint_path}")
+    load_encoder_checkpoint(visual_encoder, config.visual_mamba_checkpoint_path, device)
 
     config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     config.results_dir.mkdir(parents=True, exist_ok=True)
