@@ -39,7 +39,7 @@ data:
   val_batch_size: 512
   num_workers: 4
   # Override the default 96-step context with 48 steps
-  sample_size: 96
+  sample_size: 48
 
 evaluation:
   horizons: [96, 192, 336, 720]
