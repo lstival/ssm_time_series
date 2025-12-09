@@ -21,9 +21,9 @@ data:
   # Specific datasets to evaluate (list of dataset names)
   dataset_names:
     - ETTh1.csv
-    - ETTh2.csv
-    - ETTm1.csv 
-    - ETTm2.csv
+    # - ETTh2.csv
+    # - ETTm1.csv 
+    # - ETTm2.csv
     - PEMS04.npz
     - weather.csv
     - exchange_rate.csv
