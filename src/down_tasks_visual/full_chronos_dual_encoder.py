@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import comet_ml
+import datasets
 import torch
 import torch.nn as nn
 
@@ -37,6 +38,27 @@ from dataloaders.utils import (
     build_dataset_group,
     _build_aggregated_loader,
 )
+
+
+def ensure_hf_list_feature_registered() -> None:
+    """Register HuggingFace's legacy 'List' feature if missing."""
+    try:
+        features_module = getattr(datasets, "features", None)
+        if features_module is None:
+            return
+        registry = getattr(features_module, "_FEATURE_TYPES", None)
+        sequence_cls = getattr(features_module, "Sequence", None)
+        if isinstance(registry, dict) and sequence_cls is not None and "List" not in registry:
+            registry["List"] = sequence_cls
+            return
+        inner = getattr(features_module, "features", None)
+        if inner is not None:
+            registry = getattr(inner, "_FEATURE_TYPES", registry)
+            sequence_cls = getattr(inner, "Sequence", sequence_cls)
+            if isinstance(registry, dict) and sequence_cls is not None and "List" not in registry:
+                registry["List"] = sequence_cls
+    except Exception as exc:
+        print(f"Warning: unable to register HuggingFace 'List' feature: {exc}")
 
 
 def train_full_dual_encoder_dataset_group(
@@ -334,6 +356,7 @@ if __name__ == "__main__":
     )
 
     torch_dtype = torch.float32
+    ensure_hf_list_feature_registered()
 
     dataset_groups: List[ChronosDatasetGroup] = []
     for dataset_name in config.datasets_to_load:
