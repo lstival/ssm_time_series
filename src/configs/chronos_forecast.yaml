@@ -39,7 +39,7 @@ training:
   horizons: [96, 192, 336, 720]
 
 paths:
-  encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100_ep20/time_series_best.pt
-  visual_encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100/visual_encoder_best.pt
+  encoder_checkpoint: ../../checkpoints/ts_encoder_20251126_1750_ep10/time_series_best.pt
+  visual_encoder_checkpoint: ../../checkpoints/ts_encoder_20251126_1750_ep10/visual_encoder_best.pt
   checkpoint_dir: ../../checkpoints
   results_dir: ../../results

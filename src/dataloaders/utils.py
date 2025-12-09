@@ -159,10 +159,23 @@ class ChronosDatasetGroup:
 
 def _ensure_hf_list_feature_registered() -> None:
     """Ensure HuggingFace List feature is registered."""
-    feature_registry = getattr(datasets.features, "_FEATURE_TYPES", None)
-    sequence_cls = getattr(datasets.features, "Sequence", None)
-    if isinstance(feature_registry, dict) and "List" not in feature_registry and sequence_cls is not None:
+    try:
+        from datasets.features import features as hf_features  # type: ignore
+    except Exception:
+        return
+
+    feature_registry = getattr(hf_features, "_FEATURE_TYPES", None)
+    sequence_cls = getattr(hf_features, "Sequence", None)
+    if not isinstance(feature_registry, dict) or sequence_cls is None:
+        return
+
+    # HF 1.13 serialized some datasets with the deprecated ``List`` feature token.
+    # Modern releases removed it, so we alias it to ``Sequence`` before parsing
+    # dataset metadata to keep offline caches readable.
+    if "List" not in feature_registry:
         feature_registry["List"] = sequence_cls
+    if getattr(hf_features, "List", None) is None:
+        setattr(hf_features, "List", sequence_cls)
 
 
 def _sequence_to_array(obj: object) -> np.ndarray:
