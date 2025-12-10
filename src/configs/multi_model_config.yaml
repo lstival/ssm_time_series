@@ -1,0 +1,23 @@
+# Configuration for latex_multi_model_results.py
+# Provide one entry per model with a display name and the CSV file to read.
+models:
+  - name: Temporal
+    file: ../results/chronos_supervised_zeroshot_20251202_0931.csv
+  - name: Visual
+    file: ../results/chronos_supervised_zeroshot_20251203_1018.csv
+  - name: Combination
+    file: ../results/icml_zeroshot_forecast_dual_dual_20251125_1347.csv
+
+# Directory/filename for the generated LaTeX table (relative paths are resolved
+# from the location of the Python script).
+output:
+  dir: ../results/latex/ablation
+  filename: multi_model_comparison.tex
+
+# Optional ordering hints. Set `horizons` to null to include every horizon found
+# in the CSV files. Leave `dataset_order` empty to keep alphabetical order.
+horizons: [96, 192, 336, 720]
+dataset_order: []
+
+# Number of decimal places for MAE/MSE values.
+decimals: 3

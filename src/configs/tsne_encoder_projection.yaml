@@ -1,10 +1,10 @@
 paths:
   output_dir: ../../results/tsne_encoder
-  encoder_checkpoint: ../../checkpoints/ts_encoder_20251126_1750/time_series_best.pt
-  projection_checkpoint: ../../checkpoints/ts_encoder_20251126_1750/time_series_projection_best.pt
+  encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100_ep31/time_series_best.pt
+  projection_checkpoint: ../../checkpoints/ts_encoder_20251101_1100_ep31/time_series_projection_best.pt
 
-  visual_encoder_checkpoint: ../../checkpoints/ts_encoder_20251126_1750/visual_encoder_best.pt
-  visual_projection_checkpoint: ../../checkpoints/ts_encoder_20251126_1750/visual_projection_best.pt
+  visual_encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100_ep31/visual_encoder_best.pt
+  visual_projection_checkpoint: ../../checkpoints/ts_encoder_20251101_1100_ep31/visual_projection_best.pt
 
 tsne:
   samples_per_dataset: 1000
@@ -21,9 +21,9 @@ data:
   # Specific datasets to evaluate (list of dataset names)
   dataset_names:
     - ETTh1.csv
-    - ETTh2.csv
-    - ETTm1.csv 
-    - ETTm2.csv
+    # - ETTh2.csv
+    # - ETTm1.csv 
+    # - ETTm2.csv
     - PEMS04.npz
     - weather.csv
     - exchange_rate.csv
