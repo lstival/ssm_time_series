@@ -1,47 +1,24 @@
-import pandas as pd
-import re
 import os
+import re
+from pathlib import Path
+
+import pandas as pd
+
+try:
+    import yaml
+except ImportError as exc:  # pragma: no cover - dependency guard
+    raise ImportError(
+        "Please install pyyaml to run this script: pip install pyyaml"
+    ) from exc
 
 # -----------------------
-# 1. Load CSV with metrics
+# 1. Config
 # -----------------------
-file_name = "icml_zeroshot_forecast_20251125_0943.csv"
-file_path = f"../results/{file_name}"
-df = pd.read_csv(file_path)
+DEFAULT_CONFIG_PATH = Path(__file__).with_name("cm_mamba_runs.yaml")
+DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 
 # -----------------------
-# 2. Normalize dataset names to match average_result.tex
-# -----------------------
-def clean_name(path):
-    filename = path.replace("\\", "/").split("/")[-1]
-    name = re.sub(r"\.(csv|txt|npz)$", "", filename)
-    
-    # Map to names used in average_result.tex
-    if "ettm1" in name.lower():
-        return "ETTm1"
-    if "ettm2" in name.lower():
-        return "ETTm2"
-    if "etth1" in name.lower():
-        return "ETTh1"
-    if "etth2" in name.lower():
-        return "ETTh2"
-    if "traffic" in name.lower() or "PEMS04".lower() in name.lower():
-        return "Traffic"
-    if "weather" in name.lower():
-        return "Weather"
-    if "exchange" in name.lower() or "exchange_rate" in name.lower():
-        return "Exchange"
-    if "electricity" in name.lower():
-        return "Electricity"
-    if "solar" in name.lower():
-        return "Solar"
-    
-    return name
-
-df["dataset"] = df["dataset_name"].apply(clean_name)
-
-# -----------------------
-# 3. Filter for datasets in average_result.tex and calculate means
+# 2. Dataset name normalization
 # -----------------------
 target_datasets = [
     "ETTm1",
@@ -54,13 +31,50 @@ target_datasets = [
     "Solar",
     "Electricity",
 ]
-df_filtered = df[df["dataset"].isin(target_datasets)]
 
-# Group by dataset and calculate mean across all horizons
-df_means = df_filtered.groupby("dataset")[["mae", "mse"]].mean().reset_index()
+def clean_name(path: str) -> str:
+    filename = path.replace("\\", "/").split("/")[-1]
+    name = re.sub(r"\.(csv|txt|npz)$", "", filename)
+
+    lower = name.lower()
+    if "ettm1" in lower:
+        return "ETTm1"
+    if "ettm2" in lower:
+        return "ETTm2"
+    if "etth1" in lower:
+        return "ETTh1"
+    if "etth2" in lower:
+        return "ETTh2"
+    if "traffic" in lower or "pems04" in lower:
+        return "Traffic"
+    if "weather" in lower:
+        return "Weather"
+    if "exchange" in lower or "exchange_rate" in lower:
+        return "Exchange"
+    if "electricity" in lower:
+        return "Electricity"
+    if "solar" in lower:
+        return "Solar"
+
+    return name
+
+
+def compute_means_from_csv(csv_path: Path) -> pd.DataFrame:
+    """Load a CSV and return per-dataset mean of MSE/MAE for target datasets."""
+
+    df = pd.read_csv(csv_path)
+    required = {"dataset_name", "mae", "mse"}
+    missing = required - set(df.columns)
+    if missing:
+        raise KeyError(f"Missing columns {sorted(missing)} in {csv_path}")
+
+    df["dataset"] = df["dataset_name"].apply(clean_name)
+    df_filtered = df[df["dataset"].isin(target_datasets)]
+
+    return df_filtered.groupby("dataset")[['mae', 'mse']].mean().reset_index()
 
 # -----------------------
-# 4. Baseline results (hardcoded)
+# 3. Baseline results (hardcoded)
 # -----------------------
 baseline_data = {
     "ETTm1": {
@@ -137,8 +151,7 @@ baseline_data = {
     },
 }
 
-table_models = [
-    ("CM-Mamba", "Our"),
+BASELINE_MODELS = [
     ("LightGTS", "LightGTS (2025)"),
     ("Timer", "Timer (2024)"),
     ("MOIRAI", "MOIRAI (2024)"),
@@ -147,11 +160,23 @@ table_models = [
     ("Time-MoE", "Time-MoE (2025)"),
 ]
 
-baseline_models = [model for model, _ in table_models if model != "Our"]
+# -----------------------
+# 4. Helpers
+# -----------------------
+def slugify_model_name(name: str, fallback: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")
+    return slug or fallback
 
-# -----------------------
-# 5. Find best and second best for formatting
-# -----------------------
+
+def get_metric(means_df: pd.DataFrame, dataset: str, metric: str):
+    if means_df is None:
+        return None
+    match = means_df[means_df["dataset"] == dataset]
+    if match.empty:
+        return None
+    return float(match[metric].iloc[0])
+
+
 def find_best_results(all_results):
     """Find best and second best results for MSE and MAE separately."""
     rankings = {metric: {"best": None, "second": None} for metric in ["MSE", "MAE"]}
@@ -173,8 +198,9 @@ def find_best_results(all_results):
 
     return rankings
 
+
 def format_value(value, model, metric, rankings):
-    """Format value with colors and styles based on ranking"""
+    """Format value with colors and styles based on ranking."""
     if value is None or pd.isna(value):
         return "-"
 
@@ -188,88 +214,197 @@ def format_value(value, model, metric, rankings):
         return f"\\textcolor{{blue}}{{\\underline{{{formatted}}}}}"
     return formatted
 
-# -----------------------
-# 6. Build LaTeX table
-# -----------------------
-latex = []
 
-latex.append(r"\begin{table*}[ht]")
-latex.append(r"\centering")
-latex.append(
-    r"\caption{Full results of zero-shot forecasting experiments. The average results of all predicted lengths are listed. Lower MSE or MAE indicate better predictions. Red: the best, Blue: the 2nd best.}"
-)
-latex.append(r"\renewcommand{\arraystretch}{1.2}")
-latex.append(r"\setlength{\tabcolsep}{4pt}")
-latex.append(r"\begin{adjustbox}{max width=\textwidth}")
-num_model_columns = len(table_models) * 2
-tabular_spec = "l" + "c" * num_model_columns
-latex.append("\\begin{tabular}{%s}" % tabular_spec)
-latex.append(r"\toprule")
+def load_config():
+    config_path = Path(os.environ.get("CM_MAMBA_CONFIG", DEFAULT_CONFIG_PATH))
+    if not config_path.exists():
+        raise FileNotFoundError(
+            f"Config file not found at {config_path}. "
+            "Create it or set CM_MAMBA_CONFIG to the correct path."
+        )
 
-latex.append(rf"\multicolumn{{1}}{{c}}{{}} & \multicolumn{{{num_model_columns}}}{{c}}{{Models}} \\")
-latex.append(rf"\cmidrule(lr){{2-{num_model_columns + 1}}}")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
 
-model_headers = " & ".join(
-    [rf"\multicolumn{{2}}{{c}}{{\textbf{{{display}}}}}" for _, display in table_models]
-)
-latex.append(rf"\textbf{{Metric}} & {model_headers} \\")
+    return config_path, config
 
-metric_row = " & ".join(["MSE", "MAE"] * len(table_models))
-latex.append(rf" & {metric_row} \\")
-latex.append(r"\midrule")
 
-# Data rows
-for dataset in target_datasets:
-    if dataset in df_means["dataset"].values:
-        our_data = df_means[df_means["dataset"] == dataset].iloc[0]
-        our_mse = our_data["mse"]
-        our_mae = our_data["mae"]
-    else:
-        our_mse = None
-        our_mae = None
+def build_cm_mamba_runs(config, results_dir: Path):
+    variants = config.get("cm_mamba_variants", [])
+    if not variants:
+        raise ValueError("No CM-Mamba variants found in config under 'cm_mamba_variants'.")
 
-    dataset_results = {}
-    if our_mse is not None and our_mae is not None:
-        dataset_results["Our"] = {"MSE": our_mse, "MAE": our_mae}
+    runs = []
+    for idx, variant in enumerate(variants):
+        display = variant.get("display_name") or f"CM-Mamba {idx + 1}"
+        variant_key = slugify_model_name(
+            variant.get("id") or display, fallback=f"cm_mamba_{idx + 1}"
+        )
 
-    for model in baseline_models:
-        mse, mae = baseline_data.get(dataset, {}).get(model, (None, None))
-        dataset_results[model] = {"MSE": mse, "MAE": mae}
+        csv_entry = variant.get("file") or variant.get("csv") or variant.get("path")
+        if not csv_entry:
+            raise ValueError(
+                f"Variant '{display}' is missing a CSV path. Use key 'file' in the config."
+            )
 
-    rankings = find_best_results(dataset_results)
+        csv_path = Path(csv_entry)
+        if not csv_path.is_absolute():
+            csv_path = results_dir / csv_path
+        csv_path = csv_path.resolve()
+        if not csv_path.exists():
+            raise FileNotFoundError(f"CSV not found for variant '{display}': {csv_path}")
 
-    row_parts = [dataset]
-    row_parts.append(format_value(our_mse, "Our", "MSE", rankings))
-    row_parts.append(format_value(our_mae, "Our", "MAE", rankings))
+        means_df = compute_means_from_csv(csv_path)
 
-    for model in baseline_models:
-        mse, mae = baseline_data.get(dataset, {}).get(model, (None, None))
-        row_parts.append(format_value(mse, model, "MSE", rankings))
-        row_parts.append(format_value(mae, model, "MAE", rankings))
+        runs.append(
+            {
+                "key": variant_key,
+                "display": display,
+                "csv_path": csv_path,
+                "means": means_df,
+            }
+        )
 
-    latex.append(" & ".join(row_parts) + r" \\")
+    return runs
 
-latex.append(r"\bottomrule")
-latex.append(r"\end{tabular}")
-latex.append(r"\end{adjustbox}")
-latex.append(r"\label{tab:comparison_mean}")
-latex.append(r"\end{table*}")
 
-# -----------------------
-# 7. Save LaTeX file
-# -----------------------
-final_latex = "\n".join(latex)
+def build_latex(table_models, cm_mamba_runs, baseline_models):
+    latex = []
+    best_counts = {model: 0 for model, _ in table_models}
+    second_counts = {model: 0 for model, _ in table_models}
 
-out_filename = f"average_results_comparison.tex_{file_name.replace(".csv", "")}.tex"
-out_dir = os.path.dirname(file_name) or os.getcwd()
-out_path = os.path.join(out_dir, out_filename)
+    latex.append(r"\begin{table*}[ht]")
+    latex.append(r"\centering")
+    latex.append(
+        r"\caption{Full results of zero-shot forecasting experiments. The average results of all predicted lengths are listed. Lower MSE or MAE indicate better predictions. Red: the best, Blue: the 2nd best.}"
+    )
+    latex.append(r"\renewcommand{\arraystretch}{1.2}")
+    latex.append(r"\setlength{\tabcolsep}{4pt}")
+    latex.append(r"\begin{adjustbox}{max width=\textwidth}")
+    num_model_columns = len(table_models) * 2
+    tabular_spec = "l" + "c" * num_model_columns
+    latex.append("\\begin{tabular}{%s}" % tabular_spec)
+    latex.append(r"\toprule")
 
-with open(out_path, "w", encoding="utf-8") as f:
-    f.write(final_latex)
+    latex.append(rf"\multicolumn{{1}}{{c}}{{}} & \multicolumn{{{num_model_columns}}}{{c}}{{Models}} \\")
+    latex.append(rf"\cmidrule(lr){{2-{num_model_columns + 1}}}")
 
-print(f"Wrote LaTeX comparison table to: {out_path}")
+    model_headers = " & ".join(
+        [rf"\multicolumn{{2}}{{c}}{{\textbf{{{display}}}}}" for _, display in table_models]
+    )
+    latex.append(rf"\textbf{{Metric}} & {model_headers} \\")
 
-# Print summary
-print("\nDataset mean values (Our model):")
-for _, row in df_means.iterrows():
-    print(f"{row['dataset']}: MSE={row['mse']:.3f}, MAE={row['mae']:.3f}")
+    metric_row = " & ".join(["MSE", "MAE"] * len(table_models))
+    latex.append(rf" & {metric_row} \\")
+    latex.append(r"\midrule")
+
+    for dataset in target_datasets:
+        dataset_results = {}
+        row_parts = [dataset]
+
+        for run in cm_mamba_runs:
+            mse_val = get_metric(run["means"], dataset, "mse")
+            mae_val = get_metric(run["means"], dataset, "mae")
+            dataset_results[run["key"]] = {"MSE": mse_val, "MAE": mae_val}
+
+        for model in baseline_models:
+            mse, mae = baseline_data.get(dataset, {}).get(model, (None, None))
+            dataset_results[model] = {"MSE": mse, "MAE": mae}
+
+        rankings = find_best_results(dataset_results)
+
+        # tally best/second placements for counts row
+        for model_name, values in dataset_results.items():
+            for metric in ["MSE", "MAE"]:
+                val = values.get(metric)
+                if val is None:
+                    continue
+                if rankings[metric].get("best") == model_name:
+                    best_counts[model_name] += 1
+                elif rankings[metric].get("second") == model_name:
+                    second_counts[model_name] += 1
+
+        for run in cm_mamba_runs:
+            row_parts.append(
+                format_value(get_metric(run["means"], dataset, "mse"), run["key"], "MSE", rankings)
+            )
+            row_parts.append(
+                format_value(get_metric(run["means"], dataset, "mae"), run["key"], "MAE", rankings)
+            )
+
+        for model in baseline_models:
+            mse, mae = baseline_data.get(dataset, {}).get(model, (None, None))
+            row_parts.append(format_value(mse, model, "MSE", rankings))
+            row_parts.append(format_value(mae, model, "MAE", rankings))
+
+        latex.append(" & ".join(row_parts) + r" \\")
+
+    # Summary rows for counts of best/second-best placements
+    latex.append(r"\midrule")
+
+    def fmt_count(value: int, kind: str) -> str:
+        if value is None:
+            return "-"
+        if kind == "best":
+            return f"\\textcolor{{red}}{{\\textbf{{{value}}}}}"
+        if kind == "second":
+            return f"\\textcolor{{blue}}{{\\underline{{{value}}}}}"
+        return str(value)
+
+    # Best counts row
+    best_row_parts = ["Best count"]
+    for model, _ in table_models:
+        count = best_counts.get(model, 0)
+        best_row_parts.append(fmt_count(count, "best"))
+        best_row_parts.append("")  # keep two columns per model
+    latex.append(" & ".join(best_row_parts) + r" \\")
+
+    # Second-best counts row
+    second_row_parts = ["Second-best count"]
+    for model, _ in table_models:
+        count = second_counts.get(model, 0)
+        second_row_parts.append(fmt_count(count, "second"))
+        second_row_parts.append("")
+    latex.append(" & ".join(second_row_parts) + r" \\")
+
+    latex.append(r"\bottomrule")
+    latex.append(r"\end{tabular}")
+    latex.append(r"\end{adjustbox}")
+    latex.append(r"\label{tab:comparison_mean}")
+    latex.append(r"\end{table*}")
+
+    return "\n".join(latex)
+
+
+def write_output(final_latex: str, config: dict, config_path: Path) -> Path:
+    out_dir = Path(config.get("output_dir", config_path.parent)).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_filename = f"average_results_comparison_{config_path.stem}.tex"
+    out_path = out_dir / out_filename
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(final_latex)
+
+    return out_path
+
+
+def main():
+    config_path, config = load_config()
+    results_dir = Path(config.get("results_dir", DEFAULT_RESULTS_DIR)).resolve()
+    cm_mamba_runs = build_cm_mamba_runs(config, results_dir)
+
+    baseline_models = [model for model, _ in BASELINE_MODELS]
+    table_models = [(run["key"], run["display"]) for run in cm_mamba_runs] + BASELINE_MODELS
+
+    final_latex = build_latex(table_models, cm_mamba_runs, baseline_models)
+    out_path = write_output(final_latex, config, config_path)
+
+    print(f"Wrote LaTeX comparison table to: {out_path}")
+    print("\nDataset mean values per CM-Mamba variant:")
+    for run in cm_mamba_runs:
+        print(f"\n{run['display']} (key={run['key']}):")
+        for _, row in run["means"].iterrows():
+            print(f"{row['dataset']}: MSE={row['mse']:.3f}, MAE={row['mae']:.3f}")
+
+if __name__ == "__main__":
+    main()

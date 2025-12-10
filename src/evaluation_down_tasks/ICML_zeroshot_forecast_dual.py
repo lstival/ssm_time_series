@@ -36,10 +36,11 @@ from evaluation_down_tasks.zeroshot_utils import (
     build_dual_encoder_model_from_checkpoint,
     dataset_slug,
 )
-from evaluation_down_tasks.ICML_zeroshot_forecast import (
-    _aggregate_results_by_horizon,
-    _save_horizon_summary,
-)
+
+from zeroshot_reporting import (
+    aggregate_results_by_horizon,
+    save_horizon_summary,
+    )
 
 
 def _context_length_from_sample_size(
@@ -204,8 +205,8 @@ if __name__ == "__main__":
 
     print_evaluation_summary(results_by_dataset, checkpoint_info)
 
-    horizon_summary = _aggregate_results_by_horizon(results_by_dataset)
-    horizon_json_path, horizon_csv_path = _save_horizon_summary(
+    horizon_summary = aggregate_results_by_horizon(results_by_dataset)
+    horizon_json_path, horizon_csv_path = save_horizon_summary(
         horizon_summary,
         results_dir=results_dir,
         prefix=effective_prefix,

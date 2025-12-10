@@ -5,8 +5,10 @@ models:
     file: ../results/chronos_supervised_zeroshot_20251202_0931.csv
   - name: Visual
     file: ../results/chronos_supervised_zeroshot_20251203_1018.csv
-  - name: Combination
-    file: ../results/icml_zeroshot_forecast_dual_dual_20251125_1347.csv
+  # - name: Concatenation
+  #   file: ../results/icml_zeroshot_forecast_dual_dual_20251125_1347.csv
+  - name: Contrastive Multimodal
+    file: ../results/icml_zeroshot_forecast_input96_20251209_0946.csv
 
 # Directory/filename for the generated LaTeX table (relative paths are resolved
 # from the location of the Python script).

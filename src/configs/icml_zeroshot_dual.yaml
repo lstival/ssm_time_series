@@ -12,10 +12,10 @@ model:
 
 paths:
   # Chronos-trained forecasting checkpoint containing encoder + head weights
-  forecast_checkpoint: ../../checkpoints/multi_horizon_forecast_dual_frozen_20251125_1347/all_datasets/best_model.pt
+  forecast_checkpoint: ../../checkpoints/multi_horizon_forecast_dual_frozen_20251209_1049/all_datasets/best_model.pt
   # Optional: direct encoder checkpoint if stored separately (None uses forecast checkpoint)
-  encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100_ep31/time_series_best.pt
-  visual_encoder_checkpoint: ../../checkpoints/ts_encoder_20251101_1100_ep31/visual_encoder_best.pt
+  encoder_checkpoint: ../../checkpoints/ts_encoder_20251126_1750_ep10/time_series_best.pt
+  visual_encoder_checkpoint: ../../checkpoints/ts_encoder_20251126_1750_ep10/visual_encoder_best.pt
   # Directory where evaluation artifacts will be saved
   results_dir: ../../results
   
