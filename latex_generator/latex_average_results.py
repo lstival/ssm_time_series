@@ -64,7 +64,7 @@ df_means = df_filtered.groupby("dataset")[["mae", "mse"]].mean().reset_index()
 # -----------------------
 baseline_data = {
     "ETTm1": {
-        "LightGTS-mini": (0.327, 0.370),
+        "LightGTS": (0.327, 0.370),
         "Timer": (0.768, 0.568),
         "MOIRAI": (0.390, 0.389),
         "Chronos": (0.551, 0.453),
@@ -72,7 +72,7 @@ baseline_data = {
         "Time-MoE": (0.376, 0.406),
     },
     "ETTm2": {
-        "LightGTS-mini": (0.247, 0.316),
+        "LightGTS": (0.247, 0.316),
         "Timer": (0.315, 0.356),
         "MOIRAI": (0.276, 0.320),
         "Chronos": (0.293, 0.331),
@@ -80,7 +80,7 @@ baseline_data = {
         "Time-MoE": (0.315, 0.365),
     },
     "ETTh1": {
-        "LightGTS-mini": (0.388, 0.419),
+        "LightGTS": (0.388, 0.419),
         "Timer": (0.562, 0.483),
         "MOIRAI": (0.510, 0.469),
         "Chronos": (0.533, 0.452),
@@ -88,7 +88,7 @@ baseline_data = {
         "Time-MoE": (0.394, 0.420),
     },
     "ETTh2": {
-        "LightGTS-mini": (0.348, 0.395),
+        "LightGTS": (0.348, 0.395),
         "Timer": (0.370, 0.400),
         "MOIRAI": (0.354, 0.377),
         "Chronos": (0.392, 0.397),
@@ -96,7 +96,7 @@ baseline_data = {
         "Time-MoE": (0.403, 0.415),
     },
     "Traffic": {
-        "LightGTS-mini": (0.561, 0.381),
+        "LightGTS": (0.561, 0.381),
         "Timer": (0.613, 0.407),
         "MOIRAI": (None, None),
         "Chronos": (0.615, 0.421),
@@ -104,7 +104,7 @@ baseline_data = {
         "Time-MoE": (None, None),
     },
     "Weather": {
-        "LightGTS-mini": (0.208, 0.256),
+        "LightGTS": (0.208, 0.256),
         "Timer": (0.292, 0.313),
         "MOIRAI": (0.260, 0.275),
         "Chronos": (0.288, 0.309),
@@ -112,7 +112,7 @@ baseline_data = {
         "Time-MoE": (0.270, 0.300),
     },
     "Exchange": {
-        "LightGTS-mini": (0.347, 0.396),
+        "LightGTS": (0.347, 0.396),
         "Timer": (0.392, 0.425),
         "MOIRAI": (0.385, 0.417),
         "Chronos": (0.370, 0.412),
@@ -120,7 +120,7 @@ baseline_data = {
         "Time-MoE": (0.432, 0.454),
     },
     "Solar": {
-        "LightGTS-mini": (0.191, 0.271),
+        "LightGTS": (0.191, 0.271),
         "Timer": (0.771, 0.604),
         "MOIRAI": (0.714, 0.704),
         "Chronos": (0.393, 0.319),
@@ -128,7 +128,7 @@ baseline_data = {
         "Time-MoE": (0.411, 0.428),
     },
     "Electricity": {
-        "LightGTS-mini": (0.213, 0.308),
+        "LightGTS": (0.213, 0.308),
         "Timer": (0.297, 0.375),
         "MOIRAI": (0.188, 0.273),
         "Chronos": (None, None),
@@ -138,8 +138,8 @@ baseline_data = {
 }
 
 table_models = [
-    ("Our", "Our (Mean)"),
-    ("LightGTS-mini", "LightGTS-mini"),
+    ("CM-Mamba", "Our"),
+    ("LightGTS", "LightGTS (2025)"),
     ("Timer", "Timer (2024)"),
     ("MOIRAI", "MOIRAI (2024)"),
     ("Chronos", "Chronos (2024)"),
