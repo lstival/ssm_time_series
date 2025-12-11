@@ -1,0 +1,41 @@
+# Shared benchmark settings for vision, time-series, and encoder models
+common:
+  device_name: auto
+  batch_size: 4
+  warmup_runs: 5
+  measure_runs: 20
+
+vision:
+  image_size: 224
+  channels: 3
+  variants:
+    - label: ResNet-50
+      builder: resnet50
+    - label: ViT-B/32
+      builder: vit_b_32
+
+mamba:
+  seq_len: 128
+  feature_dim: 192
+  model_dim: 128
+  embedding_dim: 128
+  pooling: mean
+  variants:
+    - label: CM-Mamba Tiny
+      depth: 8
+    - label: CM-Mamba Small
+      depth: 16
+
+time_series:
+  context_length: 256
+  variants:
+    - label: Chronos-T5-Small
+      kind: chronos
+      model_id: amazon/chronos-t5-small
+    - label: TimesFM-2.0-500M
+      kind: timesfm
+      model_id: google/timesfm-2.0-500m-pytorch
+
+runner:
+  output_path: results/benchmark_params_gflops.tex
+  verbose: false

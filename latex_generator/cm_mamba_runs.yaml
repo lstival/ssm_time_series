@@ -12,9 +12,9 @@ output_dir: ./
 cm_mamba_variants:
   - display_name: "CM-Mamba-mini"
     id: cm_mamba_main
-    file: icml_zeroshot_forecast_20251125_0943.csv
+    file: icml_zeroshot_forecast_dual_dual_input96_20251209_1049.csv
 
   # Add more variants as needed, e.g. a small or ablation run
   - display_name: "CM-Mamba-tiny"
     id: cm_mamba_small
-    file: icml_zeroshot_forecast_20251120_1310.csv
+    file: icml_zeroshot_forecast_dual_dual_20251125_1347.csv
