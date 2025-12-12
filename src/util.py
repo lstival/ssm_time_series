@@ -48,87 +48,130 @@ class MoCoProjectionHead(nn.Module):
 
 
 def train_epoch_dataset(
-	model: ForecastRegressor,
-	dataloader: torch.utils.data.DataLoader,
-	criterion: nn.Module,
-	optimizer: torch.optim.Optimizer,
-	device: torch.device,
-	horizons: List[int],
+    model: ForecastRegressor,
+    dataloader: torch.utils.data.DataLoader,
+    criterion: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    horizons: List[int],
+    reverse_normalize: bool = False,
 ) -> Dict[int, float]:
-	model.train()
-	running_losses = {h: 0.0 for h in horizons}
-	steps = 0
-	max_horizon = model.max_horizon
+    model.train()
+    running_losses = {h: 0.0 for h in horizons}
+    steps = 0
+    max_horizon = model.max_horizon
 
-	for batch in tqdm(dataloader, desc="Train", leave=False):
-		seq_x, seq_y, _, _ = batch
-		seq_x = seq_x.to(device).float().transpose(1, 2)
-		seq_y = seq_y.to(device).float()
-		if seq_y.size(1) < max_horizon:
-			raise ValueError(
-				f"Target sequence length {seq_y.size(1)} smaller than required max horizon {max_horizon}"
-			)
-		targets = seq_y[:, -max_horizon:, :]
+    for batch in tqdm(dataloader, desc="Train", leave=False):
+        if len(batch) == 5:
+            seq_x, seq_y, _, _, norm_stats = batch
+        else:
+            seq_x, seq_y, _, _ = batch
+            norm_stats = None
 
-		optimizer.zero_grad(set_to_none=True)
-		predictions = model(seq_x)
-		total_loss, loss_values = compute_multi_horizon_loss(predictions, targets, horizons, criterion)
-		total_loss.backward()
-		optimizer.step()
+        seq_x = seq_x.to(device).float().transpose(1, 2)
+        seq_y = seq_y.to(device).float()
 
-		for horizon, value in loss_values.items():
-			running_losses[horizon] += value
-		steps += 1
+        if seq_y.size(1) < max_horizon:
+            raise ValueError(
+                f"Target sequence length {seq_y.size(1)} smaller than required max horizon {max_horizon}"
+            )
 
-	return {h: running_losses[h] / max(1, steps) for h in horizons}
+        targets = seq_y[:, -max_horizon:, :]
+
+        if reverse_normalize and norm_stats is not None and norm_stats.numel() > 0:
+            norm_stats = norm_stats.to(device).float()
+            mins = norm_stats[:, 0, :]
+            maxs = norm_stats[:, 1, :]
+            ranges = (maxs - mins).clamp_min(1e-6)
+        else:
+            mins = maxs = ranges = None
+
+        optimizer.zero_grad(set_to_none=True)
+        predictions = model(seq_x)
+
+        if reverse_normalize and ranges is not None:
+            predictions = predictions * ranges.unsqueeze(1) + mins.unsqueeze(1)
+            targets = targets * ranges.unsqueeze(1) + mins.unsqueeze(1)
+
+        total_loss, loss_values = compute_multi_horizon_loss(predictions, targets, horizons, criterion)
+        total_loss.backward()
+        optimizer.step()
+
+        for horizon, value in loss_values.items():
+            running_losses[horizon] += value
+        steps += 1
+
+    return {h: running_losses[h] / max(1, steps) for h in horizons}
 
 
 def evaluate_dataset(
-	model: ForecastRegressor,
-	dataloader: Optional[torch.utils.data.DataLoader],
-	device: torch.device,
-	horizons: List[int],
+    model: ForecastRegressor,
+    dataloader: Optional[torch.utils.data.DataLoader],
+    device: torch.device,
+    horizons: List[int],
+    reverse_normalize: bool = False,
 ) -> Optional[Dict[int, Dict[str, float]]]:
-	if dataloader is None:
-		return None
+    if dataloader is None:
+        return None
 
-	model.eval()
-	running_mse = {h: 0.0 for h in horizons}
-	running_mae = {h: 0.0 for h in horizons}
-	counts = {h: 0 for h in horizons}
-	max_horizon = model.max_horizon
+    model.eval()
+    running_mse = {h: 0.0 for h in horizons}
+    running_mae = {h: 0.0 for h in horizons}
+    counts = {h: 0 for h in horizons}
+    max_horizon = model.max_horizon
 
-	with torch.no_grad():
-		for batch in tqdm(dataloader, desc="Val", leave=False):
-			seq_x, seq_y, _, _ = batch
-			seq_x = seq_x.to(device).float().transpose(1, 2)
-			seq_y = seq_y.to(device).float()
-			if seq_y.size(1) < max_horizon:
-				raise ValueError(
-					f"Target sequence length {seq_y.size(1)} smaller than required max horizon {max_horizon}"
-				)
-			targets = seq_y[:, -max_horizon:, :]
-			predictions = model(seq_x)
-			batch_metrics = compute_multi_horizon_metrics(predictions, targets, horizons)
+    with torch.no_grad():
+        for batch in tqdm(dataloader, desc="Val", leave=False):
+            if len(batch) == 5:
+                seq_x, seq_y, _, _, norm_stats = batch
+            else:
+                seq_x, seq_y, _, _ = batch
+                norm_stats = None
 
-			target_features = targets.size(2)
-			batch_size = targets.size(0)
-			for horizon, metrics in batch_metrics.items():
-				elements = batch_size * horizon * target_features
-				running_mse[horizon] += metrics["mse"] * elements
-				running_mae[horizon] += metrics["mae"] * elements
-				counts[horizon] += elements
+            seq_x = seq_x.to(device).float().transpose(1, 2)
+            seq_y = seq_y.to(device).float()
 
-	results: Dict[int, Dict[str, float]] = {}
-	for horizon in horizons:
-		if counts[horizon] == 0:
-			results[horizon] = {"mse": float("nan"), "mae": float("nan")}
-		else:
-			results[horizon] = {
-				"mse": running_mse[horizon] / counts[horizon],
-				"mae": running_mae[horizon] / counts[horizon],
-			}
-	return results
+            if seq_y.size(1) < max_horizon:
+                raise ValueError(
+                    f"Target sequence length {seq_y.size(1)} smaller than required max horizon {max_horizon}"
+                )
+
+            targets = seq_y[:, -max_horizon:, :]
+
+            if reverse_normalize and norm_stats is not None and norm_stats.numel() > 0:
+                norm_stats = norm_stats.to(device).float()
+                mins = norm_stats[:, 0, :]
+                maxs = norm_stats[:, 1, :]
+                ranges = (maxs - mins).clamp_min(1e-6)
+            else:
+                ranges = mins = None
+
+            predictions = model(seq_x)
+
+            if reverse_normalize and ranges is not None:
+                predictions = predictions * ranges.unsqueeze(1) + mins.unsqueeze(1)
+                targets = targets * ranges.unsqueeze(1) + mins.unsqueeze(1)
+
+            batch_metrics = compute_multi_horizon_metrics(predictions, targets, horizons)
+
+            target_features = targets.size(2)
+            batch_size = targets.size(0)
+            for horizon, metrics in batch_metrics.items():
+                elements = batch_size * horizon * target_features
+                running_mse[horizon] += metrics["mse"] * elements
+                running_mae[horizon] += metrics["mae"] * elements
+                counts[horizon] += elements
+
+    results: Dict[int, Dict[str, float]] = {}
+    for horizon in horizons:
+        if counts[horizon] == 0:
+            results[horizon] = {"mse": float("nan"), "mae": float("nan")}
+        else:
+            results[horizon] = {
+                "mse": running_mse[horizon] / counts[horizon],
+                "mae": running_mae[horizon] / counts[horizon],
+            }
+    return results
 
 
 def load_encoder_checkpoint(

@@ -66,28 +66,42 @@ def _normalize_per_series(
 
     def _normalize_batch(batch):
         normalized = []
+        mins = []
+        maxs = []
+
         for seq in batch[column]:
             arr = np.asarray(seq, dtype=np.float64)
+            if arr.ndim == 1:
+                arr = arr.reshape(-1, 1)
             if arr.size == 0:
                 normalized.append(arr.astype(output_dtype).tolist())
+                mins.append(np.zeros((arr.shape[1],), dtype=output_dtype).tolist())
+                maxs.append(np.zeros((arr.shape[1],), dtype=output_dtype).tolist())
                 continue
 
-            seq_min = np.nanmin(arr)
-            seq_max = np.nanmax(arr)
+            seq_min = np.nanmin(arr, axis=0)
+            seq_max = np.nanmax(arr, axis=0)
 
-            if np.isnan(seq_min) or np.isnan(seq_max):
+            if np.isnan(seq_min).any() or np.isnan(seq_max).any():
                 normalized.append(arr.astype(output_dtype).tolist())
+                mins.append(seq_min.astype(output_dtype).tolist())
+                maxs.append(seq_max.astype(output_dtype).tolist())
                 continue
 
             range_val = seq_max - seq_min
-            if abs(range_val) < epsilon:
-                normalized_arr = np.zeros_like(arr, dtype=np.float64)
-            else:
-                normalized_arr = (arr - seq_min) / range_val
+            safe_range = np.where(np.abs(range_val) < epsilon, 1.0, range_val)
+            normalized_arr = (arr - seq_min) / safe_range
+            normalized_arr = np.where(np.abs(range_val) < epsilon, 0.0, normalized_arr)
 
             normalized.append(normalized_arr.astype(output_dtype).tolist())
+            mins.append(seq_min.astype(output_dtype).tolist())
+            maxs.append(seq_max.astype(output_dtype).tolist())
 
-        return {column: normalized}
+        return {
+            column: normalized,
+            f"{column}_min": mins,
+            f"{column}_max": maxs,
+        }
 
     # Use batched mapping for efficiency; keep original columns untouched.
     return ds.map(_normalize_batch, batched=True, keep_in_memory=False)
@@ -213,8 +227,10 @@ def load_chronos_datasets(
                 print(f"Skipping dataset '{name}': missing 'target' column.")
                 continue
 
+            # Keep normalization statistics if they are available
             if len(ds.column_names) > 1:
-                ds = ds.select_columns(["target"])
+                available_cols = [col for col in ["target", "target_min", "target_max"] if col in ds.column_names]
+                ds = ds.select_columns(available_cols)
 
             loaded_datasets.append((name, ds))
 

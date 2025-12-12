@@ -69,6 +69,7 @@ def train_dataset_group(
     max_horizon: int,
     criterion: nn.Module,
     experiment: Optional[comet_ml.Experiment] = None,
+    reverse_normalization: bool = False,
 ) -> Optional[Dict[str, object]]:
     if train_loader is None:
         print(f"Skipping dataset '{group_name}' because no train loader is available.")
@@ -108,6 +109,10 @@ def train_dataset_group(
         target_features=target_features,
     ).to(device)
     model = ForecastRegressor(encoder=encoder, head=head, freeze_encoder=True).to(device)
+    for param in model.encoder.parameters():
+        param.requires_grad = True
+    
+    optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     optimizer = AdamW(model.head.parameters(), lr=lr, weight_decay=weight_decay)
 
     dataset_slug = group_name.replace("\\", "__").replace("/", "__") or "dataset"
@@ -146,8 +151,15 @@ def train_dataset_group(
             optimizer,
             device,
             list(horizons),
+            reverse_normalize=reverse_normalization,
         )
-        val_metrics = evaluate_dataset(model, val_loader, device, list(horizons))
+        val_metrics = evaluate_dataset(
+            model,
+            val_loader,
+            device,
+            list(horizons),
+            reverse_normalize=reverse_normalization,
+        )
 
         avg_train_loss = sum(train_losses.values()) / len(train_losses)
         if val_metrics is not None:

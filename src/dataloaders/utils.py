@@ -256,7 +256,19 @@ def _load_chronos_sequences(
     for idx in indices:
         sample = ds[int(idx)]
         target = sample.get("target") if isinstance(sample, dict) else sample
-        sequences.append(_sequence_to_array(target))
+        target_arr = _sequence_to_array(target)
+
+        seq_min = None
+        seq_max = None
+        if isinstance(sample, dict):
+            seq_min = sample.get("target_min")
+            seq_max = sample.get("target_max")
+        if seq_min is not None and seq_max is not None:
+            seq_min_arr = np.asarray(seq_min, dtype=np.float32).reshape(-1)
+            seq_max_arr = np.asarray(seq_max, dtype=np.float32).reshape(-1)
+            sequences.append((target_arr, seq_min_arr, seq_max_arr))
+        else:
+            sequences.append((target_arr, None, None))
         if max_series is not None and len(sequences) >= max_series:
             break
     return sequences
@@ -288,10 +300,17 @@ class ChronosForecastWindowDataset(Dataset):
         self.dtype = torch_dtype
         self.pred_len = self.horizon
         self.series: List[np.ndarray] = []
+        self.series_mins: List[Optional[np.ndarray]] = []
+        self.series_maxs: List[Optional[np.ndarray]] = []
         self.index_map: List[Tuple[int, int]] = []
 
         for seq in sequences:
-            arr = _sequence_to_array(seq)
+            if isinstance(seq, tuple) and len(seq) == 3:
+                arr, seq_min, seq_max = seq
+            else:
+                arr, seq_min, seq_max = seq, None, None
+
+            arr = _sequence_to_array(arr)
             total = arr.shape[0]
             required = self.context_length + self.horizon
             if total < required:
@@ -300,6 +319,9 @@ class ChronosForecastWindowDataset(Dataset):
 
             base_idx = len(self.series)
             self.series.append(arr)
+            # Store per-series stats for reverse normalization if available
+            self.series_mins.append(seq_min if seq_min is None else np.asarray(seq_min, dtype=np.float32))
+            self.series_maxs.append(seq_max if seq_max is None else np.asarray(seq_max, dtype=np.float32))
             max_start = total - required
             start = 0
             windows_added = 0
@@ -315,7 +337,7 @@ class ChronosForecastWindowDataset(Dataset):
     def __len__(self) -> int:
         return len(self.index_map)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         series_idx, start = self.index_map[idx]
         series = self.series[series_idx]
         ctx_end = start + self.context_length
@@ -324,7 +346,19 @@ class ChronosForecastWindowDataset(Dataset):
         seq_y = torch.as_tensor(series[ctx_end:tgt_end], dtype=self.dtype)
         seq_x_mark = torch.zeros_like(seq_x)
         seq_y_mark = torch.zeros_like(seq_y)
-        return seq_x, seq_y, seq_x_mark, seq_y_mark
+        seq_min = self.series_mins[series_idx]
+        seq_max = self.series_maxs[series_idx]
+        if seq_min is None or seq_max is None:
+            norm_stats = torch.empty((0,), dtype=self.dtype)
+        else:
+            norm_stats = torch.stack(
+                [
+                    torch.as_tensor(seq_min, dtype=self.dtype).reshape(-1),
+                    torch.as_tensor(seq_max, dtype=self.dtype).reshape(-1),
+                ],
+                dim=0,
+            )
+        return seq_x, seq_y, seq_x_mark, seq_y_mark, norm_stats
 
     @property
     def series_count(self) -> int:
