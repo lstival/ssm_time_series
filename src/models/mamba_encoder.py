@@ -232,7 +232,7 @@ if __name__ == "__main__":
         depth=6,
         input_dim=tokens_dim,
         pooling="mean",
-        model_dim=768,
+        model_dim=128,
         embedding_dim=128,
         expand_factor=1.5
     )

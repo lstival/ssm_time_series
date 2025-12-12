@@ -7,14 +7,17 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
 from sklearn.manifold import TSNE
 import yaml
+from torch.utils.data import DataLoader, Dataset
 
 from evaluation_down_tasks.zeroshot_utils import extract_checkpoint_timestamp
+from dataloaders.cronos_dataset import load_chronos_datasets
+from dataloaders.utils import _ensure_hf_list_feature_registered
 from util import build_projection_head
 
 
@@ -44,6 +47,142 @@ class ProjectionConfig:
     num_workers: int
     split: str
     sequence_first_input: bool
+
+
+DEFAULT_CHRONOS_DATASETS: List[str] = [
+    "m4_daily",
+    "electricity_15min",
+    "solar_1h",
+    "taxi_30min",
+    "monash_hospital",
+]
+MAX_CHRONOS_DATASETS = 5
+CHRONOS_REPO_ID = "autogluon/chronos_datasets"
+
+
+@dataclass
+class ChronosDatasetGroup:
+    """Canonical Chronos dataset packaging for projection scripts."""
+
+    name: str
+    loader: DataLoader
+    split: str
+
+
+class ChronosEmbeddingDataset(Dataset):
+    """Simple dataset wrapping Chronos time-series sequences."""
+
+    def __init__(self, sequences: Sequence[np.ndarray]):
+        self.sequences = [np.asarray(seq, dtype=np.float32) for seq in sequences if len(seq) > 0]
+
+    def __len__(self) -> int:
+        return len(self.sequences)
+
+    def __getitem__(self, index: int) -> torch.Tensor:
+        arr = self.sequences[index]
+        tensor = torch.from_numpy(arr).to(dtype=torch.float32)
+        return tensor.unsqueeze(-1)
+
+
+def chronos_embedding_collate(batch: Sequence[torch.Tensor]) -> Sequence[torch.Tensor]:
+    if not batch:
+        raise ValueError("Chronos collate received an empty batch.")
+    lengths = [sample.size(0) for sample in batch]
+    max_len = max(lengths)
+    padded = torch.zeros(len(batch), max_len, 1, dtype=torch.float32)
+    for idx, sample in enumerate(batch):
+        length = lengths[idx]
+        flat = sample.view(-1)
+        padded[idx, :length, 0] = flat[:length]
+    return (padded,)
+
+
+def resolve_chronos_dataset_names(
+    *,
+    dataset_names: Optional[List[str]],
+    dataset_name: str,
+    fallback: Optional[Sequence[str]] = None,
+) -> List[str]:
+    ordered: List[str] = []
+    if dataset_names:
+        ordered.extend(str(name) for name in dataset_names)
+    elif dataset_name:
+        ordered.append(str(dataset_name))
+    if not ordered:
+        fallback_list = list(fallback or DEFAULT_CHRONOS_DATASETS)
+    else:
+        fallback_list = []
+
+    seen: Dict[str, None] = {}
+    result: List[str] = []
+    for name in ordered or fallback_list:
+        key = str(name).strip()
+        if not key:
+            continue
+        if "." in key:
+            key = Path(key).stem
+        if key and key not in seen:
+            seen[key] = None
+            result.append(key)
+        if len(result) >= MAX_CHRONOS_DATASETS:
+            break
+    if not result:
+        result = list(DEFAULT_CHRONOS_DATASETS[:MAX_CHRONOS_DATASETS])
+    return result[:MAX_CHRONOS_DATASETS]
+
+
+def load_chronos_sequences(dataset_name: str, *, limit: int) -> List[np.ndarray]:
+    _ensure_hf_list_feature_registered()
+    try:
+        hf_dataset = load_chronos_datasets(
+            [dataset_name],
+            split="train",
+            repo_id=CHRONOS_REPO_ID,
+            target_dtype="float32",
+            normalize_per_series=True,
+            force_offline=False,
+        )
+    except (ValueError, KeyError) as exc:
+        print(f"Skipping Chronos dataset '{dataset_name}' due to load error: {exc}")
+        return []
+    total = len(hf_dataset)
+    if total == 0:
+        return []
+
+    max_items = total if limit <= 0 else min(total, limit)
+    sequences: List[np.ndarray] = []
+    for idx in range(max_items):
+        sample = hf_dataset[int(idx)]
+        target = sample.get("target") if isinstance(sample, dict) else sample
+        array = np.asarray(target, dtype=np.float32)
+        if array.size == 0:
+            continue
+        sequences.append(array)
+    return sequences
+
+
+def build_chronos_dataset_groups(*, proj_cfg) -> List[ChronosDatasetGroup]:
+    dataset_names = resolve_chronos_dataset_names(
+        dataset_names=proj_cfg.dataset_names,
+        dataset_name=proj_cfg.dataset_name,
+    )
+
+    groups: List[ChronosDatasetGroup] = []
+    for dataset_name in dataset_names:
+        sequences = load_chronos_sequences(dataset_name, limit=proj_cfg.samples_per_dataset)
+        if not sequences:
+            print(f"Skipping Chronos dataset '{dataset_name}' due to missing sequences.")
+            continue
+        dataset = ChronosEmbeddingDataset(sequences)
+        loader = DataLoader(
+            dataset,
+            batch_size=proj_cfg.batch_size,
+            shuffle=False,
+            num_workers=proj_cfg.num_workers,
+            collate_fn=chronos_embedding_collate,
+        )
+        groups.append(ChronosDatasetGroup(name=dataset_name, loader=loader, split="train"))
+    return groups
 
 
 def determine_config_path(*, env_var: str, default_path: Path) -> Path:

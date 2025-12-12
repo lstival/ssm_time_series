@@ -1,4 +1,4 @@
-"""Project concatenated embeddings from frozen dual encoders via t-SNE."""
+"""Project concatenated Chronos dual-encoder embeddings via t-SNE."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ for path in (SRC_DIR, ROOT_DIR):
         sys.path.insert(0, path_str)
 
 import training_utils as tu
-from evaluation_down_tasks.zeroshot_utils import select_loader
 from embeddings_visualization.projection_utils import (
+    build_chronos_dataset_groups,
     build_output_dir,
     determine_config_path,
     fit_tsne,
@@ -29,7 +29,6 @@ from embeddings_visualization.projection_utils import (
     load_projection_config,
     load_projection_head,
 )
-from time_series_loader import TimeSeriesDataModule
 from util import default_device, load_encoder_checkpoint
 
 TSNE_CONFIG_ENV_VAR = "TSNE_DUAL_ENCODER_CONFIG"
@@ -37,7 +36,7 @@ DEFAULT_TSNE_CONFIG_PATH = SRC_DIR / "configs" / "tsne_encoder_projection.yaml"
 DEFAULT_MODEL_CONFIG_PATH = SRC_DIR / "configs" / "mamba_encoder.yaml"
 DEFAULT_OUTPUT_PREFIX = "tsne_dual_encoder_projection"
 DEFAULT_OUTPUT_DIR = ROOT_DIR / "results" / "tsne_dual_encoder"
-DEFAULT_DATA_DIR = ROOT_DIR / "ICML_datasets"
+DEFAULT_DATA_DIR = ROOT_DIR / "chronos"
 DEFAULT_SPLIT = "all"
 
 def _collect_dual_embeddings(
@@ -155,35 +154,17 @@ def main() -> None:
         device=device,
     )
 
-    module = TimeSeriesDataModule(
-        dataset_name=proj_cfg.dataset_name,
-        dataset_names=proj_cfg.dataset_names,
-        data_dir=str(proj_cfg.data_dir),
-        batch_size=proj_cfg.batch_size,
-        val_batch_size=proj_cfg.val_batch_size,
-        num_workers=proj_cfg.num_workers,
-        pin_memory=True,
-        normalize=True,
-        filename=str(proj_cfg.filename) if proj_cfg.filename is not None else None,
-        train=True,
-        val=True,
-        test=True,
-    )
-
-    dataset_groups = module.get_dataloaders()
+    dataset_groups = build_chronos_dataset_groups(proj_cfg=proj_cfg)
     if not dataset_groups:
-        raise RuntimeError("No datasets available for visualization")
+        raise RuntimeError("No Chronos datasets available for visualization")
 
     dataset_entries: List[Dict[str, object]] = []
 
     for group in dataset_groups:
-        loader, _dataset_obj, split_used = select_loader(group, proj_cfg.split)
-        if loader is None:
-            print(f"Skipping dataset '{group.name}' because split '{proj_cfg.split}' is unavailable.")
-            continue
-
+        loader = group.loader
         dataset_label = group.name
         dataset_type = infer_dataset_type(dataset_label)
+        split_used = group.split
 
         try:
             embeddings, sample_indices = _collect_dual_embeddings(
@@ -274,7 +255,7 @@ def main() -> None:
             color=color,
         )
 
-    ax.set_title("ICML Dual Encoder Embeddings (t-SNE)")
+    ax.set_title("Chronos Dual Encoder Embeddings (t-SNE)")
     ax.set_xlabel("Component 1")
     ax.set_ylabel("Component 2")
     ax.legend(loc="best", fontsize="small", ncol=2)
