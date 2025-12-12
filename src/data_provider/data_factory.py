@@ -19,23 +19,34 @@ data_dict = {
 def data_provider(args, flag):
     Data = data_dict[args.data]
     timeenc = 0 if args.embed != 'timeF' else 1
+    base_freq = getattr(args, 'freq', 'h')
+    num_workers = getattr(args, 'num_workers', 0)
+    pin_memory = getattr(args, 'pin_memory', True)
+    persistent_workers = getattr(args, 'persistent_workers', False)
+    if num_workers <= 0:
+        persistent_workers = False
 
     if flag == 'test':
-        shuffle_flag = False
-        drop_last = True
-        batch_size = 1  # bsz=1 for evaluation
-        freq = args.freq
+        shuffle_flag = getattr(args, 'test_shuffle', False)
+        drop_last = getattr(args, 'test_drop_last', True)
+        batch_size = getattr(args, 'test_batch_size', 1)
+        freq = base_freq
     elif flag == 'pred':
-        shuffle_flag = False
-        drop_last = False
-        batch_size = 1
-        freq = args.freq
+        shuffle_flag = getattr(args, 'pred_shuffle', False)
+        drop_last = getattr(args, 'pred_drop_last', False)
+        batch_size = getattr(args, 'pred_batch_size', 1)
+        freq = base_freq
         Data = Dataset_Pred
     else:
-        shuffle_flag = True
-        drop_last = True
-        batch_size = args.batch_size  # bsz for train and valid
-        freq = args.freq
+        freq = base_freq
+        if flag == 'val':
+            batch_size = getattr(args, 'val_batch_size', getattr(args, 'batch_size', 1))
+            shuffle_flag = getattr(args, 'val_shuffle', True)
+            drop_last = getattr(args, 'val_drop_last', True)
+        else:
+            batch_size = getattr(args, 'batch_size', 1)
+            shuffle_flag = getattr(args, 'train_shuffle', True)
+            drop_last = getattr(args, 'train_drop_last', True)
 
     data_set = Data(
         root_path=args.root_path,
@@ -46,14 +57,19 @@ def data_provider(args, flag):
         target=args.target,
         timeenc=timeenc,
         freq=freq,
+        scale=getattr(args, 'scale', True),
+        scaler_type=getattr(args, 'scaler_type', 'minmax'),
     )
     print(flag, len(data_set))
     data_loader = DataLoader(
         data_set,
         batch_size=batch_size,
         shuffle=shuffle_flag,
-        num_workers=args.num_workers,
-        drop_last=drop_last)
+        num_workers=num_workers,
+        drop_last=drop_last,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+    )
     return data_set, data_loader
 
 

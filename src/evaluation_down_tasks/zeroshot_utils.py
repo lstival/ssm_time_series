@@ -128,6 +128,7 @@ def _apply_inverse_transform(
     tensor: torch.Tensor,
     inverse_fn: Optional[Callable[[np.ndarray], np.ndarray]],
     *,
+    dataset=None,
     dataset_name: Optional[str],
     tensor_label: str,
 ) -> Tuple[torch.Tensor, bool]:
@@ -144,6 +145,37 @@ def _apply_inverse_transform(
         restored_tensor = restored_tensor.reshape(*shape)
         return restored_tensor, True
     except Exception as exc:  # pragma: no cover - defensive logging
+        feature_dim = None
+        if dataset is not None:
+            scaler = getattr(dataset, "scaler", None)
+            if scaler is not None:
+                scale_attr = getattr(scaler, "scale_", None)
+                if isinstance(scale_attr, np.ndarray) and scale_attr.ndim == 1:
+                    feature_dim = scale_attr.shape[0]
+                else:
+                    min_attr = getattr(scaler, "min_", None)
+                    if isinstance(min_attr, np.ndarray) and min_attr.ndim == 1:
+                        feature_dim = min_attr.shape[0]
+            if feature_dim is None:
+                data_x = getattr(dataset, "data_x", None)
+                if isinstance(data_x, np.ndarray) and data_x.ndim >= 2:
+                    feature_dim = data_x.shape[-1]
+            if feature_dim is None:
+                data_attr = getattr(dataset, "data", None)
+                if isinstance(data_attr, np.ndarray) and data_attr.ndim >= 2:
+                    feature_dim = data_attr.shape[-1]
+
+        if feature_dim is not None and feature_dim != flat.shape[1]:
+            try:
+                expanded = np.repeat(flat, feature_dim, axis=1)
+                restored_full = inverse_fn(expanded)
+                restored_subset = restored_full[:, : flat.shape[1]]
+                restored_tensor = torch.as_tensor(restored_subset, dtype=tensor.dtype)
+                restored_tensor = restored_tensor.reshape(*shape)
+                return restored_tensor, True
+            except Exception as retry_exc:  # pragma: no cover - fallback failed
+                exc = retry_exc
+
         dataset_ref = f" for dataset '{dataset_name}'" if dataset_name else ""
         print(f"Warning: inverse_transform failed on {tensor_label}{dataset_ref}: {exc}")
         return tensor, False
@@ -211,13 +243,25 @@ def evaluate_and_collect_dual_encoder(
 
     inverse_fn = getattr(dataset, "inverse_transform", None) if dataset is not None else None
     denorm_context, ctx_applied = _apply_inverse_transform(
-        context_tensor, inverse_fn, dataset_name=dataset_name, tensor_label="context"
+        context_tensor,
+        inverse_fn,
+        dataset=dataset,
+        dataset_name=dataset_name,
+        tensor_label="context",
     )
     denorm_targets, tgt_applied = _apply_inverse_transform(
-        targets_tensor, inverse_fn, dataset_name=dataset_name, tensor_label="targets"
+        targets_tensor,
+        inverse_fn,
+        dataset=dataset,
+        dataset_name=dataset_name,
+        tensor_label="targets",
     )
     denorm_predictions, pred_applied = _apply_inverse_transform(
-        predictions_tensor, inverse_fn, dataset_name=dataset_name, tensor_label="predictions"
+        predictions_tensor,
+        inverse_fn,
+        dataset=dataset,
+        dataset_name=dataset_name,
+        tensor_label="predictions",
     )
     denorm_applied = ctx_applied or tgt_applied or pred_applied
 
@@ -548,13 +592,25 @@ def evaluate_and_collect(
 
     inverse_fn = getattr(dataset, "inverse_transform", None) if dataset is not None else None
     denorm_context, ctx_applied = _apply_inverse_transform(
-        context_tensor, inverse_fn, dataset_name=dataset_name, tensor_label="context"
+        context_tensor,
+        inverse_fn,
+        dataset=dataset,
+        dataset_name=dataset_name,
+        tensor_label="context",
     )
     denorm_targets, tgt_applied = _apply_inverse_transform(
-        targets_tensor, inverse_fn, dataset_name=dataset_name, tensor_label="targets"
+        targets_tensor,
+        inverse_fn,
+        dataset=dataset,
+        dataset_name=dataset_name,
+        tensor_label="targets",
     )
     denorm_predictions, pred_applied = _apply_inverse_transform(
-        predictions_tensor, inverse_fn, dataset_name=dataset_name, tensor_label="predictions"
+        predictions_tensor,
+        inverse_fn,
+        dataset=dataset,
+        dataset_name=dataset_name,
+        tensor_label="predictions",
     )
     denorm_applied = ctx_applied or tgt_applied or pred_applied
 

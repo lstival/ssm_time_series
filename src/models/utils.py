@@ -47,6 +47,33 @@ def time_series_2_recurrence_plot(x):
 
 
 @dataclass
+class SDMambaDatasetConfig:
+    """Configuration describing an SD-Mamba style dataset loader."""
+
+    name: str
+    data_key: str
+    root_path: Path
+    data_path: str
+    features: str
+    target: str
+    freq: str
+    seq_len: int
+    label_len: int
+    pred_len: int
+    batch_size: int
+    val_batch_size: int
+    num_workers: int
+    pin_memory: bool = True
+    embed: str = "timeF"
+    scale: bool = True
+    scaler_type: str = "standard"
+    train_shuffle: bool = True
+    train_drop_last: bool = True
+    val_shuffle: bool = False
+    val_drop_last: bool = False
+
+
+@dataclass
 class ChronosForecastConfig:
     """Configuration class for Chronos forecasting."""
     # Model configuration

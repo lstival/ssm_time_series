@@ -280,6 +280,17 @@ def prepare_sequence(seq: torch.Tensor) -> torch.Tensor:
     return seq.contiguous()
 
 
+def reshape_multivariate_series(seq: torch.Tensor) -> torch.Tensor:
+    """Convert (batch, time, features) tensor into per-feature univariate channels."""
+    if seq.ndim != 3:
+        raise ValueError(f"Expected tensor with shape (batch, time, features); received {tuple(seq.shape)}")
+    batch, length, features = seq.shape
+    if features <= 1:
+        return seq.transpose(1, 2)
+    reshaped = seq.permute(0, 2, 1).reshape(batch * features, 1, length)
+    return reshaped
+
+
 def random_time_mask(x: torch.Tensor, drop_prob: float = 0.1) -> torch.Tensor:
     if drop_prob <= 0.0:
         return x
@@ -595,8 +606,7 @@ def run_clip_training(
         with tqdm(train_loader, desc=desc, total=total) as pbar:
             for batch in pbar:
                 seq = prepare_sequence(extract_sequence(batch)).to(device)
-
-                x_q = seq.swapaxes(1, 2)
+                x_q = reshape_multivariate_series(seq)
                 noise = noise_std * torch.randn_like(x_q)
                 x_k = make_positive_view(x_q + noise)
 
@@ -633,7 +643,7 @@ def run_clip_training(
             with torch.no_grad():
                 for val_batch in val_loader:
                     val_seq = prepare_sequence(extract_sequence(val_batch)).to(device)
-                    val_x_q = val_seq.swapaxes(1, 2)
+                    val_x_q = reshape_multivariate_series(val_seq)
                     val_noise = noise_std * torch.randn_like(val_x_q)
                     val_x_k = make_positive_view(val_x_q + val_noise)
 
@@ -803,22 +813,12 @@ def make_positive_view(
     if permute_segments and L > 1:
         K = int(permute_segments)
         K = max(2, min(K, L))  # at least 2 segments, at most L
-        # compute segment boundaries (as even as possible)
         sizes = [L // K] * K
         for idx in range(L % K):
             sizes[idx] += 1
-        boundaries = []
-        pos = 0
-        for s in sizes:
-            boundaries.append((pos, pos + s))
-            pos += s
+        segments = torch.split(out, sizes, dim=2)
         perm = torch.randperm(K, device=device).tolist()
-        permuted = torch.empty_like(out)
-        for si, pj in enumerate(perm):
-            start_src, end_src = boundaries[pj]
-            start_dst, end_dst = boundaries[si]
-            permuted[:, :, start_dst:end_dst] = out[:, :, start_src:end_src]
-        out = permuted
+        out = torch.cat([segments[p] for p in perm], dim=2)
 
     return out
 

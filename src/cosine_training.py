@@ -4,21 +4,133 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Dict, Iterable, Optional, Sequence, Tuple
+import yaml
 
 import comet_ml
 import torch
+from torch.utils.data import DataLoader
 
 import training_utils as tu
 import util as u
 from moco_training import (
-    build_dataloaders,
-    infer_feature_dim,
-    prepare_dataset,
     resolve_path,
     resolve_checkpoint_dir,
-    split_dataset,
 )
+
+
+def _resolve_data_root(config_path: Path, candidate: Optional[Path | str]) -> Path:
+    resolved = resolve_path(config_path.parent, candidate)
+    if resolved is not None:
+        return resolved
+    default_root = config_path.parent.parent / "data"
+    return default_root.resolve()
+
+
+def _build_time_series_loaders(
+    config_path: Path,
+    data_cfg: Dict[str, object],
+    *,
+    seed: int,
+) -> Tuple[DataLoader, Optional[DataLoader], Dict[str, object]]:
+    dataset_type = str(data_cfg.get("dataset_type", "cronos")).lower()
+    batch_size = int(data_cfg.get("batch_size", 128))
+    val_batch_size = int(data_cfg.get("val_batch_size", batch_size))
+    num_workers = int(data_cfg.get("num_workers", 0))
+    pin_memory = bool(data_cfg.get("pin_memory", False))
+
+    data_root = _resolve_data_root(config_path, data_cfg.get("data_dir"))
+    normalize = bool(data_cfg.get("normalize", True))
+    train_ratio = float(data_cfg.get("train_ratio", 0.8))
+    val_ratio_cfg = data_cfg.get("val_ratio")
+    val_ratio = float(val_ratio_cfg) if val_ratio_cfg is not None else 0.2
+    if dataset_type == "cronos" and val_ratio <= 0.0:
+        val_ratio = 0.2
+
+    reverse_transform = bool(data_cfg.get("reverse_transform", False))
+    cronos_kwargs: Dict[str, object] = dict(data_cfg.get("cronos_kwargs", {}) or {})
+
+    datasets_spec = data_cfg.get("datasets")
+    dataset_name = data_cfg.get("dataset_name")
+
+    if dataset_type == "cronos":
+        if not datasets_spec and dataset_name is None:
+            config_candidates: Sequence[object] = (
+                data_cfg.get("cronos_config"),
+                config_path.parent / "cronos_loader_example.yaml",
+            )
+            cronos_config_path: Optional[Path] = None
+            for candidate in config_candidates:
+                resolved = resolve_path(config_path.parent, candidate) if candidate is not None else None
+                if resolved is not None and resolved.exists():
+                    cronos_config_path = resolved
+                    break
+            if cronos_config_path is not None and cronos_config_path.exists():
+                with cronos_config_path.open("r", encoding="utf-8") as handle:
+                    cronos_raw = yaml.safe_load(handle) or {}
+                raw_datasets = cronos_raw.get("datasets_to_load")
+                if isinstance(raw_datasets, Sequence) and not isinstance(raw_datasets, (str, bytes)):
+                    datasets_spec = [str(item) for item in raw_datasets if str(item).strip()]
+                repo_id = cronos_raw.get("repo_id")
+                if repo_id is not None:
+                    cronos_kwargs.setdefault("repo_id", repo_id)
+                target_dtype = cronos_raw.get("target_dtype")
+                if target_dtype is not None:
+                    cronos_kwargs.setdefault("target_dtype", target_dtype)
+                config_load_kwargs = cronos_raw.get("load_kwargs") or {}
+                if isinstance(config_load_kwargs, dict):
+                    load_kwargs = cronos_kwargs.setdefault("load_kwargs", {})
+                    load_kwargs.update(config_load_kwargs)
+            else:
+                print(
+                    "Warning: Cronos dataset list not provided and cronos_config file not found; training data may be empty."
+                )
+
+        load_kwargs = cronos_kwargs.setdefault("load_kwargs", {})
+        load_kwargs.setdefault("offline_cache_dir", str(data_root))
+        load_kwargs.setdefault("force_offline", True)
+
+    train_loader, val_loader = u.build_time_series_dataloaders(
+        data_dir=str(data_root),
+        filename=data_cfg.get("filename"),
+        dataset_name=dataset_name,
+        datasets=datasets_spec,
+        batch_size=batch_size,
+        val_batch_size=val_batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        normalize=normalize,
+        train_ratio=train_ratio,
+        val_ratio=val_ratio,
+        dataset_type=dataset_type,
+        val_split=data_cfg.get("val_split"),
+        seed=seed,
+        cronos_kwargs=cronos_kwargs,
+    )
+    resolved = {
+        "dataset_type": dataset_type,
+        "batch_size": batch_size,
+        "val_batch_size": val_batch_size,
+        "num_workers": num_workers,
+        "pin_memory": pin_memory,
+        "normalize": normalize,
+        "train_ratio": train_ratio,
+        "val_ratio": val_ratio,
+        "data_root": str(data_root),
+        "reverse_transform": reverse_transform,
+        "datasets": list(datasets_spec) if isinstance(datasets_spec, Sequence) and not isinstance(datasets_spec, (str, bytes)) else datasets_spec,
+    }
+    return train_loader, val_loader, resolved
+
+
+def _infer_feature_dim(loader: DataLoader) -> Tuple[int, int]:
+    iterator = iter(loader)
+    try:
+        sample = next(iterator)
+    except StopIteration as exc:
+        raise ValueError("Training data loader produced no batches.") from exc
+    seq = u.prepare_sequence(u.extract_sequence(sample))
+    return int(seq.shape[-1]), int(seq.shape[1])
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -73,36 +185,41 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     })
 
     data_cfg = config.data
-    dataset = prepare_dataset(config_path, data_cfg)
+    train_loader, val_loader, loader_meta = _build_time_series_loaders(
+        config_path,
+        data_cfg,
+        seed=config.seed,
+    )
 
-    val_ratio = float(data_cfg.get("val_ratio", 0.0))
-    train_dataset, val_dataset = split_dataset(dataset, val_ratio=val_ratio, seed=config.seed)
+    batch_size = int(loader_meta["batch_size"])
+    num_workers = int(loader_meta["num_workers"])
+    pin_memory = bool(loader_meta["pin_memory"])
+    val_ratio = float(loader_meta["val_ratio"])
+    dataset_type = str(loader_meta["dataset_type"])
+    reverse_transform_flag = bool(loader_meta["reverse_transform"])
 
-    batch_size = int(data_cfg.get("batch_size", 128))
-    num_workers = int(data_cfg.get("num_workers", 0))
-    pin_memory = bool(data_cfg.get("pin_memory", False))
-    
+    if reverse_transform_flag:
+        print(
+            "Reverse transform flag enabled in config; contrastive training keeps normalized series during optimisation."
+        )
+
     # Log data configuration to Comet
     experiment.log_parameters({
         "batch_size": batch_size,
         "num_workers": num_workers,
         "pin_memory": pin_memory,
         "val_ratio": val_ratio,
+        "dataset_type": dataset_type,
+        "reverse_transform_requested": reverse_transform_flag,
     })
 
-    train_loader, val_loader = build_dataloaders(
-        train_dataset,
-        val_dataset,
-        batch_size=batch_size,
-        val_batch_size=batch_size,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-    )
-
-    feature_dim = infer_feature_dim(train_loader)
+    feature_dim, sequence_length = _infer_feature_dim(train_loader)
     print(f"Inferred feature dimension: {feature_dim}")
-    
-    experiment.log_parameter("feature_dim", feature_dim)
+
+    experiment.log_parameters({
+        "feature_dim": feature_dim,
+        "sequence_length": sequence_length,
+    })
 
     encoder = tu.build_encoder_from_config(config.model)
     visual_encoder = tu.build_visual_encoder_from_config(config.model)
@@ -169,7 +286,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     )
     print(f"Checkpoints: {checkpoint_dir}")
 
-    val_loader = val_loader if val_loader is not None and len(val_loader) > 0 else None
+    if val_loader is not None and len(val_loader) == 0:
+        val_loader = None
 
     u.run_clip_training(
         encoder=encoder,
