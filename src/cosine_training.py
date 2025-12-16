@@ -223,8 +223,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     encoder = tu.build_encoder_from_config(config.model)
     visual_encoder = tu.build_visual_encoder_from_config(config.model)
-    projection_head = u.build_projection_head(encoder)
-    visual_projection_head = u.build_projection_head(visual_encoder)
+    projection_dim = int(config.model.get("model_dim", 128))
+    projection_head = u.build_projection_head(encoder, output_dim=projection_dim)
+    visual_projection_head = u.build_projection_head(visual_encoder, output_dim=projection_dim)
 
     params = (
         list(encoder.parameters())

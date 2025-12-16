@@ -736,15 +736,31 @@ def run_clip_training(
         )
 
 
-def build_projection_head(encoder: nn.Module) -> nn.Module:
+def build_projection_head(encoder: nn.Module, *, output_dim: Optional[int] = None) -> nn.Module:
     """Infer encoder output dimension and create a projection head."""
 
-    try:
-        output_dim = encoder.final_norm._parameters["weight"].shape[0]
-    except AttributeError as exc:
-        raise RuntimeError("Encoder is expected to expose final_norm with learnable weight") from exc
+    input_dim: Optional[int] = None
+    hidden_dim: Optional[int] = None
 
-    return MoCoProjectionHead(output_dim, output_dim, 128)
+    output_proj = getattr(encoder, "output_proj", None)
+    if isinstance(output_proj, nn.Linear):
+        input_dim = int(output_proj.out_features)
+        hidden_dim = int(output_proj.in_features)
+
+    if input_dim is None or hidden_dim is None:
+        final_norm = getattr(encoder, "final_norm", None)
+        weight = getattr(final_norm, "weight", None)
+        if isinstance(weight, torch.Tensor):
+            hidden_dim = int(weight.shape[0])
+        embedding_dim = getattr(encoder, "embedding_dim", None)
+        if isinstance(embedding_dim, int):
+            input_dim = int(embedding_dim)
+
+    if input_dim is None or hidden_dim is None:
+        raise RuntimeError("Unable to infer encoder dimensions for projection head construction")
+
+    projection_dim = int(output_dim) if output_dim is not None else input_dim
+    return MoCoProjectionHead(input_dim, hidden_dim, projection_dim)
 
 
 def mask_time_series(
