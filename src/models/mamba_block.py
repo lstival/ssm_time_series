@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 from typing import Optional
+from torch.utils.checkpoint import checkpoint
 
 def _canonical_kernel_size(kernel_size: int) -> int:
     if kernel_size < 1:
@@ -64,6 +65,7 @@ class MambaBlock(nn.Module):
         expand_factor: float = 1.5,
         dropout: float = 0.0,
         input_dim: int = 32,
+        checkpoint_scan: bool = True,
     ) -> None:
         super().__init__()
         if d_model <= 0:
@@ -106,6 +108,7 @@ class MambaBlock(nn.Module):
         self.delta_min = 1e-4
         self.delta_max = 3.0
         self.register_buffer("eye_state", torch.eye(state_dim), persistent=False)
+        self.checkpoint_scan = bool(checkpoint_scan)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply the block to a `(batch, seq, channels)` tensor."""
@@ -129,7 +132,12 @@ class MambaBlock(nn.Module):
         delta = F.softplus(delta_raw).mean(dim=-1, keepdim=True) + self.delta_min
         delta = delta.clamp(max=self.delta_max)
 
-        selective = self._selective_scan(data_conv, delta)
+        # The selective scan can be memory-heavy when unrolled over long sequences.
+        # Checkpointing trades compute for much lower activation memory.
+        if self.checkpoint_scan and self.training:
+            selective = checkpoint(self._selective_scan, data_conv, delta, use_reentrant=False)
+        else:
+            selective = self._selective_scan(data_conv, delta)
         gated = torch.sigmoid(gate) * selective
         out = self.out_proj(gated)
         out = self.dropout(out)
@@ -144,29 +152,34 @@ class MambaBlock(nn.Module):
         if delta.shape[0] != batch or delta.shape[1] != seq_len or delta.shape[2] != 1:
             raise ValueError("delta must have shape (batch, seq_len, 1)")
 
-        state = x.new_zeros(batch, self.state_dim, 1)
-        outputs = x.new_empty(batch, seq_len, self.inner_dim)
+        # NOTE: Explicit Euler can be unstable here (HiPPO A can be stiff), which often
+        # manifests as exploding state values and NaNs during training.
+        # We use a stable implicit Euler update:
+        #   (I - Δt A) s_{t+1} = s_t + Δt B u_t
+        #   y_t = C s_{t+1}
+        # We also compute the solve in float32 when running in reduced precision.
+        compute_dtype = torch.float32 if x.dtype in (torch.float16, torch.bfloat16) else x.dtype
 
-        A_expand = self.A.unsqueeze(0).expand(batch, -1, -1)
-        B_expand = self.B.unsqueeze(0).expand(batch, -1, -1)
-        C_expand = self.C.unsqueeze(0).expand(batch, -1, -1)
-        eye = self.eye_state.unsqueeze(0).expand(batch, -1, -1).to(device=x.device, dtype=x.dtype)
+        state = torch.zeros((batch, self.state_dim, 1), device=x.device, dtype=compute_dtype)
+        outputs = torch.empty((batch, seq_len, self.inner_dim), device=x.device, dtype=compute_dtype)
+
+        A_expand = self.A.unsqueeze(0).expand(batch, -1, -1).to(device=x.device, dtype=compute_dtype)
+        B_expand = self.B.unsqueeze(0).expand(batch, -1, -1).to(device=x.device, dtype=compute_dtype)
+        C_expand = self.C.unsqueeze(0).expand(batch, -1, -1).to(device=x.device, dtype=compute_dtype)
+        eye = self.eye_state.to(device=x.device, dtype=compute_dtype).unsqueeze(0).expand(batch, -1, -1)
 
         for t in range(seq_len):
-            u_t = x[:, t, :]
-            delta_t = delta[:, t, :]
+            u_t = x[:, t, :].to(dtype=compute_dtype)
+            dt = delta[:, t, 0].to(dtype=compute_dtype).view(batch, 1, 1)
 
-            scaled_A = delta_t.view(batch, 1, 1) * A_expand
-            A_expm = torch.matrix_exp(scaled_A)
-            integral = torch.linalg.solve(A_expand, A_expm - eye)
-            B_disc = torch.bmm(integral, B_expand)
+            Bu = torch.bmm(B_expand, u_t.unsqueeze(-1))
+            rhs = state + dt * Bu
+            mat = eye - dt * A_expand
 
-            state = torch.bmm(A_expm, state)
-            state = state + torch.bmm(B_disc, u_t.unsqueeze(-1))
-
+            state = torch.linalg.solve(mat, rhs)
             outputs[:, t, :] = torch.bmm(C_expand, state).squeeze(-1)
 
-        return outputs
+        return outputs.to(dtype=x.dtype)
     
 if __name__ == '__main__':
     # Example of use (model dim = 128)

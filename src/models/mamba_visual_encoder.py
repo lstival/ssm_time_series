@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Literal, Optional
 import math
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 try:
@@ -20,6 +21,12 @@ try:
 except:
     from .utils import time_series_2_recurrence_plot
     from .mamba_block import MambaBlock
+
+try:
+    from transformers import AutoConfig, AutoModel  # optional; used for pretrained visual tokenization/embedding
+except Exception:  # pragma: no cover
+    AutoConfig = None  # type: ignore[assignment]
+    AutoModel = None  # type: ignore[assignment]
 
 Pooling = Literal["mean", "last", "cls"]
 
@@ -172,6 +179,18 @@ class MambaVisualEncoder(nn.Module):
         embedding_dim: int = 128,
         pooling: Pooling = "mean",
         dropout: float = 0.05,
+        # Optional Hugging Face pretrained vision backbone.
+        # If enabled and `transformers` is available, each 2D patch/window is embedded
+        # into a token vector and then projected to `model_dim` before the local Mamba blocks.
+        # This keeps the output shape the same: (B, embedding_dim).
+        use_hf_vision: bool = True,
+        # Default to a lightweight convnet-style backbone to avoid large CPU allocations.
+        hf_vision_model_id: str = "google/mobilenet_v2_1.0_224",
+        freeze_hf: bool = True,
+        # Process windows in chunks to cap peak memory.
+        hf_max_batch_windows: int = 64,
+        # Avoid upscaling tiny patches (e.g., 32x32 -> 224x224), which can blow up memory.
+        hf_resize_to_model: bool = False,
     ) -> None:
         super().__init__()
         if depth <= 0:
@@ -184,7 +203,18 @@ class MambaVisualEncoder(nn.Module):
         self.embedding_dim = embedding_dim
         self.pooling: Pooling = pooling
 
+        self.use_hf_vision = bool(use_hf_vision)
+        self.hf_vision_model_id = str(hf_vision_model_id)
+        self.freeze_hf = bool(freeze_hf)
+        self.hf_max_batch_windows = int(hf_max_batch_windows)
+        self.hf_resize_to_model = bool(hf_resize_to_model)
+        self._hf_vision_model = None
+        self._hf_vision_config = None
+
         self.input_proj = _InputConv(token_len=self.input_dim, out_dim=model_dim)
+
+        # HF path: vision backbone hidden size depends on model; use LazyLinear to avoid hard-coding.
+        self.hf_input_proj = nn.LazyLinear(model_dim, bias=False)
         self.blocks = nn.ModuleList(
             [
                 MambaBlock(
@@ -214,14 +244,27 @@ class MambaVisualEncoder(nn.Module):
 
     def forward_sequence(self, x: torch.Tensor) -> torch.Tensor:
         """Return the sequence of hidden states before pooling."""
-        tokens = self.tokenizer(x)
-        if tokens.ndim == 4:
-            batch, windows, window_len, feat_dim = tokens.shape
-            tokens = tokens.reshape(batch, windows * window_len, feat_dim)
-        img_from_patches = self._time_series_2_image(tokens)
-        img_from_patches = torch.from_numpy(img_from_patches).float().to(x.device)
+        # Two supported inputs:
+        # - (B, windows, H, W): already windowed 2D patches (preferred for HF vision).
+        # - (B, T, F): raw time series; we tokenize and convert to recurrence-plot windows.
+        if x.ndim == 4:
+            patches = x
+        elif x.ndim == 3:
+            tokens = self.tokenizer(x)
+            if tokens.ndim == 4:
+                batch, windows, window_len, feat_dim = tokens.shape
+                tokens = tokens.reshape(batch, windows * window_len, feat_dim)
+            img_from_patches = self._time_series_2_image(tokens)
+            patches = torch.from_numpy(img_from_patches).float().to(x.device)
+        else:
+            raise ValueError("Expected input of shape (B, T, F) or (B, windows, H, W)")
 
-        x = self.input_proj(img_from_patches) # Change here to use pre_trained model to feature exctration
+        if self.use_hf_vision and AutoModel is not None:
+            vision_tokens = self._hf_visual_tokens(patches)
+            x = self.hf_input_proj(vision_tokens)
+        else:
+            # Legacy lightweight projection: single conv over each window.
+            x = self.input_proj(patches)
 
         for block in self.blocks:
             x = block(x)
@@ -230,6 +273,84 @@ class MambaVisualEncoder(nn.Module):
     def tokenizer(self, x):
         tokens = tokenize_sequence(x, token_size=self.input_dim)
         return tokens
+
+    def _load_hf_vision(self, *, device: torch.device):
+        if AutoConfig is None or AutoModel is None:
+            raise RuntimeError("transformers is required for use_hf_vision=True")
+
+        config = AutoConfig.from_pretrained(self.hf_vision_model_id)
+        model = AutoModel.from_pretrained(self.hf_vision_model_id)
+        model.to(device)
+        if self.freeze_hf:
+            model.requires_grad_(False)
+            model.eval()
+
+        self._hf_vision_model = model
+        self._hf_vision_config = config
+
+    def _hf_visual_tokens(self, patches: torch.Tensor) -> torch.Tensor:
+        """Embed each 2D patch/window into a token vector using a pretrained HF vision model.
+
+        Input: patches of shape (B, windows, H, W) (single-channel).
+        Output: token embeddings of shape (B, windows, D).
+        """
+        if patches.ndim != 4:
+            raise ValueError("Expected patches of shape (B, windows, H, W)")
+
+        device = patches.device
+        if self._hf_vision_model is None or self._hf_vision_config is None:
+            self._load_hf_vision(device=device)
+
+        model = self._hf_vision_model
+        config = self._hf_vision_config
+        assert model is not None
+        assert config is not None
+
+        b, windows, h, w = patches.shape
+
+        if self.hf_max_batch_windows <= 0:
+            raise ValueError("hf_max_batch_windows must be positive")
+
+        # Flatten windows so we can chunk the forward pass.
+        flat = patches.reshape(b * windows, 1, h, w)
+        flat = flat.repeat(1, 3, 1, 1)
+
+        # Basic scaling to [0, 1] if needed.
+        if flat.dtype.is_floating_point and flat.detach().max() > 1.5:
+            flat = flat / 255.0
+
+        # Optionally resize to the model's expected image size.
+        image_size = getattr(config, "image_size", None)
+        if self.hf_resize_to_model and isinstance(image_size, int) and (h != image_size or w != image_size):
+            flat = F.interpolate(flat, size=(image_size, image_size), mode="bilinear", align_corners=False)
+
+        # Run the backbone in small chunks to keep peak memory low.
+        embeddings = []
+        context = torch.inference_mode() if self.freeze_hf else torch.enable_grad()
+        with context:
+            for start in range(0, flat.size(0), self.hf_max_batch_windows):
+                chunk = flat[start : start + self.hf_max_batch_windows]
+                outputs = model(pixel_values=chunk)
+
+                # Prefer pooler_output when available (common for convnets).
+                if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+                    emb = outputs.pooler_output
+                elif hasattr(outputs, "last_hidden_state"):
+                    hidden = outputs.last_hidden_state
+                    # ViT-like models: hidden[:, 0] is often CLS; convnets may not have CLS.
+                    if hidden.ndim == 3 and hidden.size(1) > 1:
+                        emb = hidden[:, 0, :]
+                    else:
+                        emb = hidden.mean(dim=1)
+                else:
+                    raise RuntimeError(
+                        "HF vision model did not return pooler_output or last_hidden_state; choose a compatible backbone"
+                    )
+
+                embeddings.append(emb)
+
+        flat_emb = torch.cat(embeddings, dim=0)
+        return flat_emb.reshape(b, windows, -1)
 
     def _pool_sequence(self, hidden: torch.Tensor, original: torch.Tensor) -> torch.Tensor:
         if self.pooling == "mean":
@@ -260,7 +381,7 @@ if __name__ == "__main__":
     )
     
     # print(f"Trainable parameters: {encoder.count_parameters():,}")
-    dummy = torch.randn(4, 307, 96)
+    dummy = torch.randn(4, 10, 96)
     out = encoder(dummy)
     print("Output embedding shape:", out.shape)
     tokens = tokenize_sequence(dummy, token_size=tokens_dim)
