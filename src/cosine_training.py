@@ -18,6 +18,8 @@ from moco_training import (
     resolve_checkpoint_dir,
 )
 
+from tracking import TrainingProbe, ProbeContext  # <-- add
+
 
 def _resolve_data_root(config_path: Path, candidate: Optional[Path | str]) -> Path:
     resolved = resolve_path(config_path.parent, candidate)
@@ -133,6 +135,32 @@ def _infer_feature_dim(loader: DataLoader) -> Tuple[int, int]:
     return int(seq.shape[-1]), int(seq.shape[1])
 
 
+def _select_tracked_params(
+    modules: Sequence[Tuple[str, torch.nn.Module]],
+    *,
+    max_params: int = 12,
+) -> list[Tuple[str, torch.nn.Parameter]]:
+    tracked: list[Tuple[str, torch.nn.Parameter]] = []
+    for prefix, module in modules:
+        named = [(n, p) for (n, p) in module.named_parameters() if p.requires_grad]
+        if not named:
+            continue
+
+        # Keep logs small: take a few from the start and end.
+        head = named[:3]
+        tail = named[-3:] if len(named) > 3 else []
+        picked = []
+        seen = set()
+        for n, p in (head + tail):
+            if n in seen:
+                continue
+            seen.add(n)
+            picked.append((f"{prefix}.{n}", p))
+        tracked.extend(picked)
+
+    return tracked[:max_params]
+
+
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="CLIP-style training using Chronos datasets")
     default_cfg = Path(__file__).resolve().parent / "configs" / "mamba_encoder.yaml"
@@ -151,7 +179,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_args(argv)
-    
+
     # Initialize Comet ML experiment from config
     from comet_utils import create_comet_experiment
     experiment = create_comet_experiment("cosine_clip")
@@ -237,6 +265,39 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     weight_decay = float(training_cfg.get("weight_decay", 0.0))
     optimizer = torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
 
+    # --- monitor/probe wiring (gradients + weights) ---
+    monitor_cfg = dict(training_cfg.get("monitor", {}) or {})
+    monitor_enabled = bool(monitor_cfg.get("enabled", False))  # default ON (set enabled:false in config to disable)
+    min_grad_norm = float(monitor_cfg.get("min_grad_norm", 0.0))
+    max_grad_norm_raw = monitor_cfg.get("max_grad_norm", None)
+    max_grad_norm = float(max_grad_norm_raw) if max_grad_norm_raw is not None else None
+
+    probe = TrainingProbe(
+        experiment=experiment,
+        noise_std=noise_std,
+        min_grad_norm=min_grad_norm,
+        max_grad_norm=max_grad_norm,
+    )
+    tracked_params = _select_tracked_params(
+        [
+            ("encoder", encoder),
+            ("visual_encoder", visual_encoder),
+            ("proj_ts", projection_head),
+            ("proj_vis", visual_projection_head),
+        ],
+        max_params=int(monitor_cfg.get("max_tracked_params", 12)),
+    )
+
+    experiment.log_parameters(
+        {
+            "monitor/enabled": monitor_enabled,
+            "monitor/min_grad_norm": min_grad_norm,
+            "monitor/max_grad_norm": max_grad_norm if max_grad_norm is not None else "None",
+            "monitor/tracked_params": [name for name, _ in tracked_params],
+        }
+    )
+    # --- end monitor/probe wiring ---
+
     resume_dir: Optional[Path] = None
     initial_epoch = 0
     best_loss: Optional[float] = None
@@ -290,23 +351,47 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     if val_loader is not None and len(val_loader) == 0:
         val_loader = None
 
-    u.run_clip_training(
-        encoder=encoder,
-        visual_encoder=visual_encoder,
-        projection_head=projection_head,
-        visual_projection_head=visual_projection_head,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        device=device,
-        checkpoint_dir=checkpoint_dir,
-        epochs=epochs,
-        noise_std=noise_std,
-        optimizer=optimizer,
-        initial_epoch=initial_epoch,
-        best_loss=best_loss,
-        experiment=experiment,
-    )
-    
+    if monitor_enabled:
+        with ProbeContext(
+            u_module=u,
+            optimizer=optimizer,
+            probe=probe,
+            tracked_params=tracked_params,
+        ):
+            u.run_clip_training(
+                encoder=encoder,
+                visual_encoder=visual_encoder,
+                projection_head=projection_head,
+                visual_projection_head=visual_projection_head,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                device=device,
+                checkpoint_dir=checkpoint_dir,
+                epochs=epochs,
+                noise_std=noise_std,
+                optimizer=optimizer,
+                initial_epoch=initial_epoch,
+                best_loss=best_loss,
+                experiment=experiment,
+            )
+    else:
+        u.run_clip_training(
+            encoder=encoder,
+            visual_encoder=visual_encoder,
+            projection_head=projection_head,
+            visual_projection_head=visual_projection_head,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            device=device,
+            checkpoint_dir=checkpoint_dir,
+            epochs=epochs,
+            noise_std=noise_std,
+            optimizer=optimizer,
+            initial_epoch=initial_epoch,
+            best_loss=best_loss,
+            experiment=experiment,
+        )
+
     # End Comet experiment
     experiment.end()
 

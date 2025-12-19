@@ -39,7 +39,7 @@ training:
   epochs: 200
   pred_len: 96            # used by supervised forecasting
   temperature: 0.2        # used by contrastive training
-  learning_rate: 0.001
+  learning_rate: 0.005
   weight_decay: 0.0001
   optimizer: "adamw"  # adam, adamw, sgd
   scheduler: "cosine"  # cosine, step, plateau
