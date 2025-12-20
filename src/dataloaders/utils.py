@@ -17,40 +17,6 @@ from dataloaders.cronos_dataset import load_chronos_datasets
 SUPPORTED_EXTENSIONS: Tuple[str, ...] = (".csv", ".txt", ".npz")
 
 
-def _simple_interpolation(time_series: object, target_size: int) -> object:
-    """Lightweight interpolation helper to avoid importing util and creating cycles."""
-    if not isinstance(target_size, int) or target_size <= 0:
-        raise ValueError("target_size must be a positive integer")
-
-    is_torch = isinstance(time_series, torch.Tensor)
-    if is_torch:
-        device = time_series.device
-        dtype = time_series.dtype
-        arr = time_series.detach().cpu().numpy()
-    else:
-        arr = np.asarray(time_series)
-
-    if arr.ndim != 2:
-        raise ValueError("time_series must be 2D with shape (time_steps, variables)")
-
-    time_steps, variables = arr.shape
-    if time_steps == target_size:
-        return time_series.clone() if is_torch else arr.copy()
-
-    if time_steps == 1:
-        out = np.repeat(arr, target_size, axis=0)
-    else:
-        old_pos = np.linspace(0.0, 1.0, time_steps)
-        new_pos = np.linspace(0.0, 1.0, target_size)
-        out = np.empty((target_size, variables), dtype=arr.dtype)
-        for idx in range(variables):
-            out[:, idx] = np.interp(new_pos, old_pos, arr[:, idx])
-
-    if is_torch:
-        return torch.from_numpy(out).to(device=device, dtype=dtype)
-    return out
-
-
 def discover_dataset_files(
     root_path: str,
     extensions: Optional[Sequence[str]] = None,
@@ -157,8 +123,16 @@ class ChronosDatasetGroup:
     metadata: Dict[str, object] = field(default_factory=dict)
 
 
-def _ensure_hf_list_feature_registered() -> None:
-    """Ensure HuggingFace List feature is registered."""
+def ensure_hf_list_feature_registered() -> None:
+    """Ensure Hugging Face `datasets` can deserialize the legacy `List` feature.
+
+    Some dataset repos/caches encode feature type 'List' in `dataset_info.json`.
+    Older (and some newer) `datasets` versions may not have this token registered
+    and will raise:
+        ValueError: Feature type 'List' not found
+
+    We alias it to `Sequence` to keep loading working.
+    """
     try:
         from datasets.features import features as hf_features  # type: ignore
     except Exception:
@@ -176,6 +150,11 @@ def _ensure_hf_list_feature_registered() -> None:
         feature_registry["List"] = sequence_cls
     if getattr(hf_features, "List", None) is None:
         setattr(hf_features, "List", sequence_cls)
+
+
+# Backward-compatible alias (older code may still import the private helper).
+def _ensure_hf_list_feature_registered() -> None:
+    ensure_hf_list_feature_registered()
 
 
 def _sequence_to_array(obj: object) -> np.ndarray:
@@ -240,7 +219,7 @@ def _load_chronos_sequences(
     seed: int,
 ) -> List[np.ndarray]:
     """Load sequences from a Chronos dataset."""
-    _ensure_hf_list_feature_registered()
+    ensure_hf_list_feature_registered()
     ds = load_chronos_datasets(
         [dataset_name],
         split=split,
@@ -295,8 +274,9 @@ class ChronosForecastWindowDataset(Dataset):
             total = arr.shape[0]
             required = self.context_length + self.horizon
             if total < required:
-                arr = _simple_interpolation(arr, required)
-                total = arr.shape[0]
+                # Do not interpolate short series (avoids inventing timestamps/values).
+                # Instead, skip series that cannot yield at least one full window.
+                continue
 
             base_idx = len(self.series)
             self.series.append(arr)

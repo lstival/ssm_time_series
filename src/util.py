@@ -244,6 +244,7 @@ def build_time_series_dataloaders(
             torch_dtype=dtype,
             repo_id=extra.pop("repo_id", "autogluon/chronos_datasets"),
             target_dtype=extra.pop("target_dtype", "float32"),
+            normalize_mode=extra.pop("normalize_mode", None),
             seed=extra.pop("seed", seed),
             load_kwargs=extra.pop("load_kwargs", None),
         )
@@ -605,20 +606,48 @@ def run_clip_training(
 
         with tqdm(train_loader, desc=desc, total=total) as pbar:
             for batch in pbar:
-                seq = prepare_sequence(extract_sequence(batch)).to(device)
-                x_q = reshape_multivariate_series(seq)
-                noise = noise_std * torch.randn_like(x_q)
-                x_k = make_positive_view(x_q + noise)
+                # Chronos loader may pad variable-length series; keep original size by trimming.
+                if isinstance(batch, dict) and "target" in batch and "lengths" in batch:
+                    padded = batch["target"].to(device)
+                    lengths = batch["lengths"].to(device)
+
+                    q_proj_list = []
+                    k_proj_list = []
+                    for i in range(int(padded.size(0))):
+                        L = int(lengths[i].item())
+                        if L < 2:
+                            continue
+                        seq_i = padded[i, :L].unsqueeze(0)
+                        seq_i = prepare_sequence(seq_i)
+                        x_q_i = reshape_multivariate_series(seq_i)
+                        noise = noise_std * torch.randn_like(x_q_i)
+                        x_k_i = make_positive_view(x_q_i + noise)
+
+                        q_encoded_i = encoder(x_q_i)
+                        k_encoded_i = visual_encoder(x_k_i)
+                        q_proj_list.append(F.normalize(projection_head(q_encoded_i), dim=1))
+                        k_proj_list.append(F.normalize(visual_projection_head(k_encoded_i), dim=1))
+
+                    if not q_proj_list:
+                        continue
+                    q_proj = torch.cat(q_proj_list, dim=0)
+                    k_proj = torch.cat(k_proj_list, dim=0)
+                    loss = clip_contrastive_loss(q_proj, k_proj)
+                else:
+                    seq = prepare_sequence(extract_sequence(batch)).to(device)
+                    x_q = reshape_multivariate_series(seq)
+                    noise = noise_std * torch.randn_like(x_q)
+                    x_k = make_positive_view(x_q + noise)
+
+                    q_encoded = encoder(x_q)
+                    k_encoded = visual_encoder(x_k)
+
+                    q_proj = F.normalize(projection_head(q_encoded), dim=1)
+                    k_proj = F.normalize(visual_projection_head(k_encoded), dim=1)
+
+                    loss = clip_contrastive_loss(q_proj, k_proj)
 
                 optimizer.zero_grad(set_to_none=True)
-
-                q_encoded = encoder(x_q)
-                k_encoded = visual_encoder(x_k)
-
-                q_proj = F.normalize(projection_head(q_encoded), dim=1)
-                k_proj = F.normalize(visual_projection_head(k_encoded), dim=1)
-
-                loss = clip_contrastive_loss(q_proj, k_proj)
 
                 loss.backward()
                 optimizer.step()
@@ -642,18 +671,43 @@ def run_clip_training(
 
             with torch.no_grad():
                 for val_batch in val_loader:
-                    val_seq = prepare_sequence(extract_sequence(val_batch)).to(device)
-                    val_x_q = reshape_multivariate_series(val_seq)
-                    val_noise = noise_std * torch.randn_like(val_x_q)
-                    val_x_k = make_positive_view(val_x_q + val_noise)
+                    if isinstance(val_batch, dict) and "target" in val_batch and "lengths" in val_batch:
+                        padded = val_batch["target"].to(device)
+                        lengths = val_batch["lengths"].to(device)
+                        q_proj_list = []
+                        k_proj_list = []
+                        for i in range(int(padded.size(0))):
+                            L = int(lengths[i].item())
+                            if L < 2:
+                                continue
+                            seq_i = padded[i, :L].unsqueeze(0)
+                            seq_i = prepare_sequence(seq_i)
+                            x_q_i = reshape_multivariate_series(seq_i)
+                            noise = noise_std * torch.randn_like(x_q_i)
+                            x_k_i = make_positive_view(x_q_i + noise)
 
-                    val_q_encoded = encoder(val_x_q)
-                    val_k_encoded = visual_encoder(val_x_k)
+                            q_encoded_i = encoder(x_q_i)
+                            k_encoded_i = visual_encoder(x_k_i)
+                            q_proj_list.append(F.normalize(projection_head(q_encoded_i), dim=1))
+                            k_proj_list.append(F.normalize(visual_projection_head(k_encoded_i), dim=1))
+                        if not q_proj_list:
+                            continue
+                        val_q_proj = torch.cat(q_proj_list, dim=0)
+                        val_k_proj = torch.cat(k_proj_list, dim=0)
+                        val_batch_loss = clip_contrastive_loss(val_q_proj, val_k_proj).item()
+                    else:
+                        val_seq = prepare_sequence(extract_sequence(val_batch)).to(device)
+                        val_x_q = reshape_multivariate_series(val_seq)
+                        val_noise = noise_std * torch.randn_like(val_x_q)
+                        val_x_k = make_positive_view(val_x_q + val_noise)
 
-                    val_q_proj = F.normalize(projection_head(val_q_encoded), dim=1)
-                    val_k_proj = F.normalize(visual_projection_head(val_k_encoded), dim=1)
+                        val_q_encoded = encoder(val_x_q)
+                        val_k_encoded = visual_encoder(val_x_k)
 
-                    val_batch_loss = clip_contrastive_loss(val_q_proj, val_k_proj).item()
+                        val_q_proj = F.normalize(projection_head(val_q_encoded), dim=1)
+                        val_k_proj = F.normalize(visual_projection_head(val_k_encoded), dim=1)
+
+                        val_batch_loss = clip_contrastive_loss(val_q_proj, val_k_proj).item()
                     val_epoch_loss += val_batch_loss
                     val_batches += 1
 

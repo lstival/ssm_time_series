@@ -24,10 +24,10 @@ data:
   val_ratio: 0.1
 
 training:
-  encoder_type: "visual"
+  encoder_type: "temporal"
   epochs: 100
   pred_len: 720
-  learning_rate: 0.0005
+  learning_rate: 0.005
   weight_decay: 0.0001
   optimizer: "adamw"
   scheduler: "cosine"

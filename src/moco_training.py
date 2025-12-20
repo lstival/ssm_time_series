@@ -177,6 +177,13 @@ def prepare_dataset(
     patch_length = config_data.get("patch_length")
     load_kwargs = dict(config_data.get("load_kwargs", {}) or {})
     normalize = config_data.get("normalize", True)
+    datasets_to_load = config_data.get("datasets_to_load")
+    dataset_name = config_data.get("dataset_name")
+    datasets_override = None
+    if dataset_name is not None:
+        datasets_override = [str(dataset_name)]
+    elif datasets_to_load is not None:
+        datasets_override = list(datasets_to_load)
 
     # Set offline cache directory to the local data directory
     data_dir = config_path.parent.parent / "data"
@@ -191,6 +198,7 @@ def prepare_dataset(
         patch_length=patch_length,
         load_kwargs=load_kwargs,
         normalize=normalize,
+        datasets_to_load=datasets_override,
     )
     return dataset
 

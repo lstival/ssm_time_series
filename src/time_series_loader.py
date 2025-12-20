@@ -163,12 +163,13 @@ if __name__ == '__main__':
     
     import matplotlib.pyplot as plt
     import numpy as np
+    import torch
 
     # Example usage with the requested settings
     data_root = "../ICML_datasets"
     # dataset_name = "PEMS03.npz"
-    # dataset_name = "solar_AL.txt"
-    dataset_name = "ETTm1.csv"
+    dataset_name = "solar_AL.txt"
+    # dataset_name = "ETTm1.csv"
     # dataset_name = "electricity.csv"
 
     module = TimeSeriesDataModule(
@@ -178,28 +179,49 @@ if __name__ == '__main__':
         train=True,
         val=True,
         test=True,
-        sample_size=48,  # override default 96-step context to 48 steps
+        sample_size=96,  # override default 96-step context to 48 steps
     )
     loaders = module.get_dataloaders()
-    for dataset in loaders:
-        if dataset.train is not None:
-            print(f"{dataset.name}: {len(dataset.train)} train batches")
-        if dataset.val is not None:
-            print(f"{dataset.name}: {len(dataset.val)} val batches")
-        if dataset.test is not None:
-            print(f"{dataset.name}: {len(dataset.test)} test batches")
-    
-    aa = next(iter(dataset.test))
-    print(aa[0].shape)
+    for entry in loaders:
+        if entry.train is not None:
+            print(f"{entry.name}: {len(entry.train)} train batches")
+        if entry.val is not None:
+            print(f"{entry.name}: {len(entry.val)} val batches")
+        if entry.test is not None:
+            print(f"{entry.name}: {len(entry.test)} test batches")
 
-    inp = aa[0][0, :, 0]
-    tgt = aa[1][0, :, 0]
+    # Pick the matching dataset entry (usually just 1 when dataset_name is specified)
+    entry = loaders[0]
+    if entry.test is None:
+        raise RuntimeError("Requested test=True, but no test dataloader was built.")
+
+    batch = next(iter(entry.test))
+    seq_x, seq_y = batch[0], batch[1]
+
+    def _denorm(tensor, ds):
+        inverse_fn = getattr(ds, "inverse_transform", None) if ds is not None else None
+        if inverse_fn is None:
+            return tensor
+        shape = tuple(tensor.shape)
+        flat = tensor.detach().cpu().contiguous().view(-1, shape[-1]).numpy()
+        restored = inverse_fn(flat)
+        restored_tensor = torch.as_tensor(restored, dtype=tensor.dtype)
+        return restored_tensor.reshape(*shape)
+
+    ds = entry.test_dataset if entry.test_dataset is not None else getattr(entry.test, "dataset", None)
+    seq_x_denorm = _denorm(seq_x, ds)
+    seq_y_denorm = _denorm(seq_y, ds)
+
+    print(seq_x_denorm.shape)
+
+    inp = seq_x_denorm[0, :, 0]
+    tgt = seq_y_denorm[0, :, 0]
     inp_x = np.arange(inp.shape[0])
     tgt_x = np.arange(inp.shape[0], inp.shape[0] + tgt.shape[0])
 
     plt.figure()
     plt.plot(inp_x, inp, color='blue', label='input 0')
-    plt.plot(tgt_x, tgt, color='orange', label='target 1)')
+    plt.plot(tgt_x, tgt, color='orange', label='target 1')
     plt.xlabel('time step')
     plt.legend()
     plt.show()

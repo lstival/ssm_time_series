@@ -22,7 +22,7 @@ datasets_to_load:
   # - monash_m3_quarterly
   # - monash_m3_yearly
   # - monash_nn5_weekly
-  # - taxi_30min
+  - taxi_30min
   # - uber_tlc_daily
   # - uber_tlc_hourly
   # # - wind_farms_hourly
@@ -35,3 +35,4 @@ split: train
 patch_length: 96
 target_dtype: float64
 normalize: true
+normalize_mode: global_standard

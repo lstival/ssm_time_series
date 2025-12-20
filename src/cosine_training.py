@@ -77,6 +77,13 @@ def _build_time_series_loaders(
                 target_dtype = cronos_raw.get("target_dtype")
                 if target_dtype is not None:
                     cronos_kwargs.setdefault("target_dtype", target_dtype)
+
+                # Prefer global standard normalization unless explicitly configured otherwise.
+                normalize_mode = cronos_raw.get("normalize_mode")
+                if normalize_mode is None and bool(cronos_raw.get("normalize", True)):
+                    normalize_mode = "global_standard"
+                if normalize_mode is not None:
+                    cronos_kwargs.setdefault("normalize_mode", str(normalize_mode))
                 config_load_kwargs = cronos_raw.get("load_kwargs") or {}
                 if isinstance(config_load_kwargs, dict):
                     load_kwargs = cronos_kwargs.setdefault("load_kwargs", {})
