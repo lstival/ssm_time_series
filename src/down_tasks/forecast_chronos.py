@@ -187,6 +187,7 @@ if __name__ == "__main__":
             max_horizon=config.max_horizon,
             criterion=criterion,
             experiment=experiment,
+            reverse_normalization=False,
         )
         if record is not None:
             dataset_records.append(record)
