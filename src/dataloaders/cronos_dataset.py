@@ -253,8 +253,22 @@ def load_chronos_datasets(
 
 def to_pandas(ds: datasets.Dataset) -> "pd.DataFrame":
     """Convert dataset to long data frame format."""
+    df = ds.to_pandas()
     sequence_columns = [col for col in ds.features if isinstance(ds.features[col], datasets.Sequence)]
-    return ds.to_pandas().explode(sequence_columns).infer_objects()
+
+    # Pandas requires matching element counts when exploding multiple columns at once.
+    # Some Chronos datasets can contain multiple Sequence features with different lengths
+    # (e.g. metadata-like sequences), so we fall back to exploding only the target.
+    if not sequence_columns:
+        return df.infer_objects()
+
+    try:
+        return df.explode(sequence_columns).infer_objects()
+    except ValueError:
+        if "target" in df.columns:
+            return df.explode("target").infer_objects()
+        # Last-resort: explode the first sequence column to avoid hard failure.
+        return df.explode(sequence_columns[0]).infer_objects()
 
 
 def _infer_numpy_dtype(feature) -> Optional[np.dtype]:
