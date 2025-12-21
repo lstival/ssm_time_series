@@ -9,7 +9,6 @@ import comet_ml
 import numpy as np
 import torch
 from torch import nn
-from torch.cuda.amp import GradScaler, autocast
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -197,8 +196,31 @@ class ChronosForecastModel(nn.Module):
         return out.view(seq.size(0), self.pred_len, self.target_dim)
 
 
+def _safe_nan_to_num(t: torch.Tensor) -> torch.Tensor:
+    # Keep behavior explicit and consistent across torch versions.
+    return torch.nan_to_num(t, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def _reduce_optimizer_lr(optimizer: Optimizer, *, factor: float = 0.5, min_lr: float = 1e-7) -> float:
+    """Reduce learning rate in-place; returns the new lr of group 0."""
+    factor = float(factor)
+    if factor <= 0.0 or factor >= 1.0:
+        factor = 0.5
+    new_lr0 = None
+    for group in optimizer.param_groups:
+        lr = float(group.get("lr", 0.0))
+        new_lr = max(min_lr, lr * factor)
+        group["lr"] = new_lr
+        if new_lr0 is None:
+            new_lr0 = new_lr
+    return float(new_lr0 or 0.0)
+
+
 def _prepare_forecast_batch(batch, pred_len: int, device: torch.device) -> tuple[torch.Tensor, torch.Tensor, int]:
     seq = u.prepare_sequence(u.extract_sequence(batch)).to(device).float()
+    # Some Chronos series can contain NaNs/Infs (after upstream transforms or bad records).
+    # Replace them to prevent NaN loss/gradients.
+    seq = _safe_nan_to_num(seq)
     seq_len = int(seq.size(1))
     if seq_len < 2:
         raise ValueError(f"Sequence length {seq_len} is too short for forecasting.")
@@ -227,31 +249,42 @@ def train_one_epoch(
     *,
     device: torch.device,
     pred_len: int,
-    scaler: GradScaler,
     max_grad_norm: Optional[float],
-    amp_enabled: bool,
+    dataset_name: Optional[str] = None,
 ) -> float:
     model.train()
     running = 0.0
     steps = 0
+    skipped = 0
+    lr_reduced = False
     for batch in tqdm(loader, desc="Train", leave=False):
         context, target, effective_pred_len = _prepare_forecast_batch(batch, pred_len, device)
         optimizer.zero_grad(set_to_none=True)
-        # AMP can underflow very small losses to 0 in float16. Keep forward in autocast,
-        # but compute the loss in float32 outside autocast for numerical stability.
-        with autocast(enabled=amp_enabled):  # mixed precision for model forward
-            preds_full = model(context)
-            preds = preds_full[:, :effective_pred_len, :]
-        with autocast(enabled=False):
-            loss = criterion(preds.float(), target.float())
-        scaler.scale(loss).backward() # Use scale fator to avoid zero (gradient vanishing) in the update pass (because float16 can round the values to 0 when too small)
+        preds_full = model(context)
+        preds = preds_full[:, :effective_pred_len, :]
+        loss = criterion(preds.float(), target.float())
+
+        # Guard against NaN/Inf loss.
+        if not torch.isfinite(loss).all():
+            skipped += 1
+            if not lr_reduced:
+                new_lr = _reduce_optimizer_lr(optimizer, factor=0.5, min_lr=1e-7)
+                lr_reduced = True
+                name = f" dataset={dataset_name}" if dataset_name else ""
+                print(f"Warning:{name} non-finite loss encountered; reducing lr to {new_lr:.3g} and skipping batch.")
+            continue
+
+        loss.backward()
         if max_grad_norm is not None:
-            scaler.unscale_(optimizer) # Remove the scale factor to avoid (inf and Nan) when clipping to a correct range
-            clip_grad_norm_(model.parameters(), max_grad_norm) # Create a clip in the max and min in the gradient after the unscaling process
-        scaler.step(optimizer) # Verify that gradient are in normal scalle e avoid Nan values
-        scaler.update() # Update the gradient 
+            clip_grad_norm_(model.parameters(), max_grad_norm)
+        optimizer.step()
         running += loss.item()
         steps += 1
+
+    if skipped > 0:
+        name = f" dataset={dataset_name}" if dataset_name else ""
+        print(f"Note:{name} skipped {skipped} non-finite batches this epoch.")
+
     return running / max(1, steps)
 
 
@@ -332,9 +365,7 @@ def _train_encoder(
     optimizer = tu.build_optimizer(model, training_cfg)
     scheduler = tu.build_scheduler(optimizer, training_cfg, epochs)
     criterion = nn.MSELoss()
-    amp_enabled = bool(training_cfg.get("use_amp", False)) and device.type == "cuda"
     max_grad_norm = float(training_cfg.get("max_grad_norm", 0.0)) or None
-    scaler = GradScaler(enabled=amp_enabled)
 
     model.to(device)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -347,7 +378,6 @@ def _train_encoder(
             "learning_rate": training_cfg.get("learning_rate", "N/A"),
             "weight_decay": training_cfg.get("weight_decay", 0.0),
             "batch_size": training_cfg.get("batch_size", "N/A"),
-            "use_amp": amp_enabled,
             "max_grad_norm": max_grad_norm,
             "optimizer": training_cfg.get("optimizer", "AdamW"),
             "scheduler": training_cfg.get("scheduler", "None"),
@@ -363,9 +393,8 @@ def _train_encoder(
             criterion,
             device=device,
             pred_len=pred_len,
-            scaler=scaler,
             max_grad_norm=max_grad_norm,
-            amp_enabled=amp_enabled,
+            dataset_name=None,
         )
         val_metrics = evaluate(
             model,
@@ -409,7 +438,6 @@ def _train_encoder(
             "epoch": epoch + 1,
             "model_state": model.state_dict(),
             "optimizer_state": optimizer.state_dict(),
-            "scaler_state": scaler.state_dict(),
             "train_loss": train_loss,
             "val_loss": val_loss,
         }
@@ -520,14 +548,12 @@ def _train_encoder_sequential_datasets(
 ) -> None:
     """Train continuously, switching datasets every N epochs.
 
-    The optimizer/scheduler/scaler state is preserved across dataset switches.
+    The optimizer/scheduler state is preserved across dataset switches.
     """
     optimizer = tu.build_optimizer(model, training_cfg)
     scheduler = tu.build_scheduler(optimizer, training_cfg, epochs_per_dataset * max(1, len(dataset_names)))
     criterion = nn.MSELoss()
-    amp_enabled = bool(training_cfg.get("use_amp", False)) and device.type == "cuda"
     max_grad_norm = float(training_cfg.get("max_grad_norm", 0.0)) or None
-    scaler = GradScaler(enabled=amp_enabled)
 
     model.to(device)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -593,9 +619,8 @@ def _train_encoder_sequential_datasets(
                 criterion,
                 device=device,
                 pred_len=pred_len,
-                scaler=scaler,
                 max_grad_norm=max_grad_norm,
-                amp_enabled=amp_enabled,
+                dataset_name=dataset_name,
             )
 
             val_metrics = evaluate(
@@ -640,7 +665,6 @@ def _train_encoder_sequential_datasets(
                 "dataset": dataset_name,
                 "model_state": model.state_dict(),
                 "optimizer_state": optimizer.state_dict(),
-                "scaler_state": scaler.state_dict(),
                 "train_loss": train_loss,
                 "val_loss": val_loss,
             }
