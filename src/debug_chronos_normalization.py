@@ -113,7 +113,12 @@ def _compute_raw_series_stats(
 def _infer_normalize_mode(raw_cronos_cfg: dict) -> str:
     mode = _find(raw_cronos_cfg, "normalize_mode")
     if isinstance(mode, str) and mode.strip():
-        return mode.strip().lower()
+        parsed = mode.strip().lower()
+        # Force min-max normalization for debugging consistency with supervised training.
+        # Accept common aliases.
+        if parsed in ("global_standard", "standard", "zscore"):
+            return "global_minmax"
+        return parsed
 
     normalize = _find(raw_cronos_cfg, "normalize")
     if isinstance(normalize, bool):

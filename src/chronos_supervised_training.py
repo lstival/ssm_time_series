@@ -93,6 +93,38 @@ def _save_normalization_params(path: Path, params: Optional[dict]) -> None:
         pass
 
 
+def _write_cronos_minmax_override(
+    cronos_config_path: Path,
+    *,
+    out_path: Path,
+) -> Path:
+    """Write a Chronos loader YAML that forces global min-max normalization.
+
+    This keeps training behavior stable even if the referenced YAML uses
+    `global_standard`.
+    """
+    import yaml
+
+    cronos_config_path = Path(cronos_config_path)
+    out_path = Path(out_path)
+
+    with open(cronos_config_path, "r", encoding="utf-8") as handle:
+        raw_cfg = yaml.safe_load(handle) or {}
+
+    if not isinstance(raw_cfg, dict):
+        raw_cfg = {}
+
+    # Force global min-max.
+    raw_cfg["normalize"] = True
+    raw_cfg["normalize_mode"] = "global_minmax"
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as handle:
+        yaml.safe_dump(raw_cfg, handle, sort_keys=False)
+
+    return out_path
+
+
 def _plot_forecast_examples(
     context: torch.Tensor,
     target: torch.Tensor,
@@ -708,6 +740,30 @@ def main() -> None:
     encoder_choice = "temporal"
     checkpoint_dir = (checkpoint_root / encoder_choice).resolve()
     print(f"Checkpoints: {checkpoint_dir}")
+
+    # Force Chronos normalization to global min-max (override YAML config).
+    # This affects the Chronos patched dataset created by `load_cronos_time_series_dataset`.
+    try:
+        import yaml
+
+        cronos_config = data_cfg.get("cronos_config")
+        if cronos_config is None:
+            cronos_config = config_path.parent / "cronos_loader_example.yaml"
+        cronos_config = resolve_path(config_path.parent, cronos_config)
+        if cronos_config is None or not Path(cronos_config).exists():
+            raise FileNotFoundError(f"Cronos loader config not found: {cronos_config}")
+
+        override_path = _write_cronos_minmax_override(
+            Path(cronos_config),
+            out_path=checkpoint_dir / "configs" / "cronos_loader_minmax.yaml",
+        )
+        data_cfg = dict(data_cfg)
+        data_cfg["cronos_config"] = str(override_path)
+        if experiment is not None:
+            experiment.log_parameter("cronos_config_override", str(override_path))
+            experiment.log_parameter("normalize_mode", "global_minmax")
+    except Exception as exc:
+        print(f"Warning: could not create Chronos min-max override config: {exc}")
 
     # Log encoder type and dataset info to Comet
     experiment.log_parameters({
