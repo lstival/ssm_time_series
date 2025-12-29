@@ -1,7 +1,7 @@
 # Configuration for plotting zero-shot forecast results
 predictions:
   # Either provide 'root_dir' + 'dataset' (slug) or a direct 'file' path to the saved data.pt
-  root_dir: ../../results/icml_zeroshot_forecast_input48_20251120_1310_predictions
+  root_dir: ../../results/icml_zeroshot_forecast_dual_dual_input96_20251209_1049_predictions
   dataset: dataset
   file:
 

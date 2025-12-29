@@ -30,7 +30,8 @@ for path in (SRC_DIR, ROOT_DIR):
 CONFIG_ENV_VAR = "ICML_ZEROSHOT_PLOT_CONFIG"
 DEFAULT_CONFIG_PATH = SRC_DIR / "configs" / "icml_zeroshot_plot.yaml"
 PLOT_HORIZONS: Tuple[int, ...] = (96, 192, 336, 720)
-TOP_K = 3
+BEST_K = 3
+MAX_PLOTS_PER_DATASET = 100
 
 
 def _extract_sample(payload: Dict[str, object], sample_idx: int) -> Dict[str, torch.Tensor]:
@@ -177,14 +178,15 @@ if __name__ == "__main__":
             predictions_tensor,
         )
         num_samples = int(mae_per_sample.numel())
-        top_k = min(TOP_K, num_samples)
-        if top_k == 0:
+        if num_samples == 0:
             print("No samples available to rank for plotting; skipping dataset.")
             continue
 
-        ranked_indices = torch.argsort(mae_per_sample)[:top_k].tolist()
-        print(f"\nSelected top {top_k} sample(s) by MAE for dataset '{dataset_label}':")
-        for rank, sample_idx in enumerate(ranked_indices, start=1):
+        ranked_indices = torch.argsort(mae_per_sample).tolist()
+        best_k = min(BEST_K, num_samples)
+        best_indices = ranked_indices[:best_k]
+        print(f"\nSelected best {best_k} sample(s) by MAE for dataset '{dataset_label}':")
+        for rank, sample_idx in enumerate(best_indices, start=1):
             mae_value = float(mae_per_sample[sample_idx])
             print(f"  #{rank}: sample {sample_idx} | MAE={mae_value:.6f}")
 
@@ -204,13 +206,39 @@ if __name__ == "__main__":
             print("Requested plot horizons are unavailable for this dataset; skipping plots.")
             continue
 
-        for sample_idx in ranked_indices:
+        plots_budget = int(MAX_PLOTS_PER_DATASET)
+        if plots_budget <= 0:
+            print("Plot budget is non-positive; skipping plots.")
+            continue
+
+        num_features = len(plot_cfg.feature_indices)
+        if num_features == 0:
+            print("No feature indices provided in config; skipping plots.")
+            continue
+
+        # Estimate how many samples we need to hit the budget.
+        plots_per_sample_estimate = max(1, len(requested_horizons) * num_features)
+        samples_needed = int((plots_budget + plots_per_sample_estimate - 1) // plots_per_sample_estimate)
+        samples_needed = max(samples_needed, best_k)
+        plot_sample_indices = ranked_indices[: min(num_samples, samples_needed)]
+        print(
+            f"Will generate up to {plots_budget} plot(s) for dataset '{dataset_label}' "
+            f"from {len(plot_sample_indices)} sample(s)."
+        )
+
+        plots_generated_for_dataset = 0
+
+        for sample_idx in plot_sample_indices:
+            if plots_generated_for_dataset >= plots_budget:
+                break
             sample = _extract_sample(payload, sample_idx)
             sample_target_len = sample["targets"].shape[0]
             sample_pred_len = sample["predictions"].shape[0]
             max_sample_horizon = min(sample_target_len, sample_pred_len)
 
             for horizon in requested_horizons:
+                if plots_generated_for_dataset >= plots_budget:
+                    break
                 if max_horizon and horizon > max_horizon:
                     print(
                         f"Skipping horizon {horizon} for sample {sample_idx}: exceeds stored max horizon {max_horizon}."
@@ -222,6 +250,8 @@ if __name__ == "__main__":
                     )
                     continue
                 for feature_idx in plot_cfg.feature_indices:
+                    if plots_generated_for_dataset >= plots_budget:
+                        break
                     if feature_idx >= sample["context"].shape[1]:
                         print(
                             f"Skipping feature index {feature_idx} for sample {sample_idx}: "
@@ -241,11 +271,20 @@ if __name__ == "__main__":
                         dpi=plot_cfg.dpi,
                         figsize=plot_cfg.figsize,
                     )
-                    dataset_best_dir.mkdir(parents=True, exist_ok=True)
-                    best_output_path = dataset_best_dir / output_path.name
-                    shutil.copy2(output_path, best_output_path)
                     generated_paths.append(output_path)
+                    plots_generated_for_dataset += 1
                     print(f"Saved plot: {output_path}")
-                    print(f"Saved best plot copy: {best_output_path}")
+
+                    if sample_idx in best_indices:
+                        dataset_best_dir.mkdir(parents=True, exist_ok=True)
+                        best_output_path = dataset_best_dir / output_path.name
+                        shutil.copy2(output_path, best_output_path)
+                        print(f"Saved best plot copy: {best_output_path}")
+
+        if plots_generated_for_dataset < plots_budget:
+            print(
+                f"Generated {plots_generated_for_dataset} plot(s) for dataset '{dataset_label}' "
+                f"(budget was {plots_budget})."
+            )
 
     print(f"\nGenerated {len(generated_paths)} plot(s).")

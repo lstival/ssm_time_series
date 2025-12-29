@@ -5,9 +5,9 @@ model_name: encoder_projection_20251101_1100_tsne
 
 tsne:
   files:
-    - ../../results/tsne_encoder/tsne_encoder_projection_20251101_1100_tsne/tsne_coordinates.csv
-    - ../../results/tsne_encoder/tsne_visual_encoder_projection_20251101_1100_tsne/tsne_coordinates.csv
-    - ../../results/tsne_encoder/tsne_dual_encoder_projection_20251101_1100_tsne/tsne_coordinates.csv
+    - ../../results/tsne_encoder/tsne_encoder_projection_20251126_1750_tsne/tsne_coordinates.csv
+    - ../../results/tsne_visual_encoder/tsne_visual_encoder_projection_20251126_1750_tsne/tsne_coordinates.csv
+    - ../../results/tsne_dual_encoder/tsne_dual_encoder_projection_20251126_1750_tsne/tsne_coordinates.csv
 
 models:
   names:

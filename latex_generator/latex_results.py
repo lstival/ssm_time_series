@@ -4,7 +4,7 @@ import os
 
 # -----------------------
 
-file_name = "icml_zeroshot_forecast_20251125_0943.csv"
+file_name = "icml_zeroshot_forecast_dual_dual_input96_20251209_1049.csv"
 file_path = f"../results/{file_name}"
 df = pd.read_csv(file_path)
 
@@ -51,8 +51,8 @@ for dataset in datasets:
         if subset.empty:
             entry.extend(["-", "-"])
         else:
-            mae = subset["mae"].iloc[0]
-            mse = subset["mse"].iloc[0]
+            mae = subset["mae"].iloc[0] 
+            mse = subset["mse"].iloc[0] 
             entry.extend([f"{mae:.5f}", f"{mse:.5f}"])
     table_data[dataset] = entry
 

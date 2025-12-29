@@ -40,7 +40,7 @@ data:
   batch_size: 512
   val_batch_size: 512
   num_workers: 4
-  sample_size: 48
+  sample_size: 96
 
 evaluation:
   horizons: [96, 192, 336, 720]

@@ -10,6 +10,7 @@
 /_old
 /embedding_cache
 /results
+/_old_results
 *.tex
 .github
 .vscode

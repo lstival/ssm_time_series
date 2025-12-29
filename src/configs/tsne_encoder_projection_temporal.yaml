@@ -1,0 +1,35 @@
+# Temporal (Mamba encoder) t-SNE projection
+# Used by: src/embeddings_visualization/tsne_encoder_projection.py
+
+paths:
+  # Where outputs will be written (CSV + PNG)
+  output_dir: ../../results/tsne_encoder
+
+  # Temporal encoder checkpoints
+  encoder_checkpoint: ../../checkpoints/ts_encoder_20251126_1750_ep10/time_series_best.pt
+  projection_checkpoint: ../../checkpoints/ts_encoder_20251126_1750_ep10/time_series_projection_best.pt
+
+tsne:
+  samples_per_dataset: 250
+  perplexity: 35.0
+  learning_rate: 200.0
+  n_iter: 1000
+  device: auto
+  seed: 42
+  show: false
+
+data:
+  # Root directory needed for path resolution; unused for Chronos datasets
+  data_dir: .
+  # Chronos dataset identifiers from autogluon/chronos_datasets
+  dataset_names:
+    - m4_yearly
+    - electricity_15min
+    - solar_1h
+    - taxi_30min
+    - monash_hospital
+  dataset_name:
+  filename:
+  batch_size: 512
+  val_batch_size: 512
+  num_workers: 4

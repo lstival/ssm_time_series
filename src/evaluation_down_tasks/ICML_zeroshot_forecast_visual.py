@@ -241,8 +241,8 @@ if __name__ == "__main__":
         normalize=True,
         filename=zeroshot_cfg.filename,
         sample_size=zeroshot_cfg.sample_size,
-        train=False,
-        val=False,
+        train=True,
+        val=True,
         test=True,
     )
     dataset_groups = module.get_dataloaders()

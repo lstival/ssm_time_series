@@ -429,47 +429,68 @@ def build_latex_table(
     label: Optional[str],
 ) -> str:
     metric_defs = {metric.name: metric for metric in METRICS}
-    col_groups = len(model_names)
-    metrics_per_model = len(METRICS)
+    # One-column table layout: one row per (dataset, model), metrics are columns.
+    best_lookup, second_lookup = build_best_trackers(
+        dataset_types, model_names, metric_values, metric_defs
+    )
 
-    col_spec_parts = ["l"] + ["c"] * (col_groups * metrics_per_model)
-    col_spec = " ".join(col_spec_parts)
+    def _normalize_token(value: str) -> str:
+        return "".join(ch for ch in value.casefold() if ch.isalnum())
 
-    cmidrules = []
-    start_col = 2
-    for _model in model_names:
-        end_col = start_col + metrics_per_model - 1
-        cmidrules.append(f"\\cmidrule(lr){{{start_col}-{end_col}}}")
-        start_col = end_col + 1
+    def _is_electricity_dataset(value: str) -> bool:
+        token = _normalize_token(value)
+        return token in {"electricity", "eletricity", "eletricy"}
 
-    best_lookup, second_lookup = build_best_trackers(dataset_types, model_names, metric_values, metric_defs)
+    def _dataset_display(value: str) -> str:
+        if value.strip() == "M":
+            return "M4 Yearly"
+        return value
+
+    best_counts: Dict[str, int] = {name: 0 for name in model_names}
+    second_counts: Dict[str, int] = {name: 0 for name in model_names}
+    for dataset in dataset_types:
+        for metric in METRICS:
+            best_model = best_lookup.get(dataset, {}).get(metric.name)
+            second_model = second_lookup.get(dataset, {}).get(metric.name)
+            if best_model in best_counts:
+                best_counts[best_model] += 1
+            if second_model in second_counts:
+                second_counts[second_model] += 1
+
+    counts_parts = [
+        f"{latex_escape(model)} (best={best_counts.get(model, 0)}, second={second_counts.get(model, 0)})"
+        for model in model_names
+    ]
+    caption_note = (
+        "Red bold values (\\textcolor{red}{\\textbf{...}}) indicate the best score per dataset/metric; "
+        "blue underlined values (\\textcolor{blue}{\\underline{...}}) indicate the second-best."
+    )
+    caption_full = caption + r"\\" + caption_note
+
+    counts_line = "Best/second-best counts: " + "; ".join(counts_parts)
+
+    col_spec = "l l " + " ".join(["c"] * len(METRICS))
 
     lines: List[str] = []
-    lines.append("\\begin{table*}[ht!]")
+    lines.append("\\begin{table}[ht!]")
     lines.append("\\centering")
-    lines.append(f"\\caption{{{caption}}}")
+    lines.append(f"\\caption{{{caption_full}}}")
     lines.append("\\small")
-    lines.append("\\begin{adjustbox}{max width=\\textwidth}")
+    lines.append("\\begin{adjustbox}{max width=\\columnwidth}")
     lines.append(f"\\begin{{tabular}}{{{col_spec}}}")
     lines.append("\\toprule")
 
-    header_cells = ["\\textbf{Dataset}"]
-    for model in model_names:
-        header_cells.append(
-            f"\\multicolumn{{{metrics_per_model}}}{{c}}{{\\textbf{{{latex_escape(model)}}}}}"  # escape header names
-        )
+    header_cells = ["\\textbf{Dataset}", "\\textbf{Model}"]
+    header_cells.extend(metric.display_name for metric in METRICS)
     lines.append(" & ".join(header_cells) + r" \\")
-
-    lines.extend(cmidrules)
-    metric_header = [" "]
-    for _model in model_names:
-        metric_header.extend(metric.display_name for metric in METRICS)
-    lines.append(" & ".join(metric_header) + r" \\")
     lines.append("\\midrule")
 
-    for dataset in dataset_types:
-        row_cells = [f"\\textbf{{{latex_escape(dataset)}}}"]
+    for dataset_index, dataset in enumerate(dataset_types):
         for model in model_names:
+            row_cells = [
+                f"\\textbf{{{latex_escape(_dataset_display(dataset))}}}",
+                latex_escape(model),
+            ]
             for metric in METRICS:
                 raw_value = (
                     metric_values.get(dataset, {})
@@ -484,12 +505,26 @@ def build_latex_table(
                 elif second == model:
                     formatted = apply_emphasis(formatted, position="second")
                 row_cells.append(formatted)
-        lines.append(" & ".join(row_cells) + r" \\")
+            lines.append(" & ".join(row_cells) + r" \\")
+
+        # Separate each dataset block for readability.
+        if dataset_index < len(dataset_types) - 1:
+            lines.append("\\midrule")
+            # Extra separation after Electricity for better visualization.
+            if _is_electricity_dataset(dataset):
+                lines.append("\\midrule")
+
+    # Final summary line inside the table.
+    lines.append("\\midrule")
+    total_cols = 2 + len(METRICS)
+    lines.append(
+        f"\\multicolumn{{{total_cols}}}{{l}}{{\\textit{{{latex_escape(counts_line)}}}}}" + r" \\"
+    )
 
     lines.append("\\bottomrule")
     lines.append("\\end{tabular}")
     lines.append("\\end{adjustbox}")
-    lines.append("\\end{table*}")
+    lines.append("\\end{table}")
     if label:
         lines.insert(3, f"\\label{{{label}}}")
     return "\n".join(lines)

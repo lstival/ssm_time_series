@@ -22,15 +22,15 @@ for path in (SRC_DIR, ROOT_DIR):
 import training_utils as tu
 from embeddings_visualization.projection_utils import (
     build_chronos_dataset_groups,
-    build_output_dir,
     collect_embeddings_for_dataset,
     determine_config_path,
-    fit_tsne,
-    infer_dataset_type,
     load_projection_config,
     load_projection_head,
+    resolve_device,
+    run_tsne_projection,
+    set_seed_everywhere,
 )
-from util import default_device, load_encoder_checkpoint
+from util import load_encoder_checkpoint
 
 TSNE_CONFIG_ENV_VAR = "TSNE_ENCODER_CONFIG"
 DEFAULT_TSNE_CONFIG_PATH = SRC_DIR / "configs" / "tsne_encoder_projection.yaml"
@@ -56,22 +56,11 @@ def main() -> None:
         default_split=DEFAULT_SPLIT,
     )
     base_config = tu.load_config(proj_cfg.model_config_path)
-
     seed = proj_cfg.seed if proj_cfg.seed is not None else base_config.seed
-    if seed is not None:
-        tu.set_seed(seed)
-        torch.manual_seed(seed)
-        np.random.seed(seed)
+    set_seed_everywhere(seed)
 
-    device_spec = proj_cfg.device.strip().lower()
-    if device_spec == "auto":
-        device = default_device()
-    else:
-        device = torch.device(proj_cfg.device)
+    device = resolve_device(proj_cfg.device)
     print(f"Using device: {device}")
-
-    results_dir = proj_cfg.output_dir
-    results_dir.mkdir(parents=True, exist_ok=True)
 
     encoder = tu.build_encoder_from_config(base_config.model).to(device)
     load_encoder_checkpoint(encoder, proj_cfg.encoder_checkpoint, device)
@@ -84,113 +73,26 @@ def main() -> None:
     )
 
     dataset_groups = build_chronos_dataset_groups(proj_cfg=proj_cfg)
-    if not dataset_groups:
-        raise RuntimeError("No Chronos datasets available for visualization")
 
-    dataset_entries: List[Dict[str, object]] = []
-
-    for group in dataset_groups:
-        loader = group.loader
-        dataset_label = group.name
-        dataset_type = infer_dataset_type(dataset_label)
-        split_used = group.split
-
-        try:
-            embeddings, sample_indices = collect_embeddings_for_dataset(
-                encoder=encoder,
-                projection_head=projection_head,
-                loader=loader,
-                device=device,
-                samples_per_dataset=proj_cfg.samples_per_dataset,
-                sequence_first_input=proj_cfg.sequence_first_input,
-            )
-        except (RuntimeError, torch.cuda.OutOfMemoryError) as exc:
-            print(f"  Skipping dataset '{dataset_label}' due to runtime error: {exc}")
-            if isinstance(exc, torch.cuda.OutOfMemoryError):
-                torch.cuda.empty_cache()
-            continue
-
-        sample_total = embeddings.shape[0]
-        if sample_total == 0:
-            print(f"  Dataset '{dataset_label}' produced no samples; skipping.")
-            continue
-
-        dataset_entries.append(
-            {
-                "name": dataset_label,
-                "type": dataset_type,
-                "split": split_used,
-                "embeddings": embeddings,
-                "indices": sample_indices,
-            }
+    def _collect(group) -> tuple[np.ndarray, List[int]]:
+        return collect_embeddings_for_dataset(
+            encoder=encoder,
+            projection_head=projection_head,
+            loader=group.loader,
+            device=device,
+            samples_per_dataset=proj_cfg.samples_per_dataset,
+            sequence_first_input=proj_cfg.sequence_first_input,
+            max_sequence_length=proj_cfg.max_sequence_length,
         )
-        print(f"  Collected {sample_total} embeddings for '{dataset_label}' ({dataset_type}).")
 
-    if not dataset_entries:
-        raise RuntimeError("No embeddings collected from the requested datasets.")
-
-    embedding_blocks = [np.asarray(entry["embeddings"], dtype=np.float32) for entry in dataset_entries]
-    embedding_matrix = np.concatenate(embedding_blocks, axis=0)
-
-    coords = fit_tsne(
-        embedding_matrix,
-        perplexity=proj_cfg.perplexity,
-        learning_rate=proj_cfg.learning_rate,
-        n_iter=proj_cfg.n_iter,
+    csv_path, plot_path = run_tsne_projection(
+        dataset_groups=dataset_groups,
+        collect_fn=_collect,
+        proj_cfg=proj_cfg,
         seed=seed,
+        title="Chronos Encoder Embeddings (t-SNE)",
+        checkpoint_for_timestamp=proj_cfg.encoder_checkpoint,
     )
-
-    records: List[Dict[str, object]] = []
-    for entry in dataset_entries:
-        embeddings = np.asarray(entry["embeddings"], dtype=np.float32)
-        count = embeddings.shape[0]
-        indices = entry["indices"]
-        for idx in range(count):
-            records.append(
-                {
-                    "dataset": entry["name"],
-                    "dataset_type": entry["type"],
-                    "split": entry["split"],
-                    "sample_in_dataset": indices[idx] if idx < len(indices) else idx,
-                }
-            )
-
-    coords_df = pd.DataFrame.from_records(records)
-    coords_df["tsne_x"] = coords[:, 0]
-    coords_df["tsne_y"] = coords[:, 1]
-
-    output_dir = build_output_dir(results_dir, proj_cfg.output_prefix, proj_cfg.encoder_checkpoint)
-    csv_path = output_dir / "tsne_coordinates.csv"
-    plot_path = output_dir / "tsne_plot.png"
-
-    coords_df.to_csv(csv_path, index=False)
-
-    fig, ax = plt.subplots(figsize=(10, 8))
-    unique_types = sorted(coords_df["dataset_type"].unique())
-    colors = plt.cm.tab20(np.linspace(0, 1, max(1, len(unique_types))))
-
-    for color, dataset_type in zip(colors, unique_types):
-        mask = coords_df["dataset_type"] == dataset_type
-        ax.scatter(
-            coords_df.loc[mask, "tsne_x"],
-            coords_df.loc[mask, "tsne_y"],
-            label=dataset_type,
-            s=16,
-            alpha=0.75,
-            color=color,
-        )
-
-    ax.set_title("Chronos Encoder Embeddings (t-SNE)")
-    ax.set_xlabel("Component 1")
-    ax.set_ylabel("Component 2")
-    ax.legend(loc="best", fontsize="small", ncol=2)
-    ax.grid(True, alpha=0.2)
-    fig.tight_layout()
-    fig.savefig(plot_path, dpi=300)
-
-    if proj_cfg.show:
-        plt.show()
-    plt.close(fig)
 
     print("\nSaved t-SNE artifacts:")
     print(f"  Coordinates CSV: {csv_path}")
