@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: ssm_time_series
+Version: 0.1.0
+Summary: SSM-based time series encoders and forecasting
+Requires-Dist: torch>=2.5.1
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: pyyaml
+Requires-Dist: tqdm
+Requires-Dist: huggingface_hub
+Requires-Dist: pyts

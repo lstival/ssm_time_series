@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import Dataset
 
 import dataloaders.concat_loader as concat_loader
-from time_series_loader import TimeSeriesDataModule
+from ssm_time_series.data.loader import TimeSeriesDataModule
 
 
 class _DummyDataset(Dataset):

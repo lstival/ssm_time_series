@@ -11,15 +11,10 @@ import numpy as np
 SRC_DIR = Path(__file__).resolve().parents[1]
 ROOT_DIR = SRC_DIR.parent
 
-import sys
+# Removed legacy sys.path hack
 
-for path in (SRC_DIR, ROOT_DIR):
-    path_str = str(path)
-    if path_str not in sys.path:
-        sys.path.insert(0, path_str)
-
-from models.utils import load_chronos_forecast_config
-from dataloaders.cronos_dataset import load_chronos_datasets
+from ssm_time_series.models.utils import load_chronos_forecast_config
+from ssm_time_series.data.dataloaders.cronos_dataset import load_chronos_datasets
 
 
 # Hard-coded parameters for quick inspection. Edit these values as needed.

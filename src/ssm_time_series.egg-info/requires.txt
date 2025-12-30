@@ -1,0 +1,7 @@
+torch>=2.5.1
+numpy
+pandas
+pyyaml
+tqdm
+huggingface_hub
+pyts

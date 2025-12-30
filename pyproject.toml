@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ssm_time_series"
+version = "0.1.0"
+description = "SSM-based time series encoders and forecasting"
+dependencies = [
+    "torch>=2.5.1",
+    "numpy",
+    "pandas",
+    "pyyaml",
+    "tqdm",
+    "huggingface_hub",
+    "pyts"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ssm_time_series*"]

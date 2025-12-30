@@ -1,19 +1,11 @@
 """Simple test script to verify the evaluation utilities work correctly."""
 
 from pathlib import Path
-import sys
-
-# Add project paths
-SRC_DIR = Path(__file__).resolve().parents[1]
-ROOT_DIR = SRC_DIR.parent
-for path in (SRC_DIR, ROOT_DIR):
-    path_str = str(path)
-    if path_str not in sys.path:
-        sys.path.insert(0, path_str)
+# Removed legacy sys.path hack
 
 import torch
-from util import default_device
-from down_tasks.forecast_utils import load_trained_model, discover_icml_datasets
+from ssm_time_series.utils.nn import default_device
+from ssm_time_series.tasks.down_tasks.forecast_utils import load_trained_model, discover_icml_datasets
 
 
 def test_model_loading():

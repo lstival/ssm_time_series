@@ -10,7 +10,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from models.mamba_encoder import MambaEncoder  # noqa: E402
+from ssm_time_series.models.mamba_encoder import MambaEncoder  # noqa: E402
 
 
 class TestMambaEncoder(unittest.TestCase):
