@@ -18,25 +18,15 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
-from torchvision import ssm_time_series.models
+from torchvision import models
 
-try:
-    from .benchmark_utils import (
-        count_parameters,
-        measure_flops,
-        measure_latency,
-        select_device,
-        load_yaml,
-    )
-except ImportError:
-    sys.path.append(str(Path(__file__).resolve().parents[1]))
-    from tools.benchmark_utils import (
-        count_parameters,
-        measure_flops,
-        measure_latency,
-        select_device,
-        load_yaml,
-    )
+from ssm_time_series.tools.benchmark_utils import (
+    count_parameters,
+    measure_flops,
+    measure_latency,
+    select_device,
+    load_yaml,
+)
 
 
 # Benchmark settings loaded from YAML

@@ -15,9 +15,13 @@ from ssm_time_series.models.mamba_encoder import MambaEncoder  # noqa: E402
 
 class TestMambaEncoder(unittest.TestCase):
     def test_forward_shape(self) -> None:
-        encoder = MambaEncoder(embedding_dim=96)
+        # If using "values" method, the encoder sees token_size * features
+        token_size = 16
+        features = 128
+        input_dim = token_size * features
+        encoder = MambaEncoder(input_dim=input_dim, token_size=token_size, embedding_dim=96)
         batch, seq_len = 3, 50
-        dummy = torch.randn(batch, seq_len, 384)
+        dummy = torch.randn(batch, seq_len, features)
         out = encoder(dummy)
         self.assertEqual(out.shape, (batch, 96))
 

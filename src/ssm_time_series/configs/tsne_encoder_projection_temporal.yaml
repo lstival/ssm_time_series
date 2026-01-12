@@ -3,11 +3,11 @@
 
 paths:
   # Where outputs will be written (CSV + PNG)
-  output_dir: ../../results/tsne_encoder
+  output_dir: ../../../results/tsne_encoder
 
   # Temporal encoder checkpoints
-  encoder_checkpoint: ../../checkpoints/ts_encoder_20251126_1750_ep10/time_series_best.pt
-  projection_checkpoint: ../../checkpoints/ts_encoder_20251126_1750_ep10/time_series_projection_best.pt
+  encoder_checkpoint: ../../../checkpoints/ts_encoder_20251126_1750_ep10/time_series_best.pt
+  projection_checkpoint: ../../../checkpoints/ts_encoder_20251126_1750_ep10/time_series_projection_best.pt
 
 tsne:
   samples_per_dataset: 250

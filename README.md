@@ -24,12 +24,30 @@ from ssm_time_series.hf.cm_mamba import CM_MambaTemporal
 # Load model from local directory or HF Hub
 model = CM_MambaTemporal.from_pretrained("path/to/checkpoint")
 
-# Input shape: (batch_size, input_dim, sequence_length)
-# Default input_dim is often 32 or 384 depending on configuration
-x = torch.randn(8, 32, 96)
+# Input shape: (batch_size, sequence_length, features)
+# Standard (B, T, F) format consistent with Transformers
+x = torch.randn(8, 96, 32)
 embeddings = model(x)
 print(embeddings.shape)  # torch.Size([8, 128])
 ```
+
+---
+
+## 📈 Evaluation & Visualization
+
+The repository includes professional plotting tools for zero-shot forecasting results.
+
+### Plotting Zero-Shot Forecasts
+The script `plot_zeroshot_forecast.py` generates clean, publication-ready figures:
+
+```bash
+python src/ssm_time_series/evaluation/plot_zeroshot_forecast.py
+```
+
+**Key Features:**
+- **Normalized vs. Real Values**: The plots show normalized data for consistency but use a "Reverse Transform" on the y-axis ticks to display real-world values.
+- **Config-Driven**: Easily change datasets and model comparisons via YAML configs.
+- **Publication Ready**: No titles (captions preferred), clean legend, and high-resolution output.
 
 ---
 
@@ -95,7 +113,50 @@ python scripts/moco_training.py
 ```
 
 > [!NOTE]
-> Config files are stored in `scripts/configs/`. You should adjust parameters like `learning_rate`, `batch_size`, and `model_dim` there.
+> Config files are stored in `src/ssm_time_series/configs/`. You should adjust parameters like `learning_rate`, `batch_size`, and `model_dim` there.
+
+---
+
+## 🧪 Evaluation & Benchmarking
+
+The project includes a robust pipeline for zero-shot evaluation and benchmarking against standard datasets (ETT, PEMS, Weather, etc.).
+
+### 1. Zero-Shot Forecasting
+Evaluate trained models on unseen datasets using the zero-shot scripts in `src/ssm_time_series/evaluation/`:
+```bash
+# Standard evaluation
+python src/ssm_time_series/evaluation/ICML_zeroshot_forecast.py --config src/ssm_time_series/configs/icml_zeroshot.yaml
+
+# Dual-encoder (Temporal + Visual) evaluation
+python src/ssm_time_series/evaluation/ICML_zeroshot_forecast_dual.py --config src/ssm_time_series/configs/icml_zeroshot_dual.yaml
+```
+
+### 2. Automated Reporting
+Generate LaTeX tables for ICML-style results using scripts in `latex_generator/`:
+```bash
+python latex_generator/latex_multi_model_results.py
+```
+
+---
+
+## 🎨 Visualization & Analytics
+
+Powerful visualization tools are provided to interpret model performance and embedding quality.
+
+### 1. Forecast Plotting
+Generate forecast plots with a specialized dual-axis feature (plotting normalized values while displaying real-world scales):
+```bash
+python src/ssm_time_series/evaluation/plot_zeroshot_forecast.py
+```
+> [!TIP]
+> This tool automatically identifies the best/worst samples and creates plots suitable for publication.
+
+### 2. Embedding Visualization (t-SNE)
+Analyze the latent space of the encoders:
+```bash
+# Generate t-SNE projections
+python src/ssm_time_series/utils/visualization/tsne_clustering_metrics.py
+```
 
 ---
 
@@ -103,14 +164,18 @@ python scripts/moco_training.py
 
 ```text
 ssm_time_series/
-├── scripts/            # Training and evaluation entry points
+├── latex_generator/    # LaTeX table generation for paper reporting
+├── scripts/            # Main training entry points
 ├── src/
 │   └── ssm_time_series/
+│       ├── configs/    # Centralized YAML configurations
 │       ├── data/       # Dataloaders and augmentation logic
-│       ├── hf/         # Hugging Face from_pretrained interface
-│       ├── models/     # Core Mamba architecture definitions
-│       ├── training/   # Training loops and loss functions
-│       └── utils/      # Modularized NN, Data, and Logging helpers
+│       ├── evaluation/ # Zero-shot pipelines and plotting
+│       ├── hf/         # Hugging Face interface
+│       ├── models/     # Mamba architecture definitions
+│       └── utils/      # Visualization and NN helpers
 ├── pyproject.toml      # Package configuration
 └── README.md
 ```
+
+---

@@ -93,8 +93,11 @@ class Tokenizer:
         else:
             x_padded = x
 
-        # Create the patches for the number of tokens: (B, n_tokens, token_size, F)
-        patches = x_padded.unfold(dimension=1, size=token_size, step=stride).contiguous().squeeze(2)
+        # Create the patches: (B, n_tokens, F, token_size)
+        # We permute to (B, n_tokens, token_size, F) so that aggregation/reshape works as expected
+        patches = x_padded.unfold(dimension=1, size=token_size, step=stride).contiguous()
+        patches = patches.permute(0, 1, 3, 2)
+        # patches is (B, n_tokens, token_size, F)
 
         if self.method == "values":
             tokens = patches
@@ -217,7 +220,8 @@ class MambaVisualEncoder(nn.Module):
         tokens = self.tokenizer(x)
         if tokens.ndim == 4:
             batch, windows, window_len, feat_dim = tokens.shape
-            tokens = tokens.reshape(batch, windows * window_len, feat_dim)
+            # Map patches to single channel for RP: (batch, windows, window_len * feat_dim)
+            tokens = tokens.reshape(batch, windows, window_len * feat_dim)
         img_from_patches = self._time_series_2_image(tokens)
         img_from_patches = torch.from_numpy(img_from_patches).float().to(x.device)
 

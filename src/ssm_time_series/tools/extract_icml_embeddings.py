@@ -25,6 +25,10 @@ from ssm_time_series.data.utils import resolve_path
 from ssm_time_series.data.loader import TimeSeriesDataModule
 from ssm_time_series.utils.nn import default_device
 
+# Root of the package source
+SRC_DIR = Path(__file__).resolve().parents[1]
+ROOT_DIR = SRC_DIR.parent
+
 @dataclass
 class Args:
     config: str = str(SRC_DIR / "configs" / "mamba_encoder.yaml")

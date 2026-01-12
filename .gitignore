@@ -11,6 +11,7 @@
 /embedding_cache
 /results
 /_old_results
+/FM_dataset
 *.tex
 .github
 .vscode

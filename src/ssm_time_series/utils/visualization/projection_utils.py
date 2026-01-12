@@ -18,7 +18,7 @@ from sklearn.manifold import TSNE
 import yaml
 from torch.utils.data import DataLoader, Dataset
 
-from evaluation_down_tasks.zeroshot_utils import extract_checkpoint_timestamp
+from ssm_time_series.evaluation.zeroshot_utils import extract_checkpoint_timestamp
 from ssm_time_series.data.dataloaders.cronos_dataset import load_chronos_datasets
 from ssm_time_series.data.dataloaders.utils import _ensure_hf_list_feature_registered
 from ssm_time_series.data.loader import TimeSeriesDataModule
@@ -738,8 +738,6 @@ def set_seed_everywhere(seed: Optional[int]) -> None:
 def resolve_device(device_spec: str) -> torch.device:
     normalized = (device_spec or "").strip().lower()
     if normalized in {"", "auto"}:
-        from ssm_time_series.utils.general import
-
         return default_device()
     return torch.device(device_spec)
 

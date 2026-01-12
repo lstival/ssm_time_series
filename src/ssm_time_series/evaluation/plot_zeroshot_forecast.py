@@ -3,8 +3,22 @@
 from __future__ import annotations
 
 import shutil
-# Removed legacy sys.path hack
+from pathlib import Path
+from typing import Dict, List, Sequence, Tuple
 
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from matplotlib.ticker import FuncFormatter
+
+from ssm_time_series.evaluation.zeroshot_utils import (
+    dataset_slug,
+    determine_config_path,
+    load_plot_config,
+)
+
+# Root of the package source
+SRC_DIR = Path(__file__).resolve().parents[1]
 
 CONFIG_ENV_VAR = "ICML_ZEROSHOT_PLOT_CONFIG"
 DEFAULT_CONFIG_PATH = SRC_DIR / "configs" / "icml_zeroshot_plot.yaml"
@@ -14,13 +28,23 @@ MAX_PLOTS_PER_DATASET = 100
 
 
 def _extract_sample(payload: Dict[str, object], sample_idx: int) -> Dict[str, torch.Tensor]:
+    # Denormalized/Real values if available, otherwise original payload values
     context = payload["context"][sample_idx]
     targets = payload["targets"][sample_idx]
     preds = payload["predictions"][sample_idx]
+
+    # Original normalized values if they were denormalized by the evaluation script
+    context_norm = payload.get("context_normalized", payload["context"])[sample_idx]
+    targets_norm = payload.get("targets_normalized", payload["targets"])[sample_idx]
+    preds_norm = payload.get("predictions_normalized", payload["predictions"])[sample_idx]
+
     return {
         "context": context,
         "targets": targets,
         "predictions": preds,
+        "context_norm": context_norm,
+        "targets_norm": targets_norm,
+        "predictions_norm": preds_norm,
     }
 
 
@@ -76,6 +100,9 @@ def _plot_single(
     context: torch.Tensor,
     targets: torch.Tensor,
     predictions: torch.Tensor,
+    context_norm: torch.Tensor,
+    targets_norm: torch.Tensor,
+    predictions_norm: torch.Tensor,
     horizon: int,
     feature_idx: int,
     dataset: str,
@@ -85,37 +112,57 @@ def _plot_single(
     dpi: int,
     figsize: Sequence[float],
 ) -> Path:
-    context_np = context.detach().cpu().numpy()
-    targets_np = targets.detach().cpu().numpy()
-    predictions_np = predictions.detach().cpu().numpy()
+    # Use normalized values for visual positioning
+    context_norm_np = context_norm.detach().cpu().numpy()
+    targets_norm_np = targets_norm.detach().cpu().numpy()
+    predictions_norm_np = predictions_norm.detach().cpu().numpy()
 
-    if horizon > targets_np.shape[0]:
-        raise ValueError(f"Requested horizon {horizon} exceeds stored targets length {targets_np.shape[0]}")
+    # Use real values for tick labels
+    context_real_np = context.detach().cpu().numpy()
+    targets_real_np = targets.detach().cpu().numpy()
+    predictions_real_np = predictions.detach().cpu().numpy()
 
-    if feature_idx >= context_np.shape[1]:
+    if horizon > targets_norm_np.shape[0]:
+        raise ValueError(f"Requested horizon {horizon} exceeds stored targets length {targets_norm_np.shape[0]}")
+
+    if feature_idx >= context_norm_np.shape[1]:
         raise ValueError(
-            f"Feature index {feature_idx} out of range for context features {context_np.shape[1]}"
+            f"Feature index {feature_idx} out of range for context features {context_norm_np.shape[1]}"
         )
 
-    history = context_np[:, feature_idx]
-    gt = targets_np[:horizon, feature_idx]
-    pred = predictions_np[:horizon, feature_idx]
+    history_norm = context_norm_np[:, feature_idx]
+    gt_norm = targets_norm_np[:horizon, feature_idx]
+    pred_norm = predictions_norm_np[:horizon, feature_idx]
 
-    history_len = history.shape[0]
+    history_real = context_real_np[:, feature_idx]
+    gt_real = targets_real_np[:horizon, feature_idx]
+    pred_real = predictions_real_np[:horizon, feature_idx]
+
+    # Combine points to build a mapping from normalized to real space for the y-axis
+    all_norm = np.concatenate([history_norm, gt_norm, pred_norm])
+    all_real = np.concatenate([history_real, gt_real, pred_real])
+    # Sort for interpolation
+    sort_idx = np.argsort(all_norm)
+    all_norm_sorted = all_norm[sort_idx]
+    all_real_sorted = all_real[sort_idx]
+
+    history_len = history_norm.shape[0]
     x_history = range(history_len)
     x_future = range(history_len, history_len + horizon)
 
     fig, ax = plt.subplots(figsize=figsize)
-    ax.plot(x_history, history, label="Context (input)", color="#1f77b4")
-    ax.plot(x_future, gt, label="Ground Truth", color="#2ca02c")
-    ax.plot(x_future, pred, label="Prediction", color="#d62728", linestyle="--")
+    ax.plot(x_history, history_norm, label="Context (input)", color="#1f77b4")
+    ax.plot(x_future, gt_norm, label="Ground Truth", color="#2ca02c")
+    ax.plot(x_future, pred_norm, label="Prediction", color="#d62728", linestyle="--")
     ax.axvline(history_len - 0.5, color="gray", linestyle=":", alpha=0.6)
 
-    ax.set_title(f"{dataset} | Sample {sample_idx} | H{horizon} | Feature {feature_idx}")
     ax.set_xlabel("Time step")
-    ax.set_ylabel("Value")
+    ax.set_ylabel("Value (real scale)")
     ax.grid(alpha=0.3)
     ax.legend()
+
+    # Apply the reverse transform to y-axis tick labels
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda y, pos: f"{np.interp(y, all_norm_sorted, all_real_sorted):.2f}"))
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{dataset_slug(dataset)}_sample{sample_idx}_H{horizon}_feat{feature_idx}.png"
@@ -241,6 +288,9 @@ if __name__ == "__main__":
                         context=sample["context"],
                         targets=sample["targets"],
                         predictions=sample["predictions"],
+                        context_norm=sample["context_norm"],
+                        targets_norm=sample["targets_norm"],
+                        predictions_norm=sample["predictions_norm"],
                         horizon=horizon,
                         feature_idx=feature_idx,
                         dataset=str(dataset_label),

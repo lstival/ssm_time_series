@@ -81,12 +81,9 @@ class DualEncoderForecastRegressor(nn.Module):
         self.visual_encoder.eval()
 
     def forward(self, x: torch.Tensor, horizon: Optional[int] = None) -> torch.Tensor:
-        # Transpose input for encoders (from [batch, seq, features] to [batch, features, seq])
-        x_transposed = x.transpose(1, 2)
-        
         # Encode with both encoders
-        encoder_embedding = self.encoder(x_transposed)
-        visual_embedding = self.visual_encoder(x_transposed)
+        encoder_embedding = self.encoder(x)
+        visual_embedding = self.visual_encoder(x)
         
         # Concatenate embeddings
         combined_embedding = torch.cat([encoder_embedding, visual_embedding], dim=-1)

@@ -4,14 +4,14 @@ import pytest
 import torch
 from torch.utils.data import Dataset
 
-import dataloaders.concat_loader as concat_loader
+import ssm_time_series.data.dataloaders.concat_loader as concat_loader
 from ssm_time_series.data.loader import TimeSeriesDataModule
 
 
 class _DummyDataset(Dataset):
     """Minimal dataset stub that mimics the tuple output of Dataset_Custom."""
 
-    def __init__(self, root_path: str, flag: str, data_path: str, normalize: bool = True) -> None:
+    def __init__(self, root_path: str, flag: str, data_path: str, scale: bool = True, **kwargs) -> None:
         self.flag = flag
         self.length = 3
 
@@ -53,7 +53,9 @@ def test_time_series_dataloader_shapes(monkeypatch, tmp_path):
     )
 
     # Act
-    train_loader, _ = module.get_dataloaders()
+    dataset_loaders = module.get_dataloaders()
+    assert len(dataset_loaders) == 1
+    train_loader = dataset_loaders[0].train
     batch = next(iter(train_loader))
 
     # Assert

@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 
-from ssm_time_series.tasks.down_tasks.forecast_utils import ensure_dataloader_pred_len
+from ssm_time_series.tasks.forecast_utils import ensure_dataloader_pred_len
 from ssm_time_series.models.classifier import ForecastRegressor, MultiHorizonForecastMLP
 from ssm_time_series.training.loops import train_epoch_dataset
 from ssm_time_series.training.loops import evaluate_dataset

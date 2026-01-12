@@ -24,33 +24,7 @@ from ssm_time_series.data.utils import (
     resolve_path,
     split_dataset,
 )
-
-
-class ChronosForecastModel(nn.Module):
-    """Simple forecasting head on top of a single encoder."""
-
-    def __init__(self, encoder: nn.Module, input_features: int, target_dim: int, pred_len: int) -> None:
-        super().__init__()
-        self.encoder = encoder
-        self.pred_len = pred_len
-        self.target_dim = target_dim
-
-        encoder_channels = int(getattr(encoder, "input_dim", input_features))
-        if input_features != encoder_channels:
-            self.channel_adapter: nn.Module = nn.Conv1d(input_features, encoder_channels, kernel_size=1, bias=False)
-        else:
-            self.channel_adapter = nn.Identity()
-
-        embedding_dim = int(getattr(encoder, "embedding_dim", encoder_channels))
-        self.head = nn.Linear(embedding_dim, pred_len * target_dim)
-
-    def forward(self, seq: torch.Tensor) -> torch.Tensor:
-        # Expect seq with shape (batch, time, features)
-        x = seq.transpose(1, 2)  # -> (batch, features, time)
-        x = self.channel_adapter(x)
-        embedding = self.encoder(x)
-        out = self.head(embedding)
-        return out.view(seq.size(0), self.pred_len, self.target_dim)
+from ssm_time_series.models.classifier import ChronosForecastModel
 
 
 def _prepare_forecast_batch(batch, pred_len: int, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:

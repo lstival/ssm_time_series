@@ -36,4 +36,4 @@ training:
   use_amp: true
 
 logging:
-  checkpoint_dir: "../../checkpoints"
+  checkpoint_dir: "../../../checkpoints"

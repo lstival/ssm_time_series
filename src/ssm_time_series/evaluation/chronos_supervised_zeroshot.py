@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 import math
-# Removed legacy sys.path hack
+from dataclasses import dataclass
+from pathlib import Path
+from typing import List, Optional
+
+import yaml
 
 from ssm_time_series import training as tu
-from chronos_supervised_training import ChronosForecastModel
 from ssm_time_series.data.loader import TimeSeriesDataModule
 from ssm_time_series.utils.nn import default_device
-from ssm_time_series.tasks.down_tasks.forecast_utils import (
+from ssm_time_series.models.classifier import ChronosForecastModel
+from ssm_time_series.tasks.forecast_utils import (
     ensure_dataloader_pred_len,
     print_evaluation_summary,
     save_evaluation_results,
 )
-from evaluation_down_tasks.zeroshot_reporting import (
+from ssm_time_series.evaluation.zeroshot_reporting import (
     aggregate_results_by_horizon,
     save_horizon_summary,
 )
-from evaluation_down_tasks.zeroshot_utils import (
+from ssm_time_series.evaluation.zeroshot_utils import (
     dataset_slug,
     determine_config_path,
     evaluate_and_collect,
@@ -28,6 +32,9 @@ from evaluation_down_tasks.zeroshot_utils import (
     resolve_required_path,
     select_loader,
 )
+
+# Root of the package source
+SRC_DIR = Path(__file__).resolve().parents[1]
 
 CONFIG_ENV_VAR = "CHRONOS_SUPERVISED_ZEROSHOT_CONFIG"
 DEFAULT_CONFIG_PATH = SRC_DIR / "configs" / "chronos_supervised_zeroshot.yaml"

@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import argparse
 import os
-# Removed legacy sys.path hack
+from pathlib import Path
+
+# Root of the package source
+SRC_DIR = Path(__file__).resolve().parents[1]
 
 DEFAULT_CONFIG_PATH = SRC_DIR / "configs" / "tsne_encoder_projection.yaml"
 DEFAULT_TEMPORAL_CONFIG_PATH = SRC_DIR / "configs" / "tsne_encoder_projection_temporal.yaml"
@@ -63,9 +66,9 @@ def main() -> None:
     os.environ["TSNE_VISUAL_ENCODER_CONFIG"] = str(visual_cfg)
     os.environ["TSNE_DUAL_ENCODER_CONFIG"] = str(dual_cfg)
 
-    from embeddings_visualization import tsne_dual_encoder_projection
-    from embeddings_visualization import tsne_encoder_projection
-    from embeddings_visualization import tsne_visual_encoder_projection
+    from ssm_time_series.utils.visualization import tsne_dual_encoder_projection
+    from ssm_time_series.utils.visualization import tsne_encoder_projection
+    from ssm_time_series.utils.visualization import tsne_visual_encoder_projection
 
     print("\n=== Temporal projection ===")
     print(f"Config: {temporal_cfg}")

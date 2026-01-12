@@ -4,13 +4,22 @@ from __future__ import annotations
 
 import math
 import re
-# Removed legacy sys.path hack
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-from ssm_time_series import training as tu
+import numpy as np
+import torch
+import yaml
+from sklearn.metrics import (
+    mean_absolute_error,
+    mean_absolute_percentage_error,
+    mean_squared_error,
+)
 
 from ssm_time_series import training as tu
 from ssm_time_series.data.utils import resolve_path
-from ssm_time_series.tasks.down_tasks.forecast_shared import parse_horizon_values
+from ssm_time_series.tasks.forecast_shared import parse_horizon_values
 from ssm_time_series.models.classifier import ForecastRegressor, MultiHorizonForecastMLP
 from ssm_time_series.models.dual_forecast import DualEncoderForecastMLP, DualEncoderForecastRegressor
 
@@ -105,7 +114,7 @@ def build_dual_encoder_model_from_checkpoint(
         "visual_embedding_dim": visual_encoder_embedding_dim,
     }
     
-    return model, checkpoint_info, eval_horizons, max_horizon, False  # sequence_first_input=False
+    return model, checkpoint_info, eval_horizons, max_horizon, True  # sequence_first_input=True
 
 
 def _apply_inverse_transform(
@@ -149,6 +158,11 @@ def evaluate_and_collect_dual_encoder(
 
     model.eval()
     total_samples = 0
+    
+    # Infer expected input features from the model's encoder
+    expected_f = 1
+    if hasattr(model, "encoder") and hasattr(model.encoder, "input_dim") and hasattr(model.encoder, "token_size"):
+        expected_f = model.encoder.input_dim // model.encoder.token_size
 
     contexts: List[torch.Tensor] = []
     targets_list: List[torch.Tensor] = []
@@ -160,6 +174,12 @@ def evaluate_and_collect_dual_encoder(
             seq_x_cpu = seq_x.float()
             seq_x_device = seq_x_cpu.to(device)
             
+            # Handle multivariate inputs by taking mean across features if the model expects univariate
+            if seq_x_device.shape[-1] > expected_f and expected_f == 1:
+                print(f"Multivariate input detected ({seq_x_device.shape[-1]} features) but model expects {expected_f} -> taking mean")
+                seq_x_device = seq_x_device.mean(dim=-1, keepdim=True)
+                seq_x_cpu = seq_x_device.cpu()
+
             # Handle multi-channel inputs by taking mean across channels
             # Input shape: (batch, channels, sequence_length, features)
             if seq_x_device.dim() == 4 and seq_x_device.size(1) > 1:
@@ -169,6 +189,13 @@ def evaluate_and_collect_dual_encoder(
                 print(f"Converted to single channel: {seq_x_device.shape}")
             
             seq_y_cpu = seq_y.float()
+            target_f = 1
+            if hasattr(model, "head") and hasattr(model.head, "target_features"):
+                target_f = model.head.target_features
+
+            if seq_y_cpu.shape[-1] > target_f and target_f == 1:
+                print(f"Multivariate target detected ({seq_y_cpu.shape[-1]} features) but head predicts {target_f} -> taking mean")
+                seq_y_cpu = seq_y_cpu.mean(dim=-1, keepdim=True)
 
             if seq_y_cpu.size(1) < max_horizon:
                 raise ValueError(
@@ -485,6 +512,11 @@ def evaluate_and_collect(
 
     model.eval()
     total_samples = 0
+    
+    # Infer expected input features from the model's encoder
+    expected_f = 1
+    if hasattr(model, "encoder") and hasattr(model.encoder, "input_dim") and hasattr(model.encoder, "token_size"):
+        expected_f = model.encoder.input_dim // model.encoder.token_size
 
     contexts: List[torch.Tensor] = []
     targets_list: List[torch.Tensor] = []
@@ -496,7 +528,7 @@ def evaluate_and_collect(
             seq_x_cpu = seq_x.float()
             seq_x_device = seq_x_cpu.to(device)
 
-            if seq_x_device.shape[-1] > 1:
+            if seq_x_device.shape[-1] > expected_f and expected_f == 1:
                 seq_x_device = seq_x_device.mean(dim=-1, keepdim=True)
                 seq_x_cpu = seq_x_device.cpu()
 
@@ -504,7 +536,11 @@ def evaluate_and_collect(
                 seq_x_device = seq_x_device.transpose(1, 2)
             seq_y_cpu = seq_y.float()
 
-            if seq_y_cpu.shape[-1] > 1:
+            target_f = 1
+            if hasattr(model, "head") and hasattr(model.head, "target_features"):
+                target_f = model.head.target_features
+
+            if seq_y_cpu.shape[-1] > target_f and target_f == 1:
                 seq_y_cpu = seq_y_cpu.mean(dim=-1, keepdim=True)
                 seq_y_cpu = seq_y_cpu.cpu()
 
@@ -760,7 +796,7 @@ def build_model_from_checkpoint(
     if unexpected:
         print(f"Warning: unexpected weights when loading checkpoint: {sorted(unexpected)}")
 
-    sequence_first_input = bool(use_dual)
+    sequence_first_input = True
 
     info_encoder = getattr(model, "encoder", None)
     checkpoint_info = {

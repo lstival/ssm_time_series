@@ -13,7 +13,17 @@ dependencies = [
     "pyyaml",
     "tqdm",
     "huggingface_hub",
-    "pyts"
+    "pyts",
+    "einops",
+    "matplotlib",
+    "scikit-learn",
+    "comet_ml",
+    "datasets",
+    "transformers",
+    "torchvision",
+    "lightly",
+    "pytorch-lightning",
+    "chronos @ git+https://github.com/amazon-science/chronos-forecasting.git"
 ]
 
 [tool.setuptools.packages.find]

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-# Removed legacy sys.path hack
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import torch
+import yaml
 
 from ssm_time_series import training as tu
-from embeddings_visualization.projection_utils import (
+from ssm_time_series.utils.visualization.projection_utils import (
     build_chronos_dataset_groups,
     build_output_dir,
     determine_config_path,
@@ -15,9 +20,13 @@ from embeddings_visualization.projection_utils import (
 )
 from ssm_time_series.utils.nn import default_device
 
+# Root of the package source
+SRC_DIR = Path(__file__).resolve().parents[3]
+ROOT_DIR = SRC_DIR.parent
+
 TSNE_HF_CONFIG_ENV_VAR = "TSNE_HF_CONFIG"
-DEFAULT_TSNE_CONFIG_PATH = SRC_DIR / "configs" / "tsne_encoder_projection.yaml"
-DEFAULT_MODEL_CONFIG_PATH = SRC_DIR / "configs" / "mamba_encoder.yaml"
+DEFAULT_TSNE_CONFIG_PATH = SRC_DIR / "ssm_time_series" / "configs" / "tsne_encoder_projection.yaml"
+DEFAULT_MODEL_CONFIG_PATH = SRC_DIR / "ssm_time_series" / "configs" / "mamba_encoder.yaml"
 DEFAULT_OUTPUT_PREFIX = "tsne_hf_projection"
 DEFAULT_OUTPUT_DIR = ROOT_DIR / "results" / "tsne_hf"
 DEFAULT_DATA_DIR = ROOT_DIR / "chronos"

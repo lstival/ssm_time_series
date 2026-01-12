@@ -5,18 +5,10 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Sequence
 
-try:
-    from .benchmark_utils import load_yaml
-    from .measure_mamba_encoder import benchmark_models as benchmark_mamba
-    from .measure_vision_models import benchmark_models as benchmark_vision
-    from .measure_time_series_models import benchmark_models as benchmark_time_series
-except ImportError:
-    tools_dir = Path(__file__).resolve().parents[1]
-    sys.path.append(str(tools_dir))
-    from tools.benchmark_utils import load_yaml
-    from tools.measure_mamba_encoder import benchmark_models as benchmark_mamba
-    from tools.measure_vision_models import benchmark_models as benchmark_vision
-    from tools.measure_time_series_models import benchmark_models as benchmark_time_series
+from ssm_time_series.tools.benchmark_utils import load_yaml
+from ssm_time_series.tools.measure_mamba_encoder import benchmark_models as benchmark_mamba
+from ssm_time_series.tools.measure_vision_models import benchmark_models as benchmark_vision
+from ssm_time_series.tools.measure_time_series_models import benchmark_models as benchmark_time_series
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = ROOT / "results" / "benchmark_params_gflops.tex"

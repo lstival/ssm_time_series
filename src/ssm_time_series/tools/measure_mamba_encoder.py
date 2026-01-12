@@ -22,29 +22,15 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import torch
-try:
-    from .benchmark_utils import (
-        count_parameters,
-        load_yaml,
-        measure_flops,
-        measure_latency,
-        select_device,
-    )
-except ImportError:
-    sys.path.append(str(Path(__file__).resolve().parents[1]))
-    from tools.benchmark_utils import (
-        count_parameters,
-        load_yaml,
-        measure_flops,
-        measure_latency,
-        select_device,
-    )
+from ssm_time_series.tools.benchmark_utils import (
+    count_parameters,
+    load_yaml,
+    measure_flops,
+    measure_latency,
+    select_device,
+)
 
-try:
-    from ..models.mamba_encoder import MambaEncoder
-except ImportError:
-    sys.path.append(str(Path(__file__).resolve().parents[2]))
-    from src.models.mamba_encoder import MambaEncoder
+from ssm_time_series.models.mamba_encoder import MambaEncoder
 
 
 # Configuration loading

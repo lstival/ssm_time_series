@@ -137,8 +137,8 @@ def _collect_dataset_splits(
     root_path: str,
     *,
     normalize: bool = True,
-    # train_ratio: float = 0.8,
-    # val_ratio: float = 0.2,
+    train_ratio: float = 0.8,
+    val_ratio: float = 0.2,
     include_train: bool = True,
     include_val: bool = True,
     include_test: bool = False,
@@ -147,7 +147,7 @@ def _collect_dataset_splits(
     sample_size: Optional[Tuple[int, int, int]] = None,
 ) -> Tuple[List[_DatasetSplits], Dict[str, str]]:
     """Create dataset splits for each discovered dataset prior to building loaders."""
-    # assert abs(train_ratio + val_ratio - 1.0) < 1e-6, "train_ratio + val_ratio must equal 1.0"
+    assert abs(train_ratio + val_ratio - 1.0) < 1e-6, "train_ratio + val_ratio must equal 1.0"
 
     discovered_files = dataset_files or discover_dataset_files(root_path, filename=filename)
     if not discovered_files:
@@ -332,8 +332,8 @@ def build_dataset_loader_list(
     num_workers: int = 4,
     pin_memory: bool = True,
     normalize: bool = True,
-    # train_ratio: float = 0.8,
-    # val_ratio: float = 0.2,
+    train_ratio: float = 0.8,
+    val_ratio: float = 0.2,
     include_train: bool = True,
     include_val: bool = True,
     include_test: bool = False,
@@ -346,8 +346,8 @@ def build_dataset_loader_list(
     dataset_splits, skipped = _collect_dataset_splits(
         root_path,
         normalize=normalize,
-        # train_ratio=train_ratio,
-        # val_ratio=val_ratio,
+        train_ratio=train_ratio,
+        val_ratio=val_ratio,
         include_train=include_train,
         include_val=include_val,
         include_test=include_test,

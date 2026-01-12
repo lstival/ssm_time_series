@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-# Removed legacy sys.path hack
+from pathlib import Path
+
+# Root of the package source
+SRC_DIR = Path(__file__).resolve().parents[1]
+ROOT_DIR = SRC_DIR.parent
 
 from ssm_time_series import training as tu
-from embeddings_visualization.projection_utils import (
+from ssm_time_series.utils.visualization.projection_utils import (
     build_chronos_dataset_groups,
     collect_dual_embeddings_for_dataset,
     determine_config_path,

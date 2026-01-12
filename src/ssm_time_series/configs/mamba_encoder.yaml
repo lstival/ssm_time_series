@@ -21,7 +21,7 @@ model:
 # Dataset configuration
 data:
   # dataset_name: "ETTh1.csv"
-  data_dir: "../../ICML_datasets"
+  data_dir: "../../../ICML_datasets"
   batch_size: 128
   val_batch_size: 128
   num_workers: 4
@@ -65,9 +65,9 @@ training:
 
 # Logging and checkpointing configuration
 logging:
-  log_dir: "../../logs"
-  checkpoint_dir: "../../checkpoints"
-  tensorboard_dir: "../../tensorboard"
+  log_dir: "../../../logs"
+  checkpoint_dir: "../../../checkpoints"
+  tensorboard_dir: "../../../tensorboard"
   
   # Logging frequency
   log_interval: 10  # Log every N batches

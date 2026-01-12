@@ -17,8 +17,8 @@ class TimeSeriesDataModule:
         num_workers: int = 4,
         pin_memory: bool = True,
         normalize: bool = True,
-        # train_ratio: float = 0.8,
-        # val_ratio: float = 0.2,
+        train_ratio: float = 0.8,
+        val_ratio: float = 0.2,
         filename: Optional[str] = None,
         sample_size: Optional[Union[int, Sequence[int]]] = None,
         # new flags to request specific splits from Dataset_Custom
@@ -26,7 +26,7 @@ class TimeSeriesDataModule:
         val: bool = True,
         test: bool = False,
     ):
-        # assert abs(train_ratio + val_ratio - 1.0) < 1e-6, "train_ratio + val_ratio must equal 1.0"
+        assert abs(train_ratio + val_ratio - 1.0) < 1e-6, "train_ratio + val_ratio must equal 1.0"
         self.dataset_name = dataset_name
         self.dataset_names = dataset_names
         self.data_dir = data_dir
@@ -35,8 +35,8 @@ class TimeSeriesDataModule:
         self.num_workers = num_workers
         self.pin_memory = pin_memory
         self.normalize = normalize
-        # self.train_ratio = train_ratio
-        # self.val_ratio = val_ratio
+        self.train_ratio = train_ratio
+        self.val_ratio = val_ratio
         self.sample_size = self._normalize_sample_size(sample_size)
         self.train = train
         self.val = val
@@ -83,8 +83,8 @@ class TimeSeriesDataModule:
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             normalize=self.normalize,
-            # train_ratio=self.train_ratio,
-            # val_ratio=self.val_ratio,
+            train_ratio=self.train_ratio,
+            val_ratio=self.val_ratio,
             include_train=self.train,
             include_val=self.val,
             include_test=self.test,

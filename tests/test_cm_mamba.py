@@ -20,6 +20,7 @@ def temp_model_dir():
     # Mock config
     config = {
         "input_dim": 32,
+        "token_size": 16,
         "model_dim": 64,
         "embedding_dim": 128,
         "depth": 2,
@@ -35,12 +36,15 @@ def temp_model_dir():
     from ssm_time_series.models.mamba_encoder import MambaEncoder
     encoder = MambaEncoder(
         input_dim=config["input_dim"],
+        token_size=config["token_size"],
         model_dim=config["model_dim"],
         embedding_dim=config["embedding_dim"],
         depth=config["depth"],
         state_dim=config["state_dim"]
     )
-    torch.save({"model_state_dict": encoder.state_dict()}, model_dir / "pytorch_model.pt")
+    # Save with 'encoder.' prefix so CM_MambaTemporal/Visual can load it
+    sd = {f"encoder.{k}": v for k, v in encoder.state_dict().items()}
+    torch.save(sd, model_dir / "pytorch_model.bin")
     
     yield model_dir
     shutil.rmtree(tmpdir)
@@ -50,10 +54,10 @@ def test_temporal_loading(temp_model_dir):
     """Test loading a temporal encoder from a local path."""
     model = CM_MambaTemporal.from_pretrained(temp_model_dir, device="cpu")
     assert isinstance(model, CM_MambaTemporal)
-    assert model.embedding_dim == 128
+    assert model.config.embedding_dim == 128
     
     # Test inference
-    x = torch.randn(2, 32, 96) # (batch, features, seq)
+    x = torch.randn(2, 96, 32) # (batch, seq, features)
     out = model(x)
     assert out.shape == (2, 128)
 
@@ -73,7 +77,7 @@ def test_visual_loading(temp_model_dir):
     assert isinstance(model, CM_MambaVisual)
     
     # Test inference
-    x = torch.randn(2, 3, 96) # (batch, channels, seq)
+    x = torch.randn(2, 96, 3) # (batch, seq, channels)
     out = model(x)
     assert out.shape == (2, 128)
 
@@ -90,7 +94,7 @@ def test_combined_loading(temp_model_dir):
     assert model.embedding_dim == 256 # 128 + 128
     
     # Test inference
-    x = torch.randn(2, 32, 96) # Using temporal-like input (will be shared)
+    x = torch.randn(2, 96, 32) # Using temporal-like input
     # Note: CM_MambaCombined passes same x to both. 
     # In practice inputs might differ but the interface supports it.
     out = model(x)

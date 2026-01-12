@@ -273,7 +273,6 @@ def build_latex_cm_only(
             )
 
         latex.append(" & ".join(row_parts) + r" \\")
-        latex.append("")
 
     latex.append(r"\midrule")
 

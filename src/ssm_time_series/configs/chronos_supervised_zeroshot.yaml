@@ -1,15 +1,15 @@
 # Configuration to evaluate Chronos-supervised checkpoints on ICML datasets
 seed: 42
 
-training_config: ../configs/chronos_supervised.yaml
+training_config: chronos_supervised.yaml
 encoder_type: visual
 
 paths:
-  checkpoint: ../../checkpoints/chronos_supervised_20251203_1018/visual/best.pt
-  results_dir: ../../results
+  checkpoint: ../../../checkpoints/chronos_supervised_20251203_1018/visual/best.pt
+  results_dir: ../../../results
 
 data:
-  data_dir: ../../ICML_datasets
+  data_dir: ../../../ICML_datasets
   dataset_names:
     - ETTh1.csv
     - ETTh2.csv

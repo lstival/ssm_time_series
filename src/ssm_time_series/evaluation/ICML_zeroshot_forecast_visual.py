@@ -4,18 +4,22 @@ from __future__ import annotations
 
 import json
 import math
-# Removed legacy sys.path hack
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Union
+
+import torch
 
 from ssm_time_series import training as tu
 from ssm_time_series.data.loader import TimeSeriesDataModule
 from ssm_time_series.utils.nn import default_device
-from ssm_time_series.tasks.down_tasks.forecast_shared import apply_model_overrides
-from ssm_time_series.tasks.down_tasks.forecast_utils import (
+from ssm_time_series.tasks.forecast_shared import apply_model_overrides
+from ssm_time_series.tasks.forecast_utils import (
     ensure_dataloader_pred_len,
     print_evaluation_summary,
     save_evaluation_results,
 )
-from evaluation_down_tasks.zeroshot_utils import (
+from ssm_time_series.evaluation.zeroshot_utils import (
     build_model_from_checkpoint,
     dataset_slug,
     determine_config_path,
@@ -24,6 +28,9 @@ from evaluation_down_tasks.zeroshot_utils import (
     load_zeroshot_config,
     select_loader,
 )
+
+# Root of the package source
+SRC_DIR = Path(__file__).resolve().parents[1]
 
 CONFIG_ENV_VAR = "ICML_ZEROSHOT_CONFIG"
 DEFAULT_CONFIG_PATH = SRC_DIR / "configs" / "icml_zeroshot_visual.yaml"

@@ -25,7 +25,7 @@ chronos:
   max_windows_per_series: null
   max_series: null
   load_kwargs:
-    offline_cache_dir: ../../data
+    offline_cache_dir: ../../../data
     force_offline: true
 
 training:
@@ -39,7 +39,7 @@ training:
   horizons: [96, 192, 336, 720]
 
 paths:
-  encoder_checkpoint: ../../checkpoints/ts_encoder_20251126_1750_ep10/time_series_best.pt
-  visual_encoder_checkpoint: ../../checkpoints/ts_encoder_20251126_1750_ep10/visual_encoder_best.pt
-  checkpoint_dir: ../../checkpoints
-  results_dir: ../../results
+  encoder_checkpoint: ../../../checkpoints/ts_encoder_20251126_1750_ep10/time_series_best.pt
+  visual_encoder_checkpoint: ../../../checkpoints/ts_encoder_20251126_1750_ep10/visual_encoder_best.pt
+  checkpoint_dir: ../../../checkpoints
+  results_dir: ../../../results

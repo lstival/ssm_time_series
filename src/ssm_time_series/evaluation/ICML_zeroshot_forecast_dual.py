@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import math
-# Removed legacy sys.path hack
+import os
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Union
+
+import torch
 
 from ssm_time_series import training as tu
 from ssm_time_series.data.loader import TimeSeriesDataModule
 from ssm_time_series.utils.nn import default_device
-from ssm_time_series.tasks.down_tasks.forecast_shared import apply_model_overrides
-from ssm_time_series.tasks.down_tasks.forecast_utils import (
+from ssm_time_series.tasks.forecast_shared import apply_model_overrides
+from ssm_time_series.tasks.forecast_utils import (
     ensure_dataloader_pred_len,
     print_evaluation_summary,
     save_evaluation_results,
 )
-from evaluation_down_tasks.zeroshot_utils import (
+from ssm_time_series.evaluation.zeroshot_utils import (
     determine_config_path,
     extract_checkpoint_timestamp,
     load_zeroshot_config,
@@ -24,10 +29,13 @@ from evaluation_down_tasks.zeroshot_utils import (
     dataset_slug,
 )
 
-from zeroshot_reporting import (
+from ssm_time_series.evaluation.zeroshot_reporting import (
     aggregate_results_by_horizon,
     save_horizon_summary,
     )
+
+# Root of the package source
+SRC_DIR = Path(__file__).resolve().parents[1]
 
 
 def _context_length_from_sample_size(

@@ -26,11 +26,15 @@ ICML-specific overrides (data_dir/dataset_names/split) at runtime.
 from __future__ import annotations
 
 import argparse
-# Removed legacy sys.path hack
+from pathlib import Path
+from typing import List
+
+# Root of the package source
+SRC_DIR = Path(__file__).resolve().parents[1]
 
 from ssm_time_series import training as tu
 from ssm_time_series.data.dataloaders.utils import discover_dataset_files
-from embeddings_visualization.projection_utils import (
+from ssm_time_series.utils.visualization.projection_utils import (
     build_icml_dataset_groups,
     collect_dual_embeddings_for_dataset,
     collect_embeddings_for_dataset,
@@ -83,7 +87,7 @@ def _icml_dataset_type_caption(name: str) -> str:
         return "Solar"
 
     # Fallback: keep the existing heuristic behavior.
-    from embeddings_visualization.projection_utils import infer_dataset_type
+    from ssm_time_series.utils.visualization.projection_utils import infer_dataset_type
 
     return infer_dataset_type(name)
 

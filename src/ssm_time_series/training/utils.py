@@ -84,9 +84,11 @@ def build_encoder_from_config(model_cfg: Dict[str, Any]) -> MambaEncoder:
         raise ValueError(f"Unsupported pooling mode: {pooling}")
 
     expand_factor = max(1.0, float(expand_factor))
+    token_size = int(model_cfg.get("token_size", 32))
 
     return MambaEncoder(
         input_dim=input_dim,
+        token_size=token_size,
         model_dim=model_dim,
         depth=depth,
         state_dim=state_dim,
@@ -179,8 +181,11 @@ def prepare_dataloaders(config: ExperimentConfig, root: Path) -> Tuple[DataLoade
         test=False,
     )
     module.setup()
-    train_loader, val_loader = module.get_dataloaders()
-    return train_loader, val_loader
+    dataset_loaders = module.get_dataloaders()
+    if not dataset_loaders:
+        raise ValueError("No datasets found or loaded.")
+    # For training, we typically expect a single dataset or we take the first one
+    return dataset_loaders[0].train, dataset_loaders[0].val
 
 
 def infer_feature_dim(train_loader: DataLoader) -> int:

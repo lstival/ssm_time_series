@@ -17,10 +17,8 @@ ROOT_DIR = SRC_DIR.parent
 
 from ssm_time_series import training as tu
 from ssm_time_series.utils.nn import load_encoder_checkpoint
-from ssm_time_series.utils.nn import default_device,
-    prepare_run_directory,
-)
-from ssm_time_series.tasks.down_tasks.forecast_shared import (
+from ssm_time_series.utils.nn import default_device, prepare_run_directory
+from ssm_time_series.tasks.forecast_shared import (
     apply_model_overrides,
     finalize_results,
     train_dataset_group,

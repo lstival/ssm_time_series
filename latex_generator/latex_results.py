@@ -95,7 +95,6 @@ latex.append(
 )
 
 latex.append(r"\midrule")
-latex.append("")
 
 # Body rows
 for dataset in sorted(table_data.keys()):

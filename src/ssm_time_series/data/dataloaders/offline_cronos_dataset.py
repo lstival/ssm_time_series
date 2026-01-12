@@ -1,7 +1,7 @@
 import os
 os.environ['HF_DATASETS_OFFLINE ']= '1'
 
-from cronos_dataset import load_chronos_datasets
+from ssm_time_series.data.dataloaders.cronos_dataset import load_chronos_datasets
 
 def load_chronos_datasets_offline(
     dataset_names,

@@ -51,6 +51,38 @@ class MultiHorizonForecastMLP(nn.Module):
         return self.max_horizon
 
 
+class ChronosForecastModel(nn.Module):
+    """Simple forecasting head on top of a single encoder."""
+
+    def __init__(
+        self, encoder: nn.Module, input_features: int, target_dim: int, pred_len: int
+    ) -> None:
+        super().__init__()
+        self.encoder = encoder
+        self.pred_len = pred_len
+        self.target_dim = target_dim
+
+        encoder_channels = int(getattr(encoder, "input_dim", input_features))
+        if input_features != encoder_channels:
+            self.channel_adapter: nn.Module = nn.Conv1d(
+                input_features, encoder_channels, kernel_size=1, bias=False
+            )
+        else:
+            self.channel_adapter = nn.Identity()
+
+        embedding_dim = int(getattr(encoder, "embedding_dim", encoder_channels))
+        self.head = nn.Linear(embedding_dim, pred_len * target_dim)
+
+    def forward(self, seq: torch.Tensor) -> torch.Tensor:
+        # Expect seq with shape (batch, time, features)
+        x = seq.transpose(1, 2)  # -> (batch, features, time) for channel_adapter (Conv1d)
+        x = self.channel_adapter(x)
+        x = x.transpose(1, 2)  # -> (batch, time, features) for MambaEncoder
+        embedding = self.encoder(x)
+        out = self.head(embedding)
+        return out.view(seq.size(0), self.pred_len, self.target_dim)
+
+
 class ForecastRegressor(nn.Module):
 	"""Frozen encoder followed by a trainable forecasting head."""
 
