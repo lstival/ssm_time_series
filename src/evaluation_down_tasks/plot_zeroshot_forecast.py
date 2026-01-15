@@ -5,12 +5,14 @@ from __future__ import annotations
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple, Optional
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
+from matplotlib.ticker import FuncFormatter
 from evaluation_down_tasks.zeroshot_utils import (
     PlotConfig,
     dataset_slug,
@@ -34,14 +36,16 @@ TOP_K = 3
 
 
 def _extract_sample(payload: Dict[str, object], sample_idx: int) -> Dict[str, torch.Tensor]:
-    context = payload["context"][sample_idx]
-    targets = payload["targets"][sample_idx]
-    preds = payload["predictions"][sample_idx]
-    return {
-        "context": context,
-        "targets": targets,
-        "predictions": preds,
+    sample = {
+        "context": payload["context"][sample_idx],
+        "targets": payload["targets"][sample_idx],
+        "predictions": payload["predictions"][sample_idx],
     }
+    if "context_normalized" in payload:
+        sample["context_normalized"] = payload["context_normalized"][sample_idx]
+        sample["targets_normalized"] = payload["targets_normalized"][sample_idx]
+        sample["predictions_normalized"] = payload["predictions_normalized"][sample_idx]
+    return sample
 
 
 def _compute_sample_mae(
@@ -104,6 +108,7 @@ def _plot_single(
     show: bool,
     dpi: int,
     figsize: Sequence[float],
+    context_denorm: Optional[torch.Tensor] = None,
 ) -> Path:
     context_np = context.detach().cpu().numpy()
     targets_np = targets.detach().cpu().numpy()
@@ -131,7 +136,25 @@ def _plot_single(
     ax.plot(x_future, pred, label="Prediction", color="#d62728", linestyle="--")
     ax.axvline(history_len - 0.5, color="gray", linestyle=":", alpha=0.6)
 
-    ax.set_title(f"{dataset} | Sample {sample_idx} | H{horizon} | Feature {feature_idx}")
+    # If denormalized context is available, adjust Y-axis labels to show original values
+    if context_denorm is not None:
+        c_norm = context_np[:, feature_idx]
+        c_denorm = context_denorm.detach().cpu().numpy()[:, feature_idx]
+        
+        # Determine linear mapping: denorm = a * norm + b
+        norm_min, norm_max = c_norm.min(), c_norm.max()
+        denorm_min, denorm_max = c_denorm.min(), c_denorm.max()
+        
+        if abs(norm_max - norm_min) > 1e-7:
+            a = (denorm_max - denorm_min) / (norm_max - norm_min)
+            b = denorm_min - a * norm_min
+            ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{a * x + b:.2f}"))
+        else:
+            # If input is flat, we can't infer slope but we can at least show the level
+            level = c_denorm[0]
+            ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{level:.2f}"))
+
+    ax.set_title(f"{dataset} | H{horizon} | Feature {feature_idx}")
     ax.set_xlabel("Time step")
     ax.set_ylabel("Value")
     ax.grid(alpha=0.3)
@@ -228,10 +251,23 @@ if __name__ == "__main__":
                             f"only {sample['context'].shape[1]} feature(s) available."
                         )
                         continue
+                    
+                    # If normalized data is available, plot it but label axis with denorm data
+                    if "context_normalized" in sample:
+                        p_context = sample["context_normalized"]
+                        p_targets = sample["targets_normalized"]
+                        p_predictions = sample["predictions_normalized"]
+                        p_context_denorm = sample["context"]
+                    else:
+                        p_context = sample["context"]
+                        p_targets = sample["targets"]
+                        p_predictions = sample["predictions"]
+                        p_context_denorm = None
+
                     output_path = _plot_single(
-                        context=sample["context"],
-                        targets=sample["targets"],
-                        predictions=sample["predictions"],
+                        context=p_context,
+                        targets=p_targets,
+                        predictions=p_predictions,
                         horizon=horizon,
                         feature_idx=feature_idx,
                         dataset=str(dataset_label),
@@ -240,6 +276,7 @@ if __name__ == "__main__":
                         show=plot_cfg.show,
                         dpi=plot_cfg.dpi,
                         figsize=plot_cfg.figsize,
+                        context_denorm=p_context_denorm,
                     )
                     dataset_best_dir.mkdir(parents=True, exist_ok=True)
                     best_output_path = dataset_best_dir / output_path.name

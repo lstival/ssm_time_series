@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import random
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -265,6 +265,7 @@ class ChronosForecastWindowDataset(Dataset):
         stride: int,
         torch_dtype: torch.dtype = torch.float32,
         max_windows_per_series: Optional[int] = None,
+        normalization: Optional[Dict[str, Any]] = None,
     ) -> None:
         if context_length <= 0:
             raise ValueError("context_length must be positive")
@@ -278,6 +279,7 @@ class ChronosForecastWindowDataset(Dataset):
         self.stride = int(stride)
         self.dtype = torch_dtype
         self.pred_len = self.horizon
+        self.normalization = normalization
         self.series: List[np.ndarray] = []
         self.series_mins: List[Optional[np.ndarray]] = []
         self.series_maxs: List[Optional[np.ndarray]] = []
@@ -357,6 +359,7 @@ def _build_dataloader(
     pin_memory: bool,
     torch_dtype: torch.dtype,
     max_windows_per_series: Optional[int],
+    normalization: Optional[Dict[str, Any]] = None,
 ) -> Optional[DataLoader]:
     """Build a dataloader from sequences."""
     dataset = ChronosForecastWindowDataset(
@@ -366,6 +369,7 @@ def _build_dataloader(
         stride=stride,
         torch_dtype=torch_dtype,
         max_windows_per_series=max_windows_per_series,
+        normalization=normalization,
     )
     if len(dataset) == 0:
         return None
@@ -430,6 +434,7 @@ def build_dataset_group(
     split: str,
     target_dtype: Optional[str],
     normalize_per_series: bool,
+    normalize_mode: Optional[str] = None,
     load_kwargs: Dict[str, object],
     context_length: int,
     horizon: int,
@@ -445,12 +450,18 @@ def build_dataset_group(
     seed: int,
 ) -> Optional[ChronosDatasetGroup]:
     """Build a dataset group with train and validation loaders."""
+    mode = str(
+        normalize_mode
+        if normalize_mode is not None
+        else ("per_series" if normalize_per_series else "none")
+    ).strip().lower()
+
     sequences = _load_chronos_sequences(
         dataset_name,
         repo_id=repo_id,
         split=split,
         target_dtype=target_dtype,
-        normalize_per_series=normalize_per_series,
+        normalize_per_series=(mode == "per_series"),
         load_kwargs=load_kwargs,
         max_series=max_series,
         seed=seed,
@@ -460,6 +471,70 @@ def build_dataset_group(
         return None
 
     train_sequences, val_sequences = _split_sequences(sequences, val_ratio=val_ratio, seed=seed)
+
+    normalization: Optional[Dict[str, Any]] = None
+    if mode in {"global_standard", "standard", "zscore"}:
+        # Compute dataset-level mean/std on training sequences.
+        sums = None
+        sumsq = None
+        counts = None
+
+        def _accumulate(arr: np.ndarray) -> None:
+            nonlocal sums, sumsq, counts
+            x = np.asarray(arr, dtype=np.float64)
+            if x.ndim == 1:
+                x = x.reshape(-1, 1)
+            mask = np.isfinite(x)
+            if not mask.any():
+                return
+            x0 = np.where(mask, x, 0.0)
+            if sums is None:
+                feat = x0.shape[1]
+                sums = np.zeros((feat,), dtype=np.float64)
+                sumsq = np.zeros((feat,), dtype=np.float64)
+                counts = np.zeros((feat,), dtype=np.float64)
+            sums += np.sum(x0, axis=0)
+            sumsq += np.sum(x0 * x0, axis=0)
+            counts += np.sum(mask, axis=0)
+
+        for item in train_sequences:
+            if isinstance(item, tuple) and len(item) == 3:
+                arr, _, _ = item
+            else:
+                arr = item
+            _accumulate(arr)
+
+        if sums is not None and counts is not None and np.any(counts > 0):
+            mean = sums / np.maximum(counts, 1.0)
+            var = (sumsq / np.maximum(counts, 1.0)) - (mean * mean)
+            var = np.where(np.isfinite(var) & (var > 0.0), var, 0.0)
+            std = np.sqrt(var)
+            normalization = {
+                "mode": "global_standard",
+                "mean": mean.astype(np.float64).tolist(),
+                "std": std.astype(np.float64).tolist(),
+                "epsilon": 1e-12,
+            }
+
+            eps = float(normalization.get("epsilon", 1e-12))
+
+            def _standardize_sequence(item):
+                if isinstance(item, tuple) and len(item) == 3:
+                    arr, a, b = item
+                else:
+                    arr, a, b = item, None, None
+                x = np.asarray(arr, dtype=np.float32)
+                if x.ndim == 1:
+                    x = x.reshape(-1, 1)
+                m = np.asarray(mean, dtype=np.float32).reshape(1, -1)
+                s = np.asarray(std, dtype=np.float32).reshape(1, -1)
+                denom = np.where(np.abs(s) > eps, s, 1.0)
+                y = (x - m) / denom
+                return (y, a, b)
+
+            train_sequences = [_standardize_sequence(x) for x in train_sequences]
+            val_sequences = [_standardize_sequence(x) for x in val_sequences]
+
     train_loader = _build_dataloader(
         train_sequences,
         context_length=context_length,
@@ -471,6 +546,7 @@ def build_dataset_group(
         pin_memory=pin_memory,
         torch_dtype=torch_dtype,
         max_windows_per_series=max_windows_per_series,
+        normalization=normalization,
     )
 
     val_loader = _build_dataloader(
@@ -484,6 +560,7 @@ def build_dataset_group(
         pin_memory=pin_memory,
         torch_dtype=torch_dtype,
         max_windows_per_series=max_windows_per_series,
+        normalization=normalization,
     ) if val_sequences else None
 
     if train_loader is None:

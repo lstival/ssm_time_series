@@ -3,11 +3,61 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import comet_ml
 import torch
 import torch.nn as nn
+
+
+def _denormalize(
+    tensor: torch.Tensor,
+    denorm: Optional[Any],
+    *,
+    epsilon: float = 1e-12,
+) -> torch.Tensor:
+    """Inverse-transform predictions/targets for metrics.
+
+    Supports dataset-level normalization dict with:
+    - {'mode': 'global_standard', 'mean': [...], 'std': [...]}  (preferred)
+    """
+    if denorm is None:
+        return tensor
+    if tensor.ndim != 3:
+        return tensor
+
+    if isinstance(denorm, dict) and str(denorm.get("mode") or "").lower() == "global_standard":
+        mean = denorm.get("mean", 0.0)
+        std = denorm.get("std", 1.0)
+        eps = float(denorm.get("epsilon", epsilon))
+
+        if isinstance(mean, (list, tuple)):
+            mean_t = torch.tensor(mean, device=tensor.device, dtype=tensor.dtype).view(1, 1, -1)
+        else:
+            mean_t = torch.tensor([float(mean)], device=tensor.device, dtype=tensor.dtype).view(1, 1, -1)
+
+        if isinstance(std, (list, tuple)):
+            std_t = torch.tensor(std, device=tensor.device, dtype=tensor.dtype).view(1, 1, -1)
+        else:
+            std_t = torch.tensor([float(std)], device=tensor.device, dtype=tensor.dtype).view(1, 1, -1)
+
+        denom = torch.where(torch.abs(std_t) > eps, std_t, torch.ones_like(std_t))
+        return tensor * denom + mean_t
+
+    return tensor
+
+
+def _save_normalization_params(path: Path, payload: Optional[dict]) -> None:
+    if payload is None:
+        return
+    try:
+        import yaml
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(payload, handle, sort_keys=True)
+    except Exception:
+        pass
 
 
 SRC_DIR = Path(__file__).resolve().parents[1]
@@ -38,7 +88,6 @@ from models.dual_forecast import DualEncoderForecastMLP, DualEncoderForecastRegr
 from dataloaders.utils import (
     ChronosDatasetGroup,
     build_dataset_group,
-    _build_aggregated_loader,
 )
 
 
@@ -58,6 +107,7 @@ def train_dual_encoder_dataset_group(
     run_root: Path,
     max_horizon: int,
     criterion: nn.Module,
+    grad_clip: float = 0.0,
     experiment: Optional[comet_ml.Experiment] = None,
 ) -> Optional[Dict[str, object]]:
     """Train a dual encoder forecasting model on a dataset group."""
@@ -71,7 +121,9 @@ def train_dual_encoder_dataset_group(
         print(f"Skipping dataset '{group_name}' because the train loader is empty.")
         return None
 
-    seq_x, seq_y, _, _ = sample_batch  # Unpack all batch elements
+    # ChronosForecastWindowDataset yields 5 tensors:
+    # (seq_x, seq_y, seq_x_mark, seq_y_mark, norm_stats)
+    seq_x, seq_y, _, _, _ = sample_batch
     seq_x, seq_y = seq_x.float(), seq_y.float()  # Ensure proper dtype
     target_features = seq_y.size(2)
     available_steps = seq_y.size(1)
@@ -135,7 +187,11 @@ def train_dual_encoder_dataset_group(
             "encoder_embedding_dim": encoder_embedding_dim,
             "visual_encoder_embedding_dim": visual_encoder_embedding_dim,
             "combined_input_dim": combined_input_dim,
+            "grad_clip": grad_clip,
         })
+
+    denorm_stats = getattr(getattr(train_loader, "dataset", None), "normalization", None)
+    _save_normalization_params(dataset_dir / "normalization" / "normalization.yaml", denorm_stats)
 
     best_metric = float("inf")
     best_state: Optional[Dict[str, object]] = None
@@ -153,7 +209,7 @@ def train_dual_encoder_dataset_group(
             num_batches = 0
             
             for batch in train_loader:
-                seq_x, seq_y, _, _ = batch  # Unpack all batch elements
+                seq_x, seq_y, _, _, _ = batch
                 seq_x, seq_y = seq_x.float().to(device), seq_y.float().to(device)
                 
                 optimizer.zero_grad()
@@ -164,6 +220,8 @@ def train_dual_encoder_dataset_group(
                 
                 loss = criterion(predictions, targets)
                 loss.backward()
+                if float(grad_clip) and float(grad_clip) > 0.0:
+                    torch.nn.utils.clip_grad_norm_(model.head.parameters(), float(grad_clip))
                 optimizer.step()
                 
                 epoch_loss += loss.item()
@@ -185,14 +243,20 @@ def train_dual_encoder_dataset_group(
                     num_samples = 0
                     
                     for batch in val_loader:
-                        seq_x, seq_y, _, _ = batch  # Unpack all batch elements
-                        seq_x, seq_y = seq_x.float().to(device), seq_y.float().to(device)
+                        seq_x, seq_y, _, _, _ = batch
+                        seq_x = seq_x.float().to(device)
+                        seq_y = seq_y.float().to(device)
                         
                         predictions = model(seq_x, horizon=horizon)
                         targets = seq_y[:, :horizon, :]
-                        
-                        mse = torch.nn.functional.mse_loss(predictions, targets).item()
-                        mae = torch.nn.functional.l1_loss(predictions, targets).item()
+
+                        # Compute metrics on inverse-normalized (raw-scale) values.
+                        denorm_preds = _denormalize(predictions, denorm_stats)
+                        denorm_tgts = _denormalize(targets, denorm_stats)
+
+                        diff = denorm_preds - denorm_tgts
+                        mse = torch.mean(diff * diff).item()
+                        mae = torch.mean(torch.abs(diff)).item()
                         
                         batch_size = targets.size(0)
                         mse_sum += mse * batch_size
@@ -210,7 +274,7 @@ def train_dual_encoder_dataset_group(
         # Calculate average metrics
         avg_train_loss = sum(train_losses.values()) / len(train_losses)
         if val_metrics:
-            valid_vals = [metrics["mse"] for metrics in val_metrics.values() if not torch.isnan(torch.tensor(metrics["mse"]))]
+            valid_vals = [metrics["mse"] for metrics in val_metrics.values() if metrics["mse"] == metrics["mse"]]
             avg_val_mse = sum(valid_vals) / len(valid_vals) if valid_vals else float("nan")
         else:
             avg_val_mse = float("nan")
@@ -254,7 +318,7 @@ def train_dual_encoder_dataset_group(
             experiment.log_metric(f"{group_name}_learning_rate", current_lr, step=epoch + 1)
 
         # Save best model
-        metric_to_compare = avg_val_mse if not torch.isnan(torch.tensor(avg_val_mse)) else avg_train_loss
+        metric_to_compare = avg_val_mse if avg_val_mse == avg_val_mse else avg_train_loss
         
         if best_state is None or metric_to_compare < best_metric:
             best_metric = metric_to_compare
@@ -375,7 +439,8 @@ if __name__ == "__main__":
             repo_id=config.repo_id,
             split=config.split,
             target_dtype=config.target_dtype,
-            normalize_per_series=config.normalize_per_series,
+            normalize_per_series=False,
+            normalize_mode="global_standard",
             load_kwargs=config.load_kwargs,
             context_length=config.context_length,
             horizon=config.max_horizon,
@@ -397,49 +462,15 @@ if __name__ == "__main__":
         print("No datasets were prepared. Check Chronos configuration or dataset availability.")
 
     dataset_records: List[Dict[str, object]] = []
-
-    combined_train_loader = (
-        _build_aggregated_loader(
-            dataset_groups,
-            is_train=True,
-            batch_size=config.batch_size,
-            shuffle=True,
-            num_workers=config.num_workers,
-            pin_memory=config.pin_memory,
-        )
-        if dataset_groups
-        else None
-    )
-    combined_val_loader = (
-        _build_aggregated_loader(
-            dataset_groups,
-            is_train=False,
-            batch_size=config.val_batch_size,
-            shuffle=False,
-            num_workers=config.num_workers,
-            pin_memory=config.pin_memory,
-        )
-        if dataset_groups
-        else None
-    )
-
-    if combined_train_loader is None:
-        print("No training data available after aggregating all datasets.")
-    else:
-        combined_metadata = {
-            "datasets": [group.name for group in dataset_groups],
-            "train_windows": sum(group.metadata.get("train_windows", 0) for group in dataset_groups),
-            "val_windows": sum(group.metadata.get("val_windows", 0) for group in dataset_groups),
-        }
+    for group in dataset_groups:
         print(
-            "Training dual encoder model on aggregated datasets "
-            f"{combined_metadata['datasets']} -> {combined_metadata['train_windows']} windows."
+            f"\nTraining dual encoder model on dataset '{group.name}' "
+            f"({group.metadata.get('train_windows', 0)} train windows, {group.metadata.get('val_windows', 0)} val windows)."
         )
-        
         record = train_dual_encoder_dataset_group(
-            group_name="all_datasets",
-            train_loader=combined_train_loader,
-            val_loader=combined_val_loader,
+            group_name=group.name,
+            train_loader=group.train,
+            val_loader=group.val,
             encoder=encoder,
             visual_encoder=visual_encoder,
             device=device,
@@ -451,6 +482,7 @@ if __name__ == "__main__":
             run_root=run_root,
             max_horizon=config.max_horizon,
             criterion=criterion,
+            grad_clip=float(getattr(config, "grad_clip", 0.0) or 0.0),
             experiment=experiment,
         )
         if record is not None:
