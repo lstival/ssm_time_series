@@ -1,0 +1,19 @@
+experiment_name: "tfb_eval"
+seed: 42
+device: "auto"
+
+model:
+  model_name: "ts_encoder"
+  input_dim: 32            # token size
+  model_dim: 128           # Corrected to match checkpoint
+  embedding_dim: 128
+  depth: 16                # Corrected to match checkpoint
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+
+data: {}
+training: {}
+logging: {}
