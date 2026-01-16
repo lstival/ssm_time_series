@@ -1,0 +1,300 @@
+﻿conda.exe : 
+Traceback (most 
+recent call last):
+At C:\Users\stiva\ana
+conda3\shell\condabin
+\Conda.psm1:153 
+char:17
++ ...             & 
+$Env:CONDA_EXE 
+$Env:_CE_M 
+$Env:_CE_CONDA 
+$Command @Othe ...
++                 ~~~
+~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~
+    + CategoryInfo   
+           : NotSpe  
+  cified: (Traceba   
+ ck (most recent     
+call last)::Stri    
+ng) [], RemoteEx    
+ception
+    + FullyQualified 
+   ErrorId : Native  
+  CommandError
+ 
+
+  File "C:\WUR\ssm_ti
+me_series\test_rp_var
+iants.py", line 31, 
+in test_rp_variants
+
+    output = 
+encoder(dummy_ts)
+
+             
+^^^^^^^^^^^^^^^^^
+
+  File "C:\Users\stiv
+a\anaconda3\envs\time
+series\Lib\site-packa
+ges\torch\nn\modules\
+module.py", line 
+1773, in 
+_wrapped_call_impl
+
+    return self._call
+_impl(*args, 
+**kwargs)
+
+           ^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^
+^
+
+  File "C:\Users\stiv
+a\anaconda3\envs\time
+series\Lib\site-packa
+ges\torch\nn\modules\
+module.py", line 
+1784, in _call_impl
+
+    return 
+forward_call(*args, 
+**kwargs)
+
+           ^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^
+
+  File "C:\WUR\ssm_ti
+me_series\src\models\
+mamba_visual_encoder.
+py", line 235, in 
+forward
+
+    features = self.f
+orward_sequence(x)
+
+               ^^^^^^
+^^^^^^^^^^^^^^^^^^
+
+  File "C:\WUR\ssm_ti
+me_series\src\models\
+mamba_visual_encoder.
+py", line 261, in 
+forward_sequence
+
+    img_from_patches 
+= img_from_patches.vi
+ew(B, windows, 
+window_len, 
+window_len)
+
+                     
+  ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^
+
+RuntimeError: shape 
+'[2, 10, 96, 96]' is 
+invalid for input of 
+size 20480
+
+Traceback (most 
+recent call last):
+
+  File "C:\WUR\ssm_ti
+me_series\test_rp_var
+iants.py", line 31, 
+in test_rp_variants
+
+    output = 
+encoder(dummy_ts)
+
+             
+^^^^^^^^^^^^^^^^^
+
+  File "C:\Users\stiv
+a\anaconda3\envs\time
+series\Lib\site-packa
+ges\torch\nn\modules\
+module.py", line 
+1773, in 
+_wrapped_call_impl
+
+    return self._call
+_impl(*args, 
+**kwargs)
+
+           ^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^
+^
+
+  File "C:\Users\stiv
+a\anaconda3\envs\time
+series\Lib\site-packa
+ges\torch\nn\modules\
+module.py", line 
+1784, in _call_impl
+
+    return 
+forward_call(*args, 
+**kwargs)
+
+           ^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^
+
+  File "C:\WUR\ssm_ti
+me_series\src\models\
+mamba_visual_encoder.
+py", line 235, in 
+forward
+
+    features = self.f
+orward_sequence(x)
+
+               ^^^^^^
+^^^^^^^^^^^^^^^^^^
+
+  File "C:\WUR\ssm_ti
+me_series\src\models\
+mamba_visual_encoder.
+py", line 261, in 
+forward_sequence
+
+    img_from_patches 
+= img_from_patches.vi
+ew(B, windows, 
+window_len, 
+window_len)
+
+                     
+  ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^
+
+RuntimeError: shape 
+'[2, 10, 96, 96]' is 
+invalid for input of 
+size 20480
+
+Traceback (most 
+recent call last):
+
+  File "C:\WUR\ssm_ti
+me_series\test_rp_var
+iants.py", line 31, 
+in test_rp_variants
+
+    output = 
+encoder(dummy_ts)
+
+             
+^^^^^^^^^^^^^^^^^
+
+  File "C:\Users\stiv
+a\anaconda3\envs\time
+series\Lib\site-packa
+ges\torch\nn\modules\
+module.py", line 
+1773, in 
+_wrapped_call_impl
+
+    return self._call
+_impl(*args, 
+**kwargs)
+
+           ^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^
+^
+
+  File "C:\Users\stiv
+a\anaconda3\envs\time
+series\Lib\site-packa
+ges\torch\nn\modules\
+module.py", line 
+1784, in _call_impl
+
+    return 
+forward_call(*args, 
+**kwargs)
+
+           ^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^
+
+  File "C:\WUR\ssm_ti
+me_series\src\models\
+mamba_visual_encoder.
+py", line 235, in 
+forward
+
+    features = self.f
+orward_sequence(x)
+
+               ^^^^^^
+^^^^^^^^^^^^^^^^^^
+
+  File "C:\WUR\ssm_ti
+me_series\src\models\
+mamba_visual_encoder.
+py", line 261, in 
+forward_sequence
+
+    img_from_patches 
+= img_from_patches.vi
+ew(B, windows, 
+window_len, 
+window_len)
+
+                     
+  ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^
+
+RuntimeError: shape 
+'[2, 10, 96, 96]' is 
+invalid for input of 
+size 20480
+
+
+Testing on cuda
+
+
+
+--- Testing RP Mode: correct ---
+
+DEBUG: img_from_patches shape: (20, 96, 32, 32)
+
+DEBUG: img_from_patches before view: torch.Size([20, 32, 32])
+
+DEBUG: expected view: (2, 10, 96, 96)
+
+Error in variant correct: shape '[2, 10, 96, 96]' is invalid for input of size 20480
+
+
+
+--- Testing RP Mode: shuffled ---
+
+DEBUG: img_from_patches shape: (20, 96, 32, 32)
+
+DEBUG: img_from_patches before view: torch.Size([20, 32, 32])
+
+DEBUG: expected view: (2, 10, 96, 96)
+
+Error in variant shuffled: shape '[2, 10, 96, 96]' is invalid for input of size 20480
+
+
+
+--- Testing RP Mode: random ---
+
+DEBUG: img_from_patches shape: (20, 96, 32, 32)
+
+DEBUG: img_from_patches before view: torch.Size([20, 32, 32])
+
+DEBUG: expected view: (2, 10, 96, 96)
+
+Error in variant random: shape '[2, 10, 96, 96]' is invalid for input of size 20480
+
+
+

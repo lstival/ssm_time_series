@@ -97,7 +97,7 @@ def build_encoder_from_config(model_cfg: Dict[str, Any]) -> MambaEncoder:
         dropout=dropout,
     )
 
-def build_visual_encoder_from_config(model_cfg: Dict[str, Any]) -> MambaVisualEncoder:
+def build_visual_encoder_from_config(model_cfg: Dict[str, Any], rp_mode: str = "correct") -> MambaVisualEncoder:
     cfg_get = model_cfg.get
     input_channels = int(cfg_get("input_dim", 3))
     model_dim = int(cfg_get("model_dim", 128))
@@ -124,6 +124,7 @@ def build_visual_encoder_from_config(model_cfg: Dict[str, Any]) -> MambaVisualEn
         embedding_dim=embedding_dim,
         pooling=pooling,
         dropout=dropout,
+        rp_mode=rp_mode,
     )
 
 def build_optimizer(model: torch.nn.Module, training_cfg: Dict[str, Any]) -> Optimizer:

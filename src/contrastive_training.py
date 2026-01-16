@@ -45,6 +45,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--pin-memory", type=int, default=None, choices=[0, 1])
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=None)
+    parser.add_argument("--rp-mode", type=str, default="correct", choices=["correct", "shuffled", "random"], help="RP variant for EXP-2")
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--load-kwargs", type=str, nargs="*", default=None,
                         help="Optional key=value overrides forwarded to the dataset loader.")
@@ -219,7 +220,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     feature_dim = infer_feature_dim(train_loader)
 
-    encoder = tu.build_encoder_from_config(config.model)
+    # Use build_visual_encoder_from_config as it supports RP modes for EXP-2
+    encoder = tu.build_visual_encoder_from_config(config.model, rp_mode=args.rp_mode)
     model = ContrastiveModel(encoder, input_dim=feature_dim)
     optimizer = tu.build_optimizer(model, config.training)
 

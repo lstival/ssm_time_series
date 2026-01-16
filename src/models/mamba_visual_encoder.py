@@ -13,6 +13,7 @@ from typing import Literal, Optional
 import math
 import torch
 from torch import nn
+import numpy as np
 
 try:
     from utils import time_series_2_recurrence_plot
@@ -64,8 +65,6 @@ class Tokenizer:
         self.pad = pad
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        # Swap axes from (B, F, T) to (B, T, F) as default of tokenizes (preserve original behavior)
-        # x = x.swapaxes(1, 2)
         if x.ndim != 3:
             raise ValueError("tokenize_sequence expects input of shape (batch, time, features)")
 
@@ -93,8 +92,10 @@ class Tokenizer:
         else:
             x_padded = x
 
-        # Create the patches for the number of tokens: (B, n_tokens, token_size, F)
-        patches = x_padded.unfold(dimension=1, size=token_size, step=stride).contiguous().squeeze(2)
+        # Create the patches for the number of tokens: (B, n_tokens, F, token_size)
+        patches = x_padded.unfold(dimension=1, size=token_size, step=stride).contiguous()
+        # Transpose to (B, n_tokens, token_size, F)
+        patches = patches.transpose(2, 3)
 
         if self.method == "values":
             tokens = patches
@@ -163,7 +164,7 @@ class MambaVisualEncoder(nn.Module):
     def __init__(
         self,
         *,
-        input_dim: int = 32, #Token size default as 16
+        input_dim: int = 32,
         model_dim: int = 768,
         depth: int = 6,
         state_dim: int = 16,
@@ -172,6 +173,7 @@ class MambaVisualEncoder(nn.Module):
         embedding_dim: int = 128,
         pooling: Pooling = "mean",
         dropout: float = 0.05,
+        rp_mode: str = "correct",
     ) -> None:
         super().__init__()
         if depth <= 0:
@@ -183,6 +185,7 @@ class MambaVisualEncoder(nn.Module):
         self.model_dim = model_dim
         self.embedding_dim = embedding_dim
         self.pooling: Pooling = pooling
+        self.rp_mode = rp_mode
 
         self.input_proj = _InputConv(token_len=self.input_dim, out_dim=model_dim)
         self.blocks = nn.ModuleList(
@@ -203,8 +206,29 @@ class MambaVisualEncoder(nn.Module):
     def _time_series_2_image(self, ts):
         # validation with the shape are correct (3 is the correct b,timetamps,tokens)
         if len(ts.shape) == 4:
-            ts = ts.squeeze(1)
-        x = time_series_2_recurrence_plot(ts)
+            # If it's (B, windows, window_len, F), we might want to handle it
+            # But usually it's already reshaped to (B*windows, window_len, F)
+            pass
+        
+        # Original RP computation
+        # time_series_2_recurrence_plot returns (samples, L, L) or (samples, channels, L, L)
+        x = time_series_2_recurrence_plot(ts) 
+        
+        if self.rp_mode == "shuffled":
+            # Flatten everything except the last two dimensions (L, L) to iterate over all images/channels
+            orig_shape = x.shape
+            L = orig_shape[-1]
+            x_flat = x.reshape(-1, L, L)
+            for i in range(x_flat.shape[0]):
+                patch = x_flat[i].flatten()
+                np.random.shuffle(patch)
+                x_flat[i] = patch.reshape(L, L)
+            x = x_flat.reshape(orig_shape)
+        
+        elif self.rp_mode == "random":
+            # Replace RP with Gaussian noise preserving same shape
+            x = np.random.normal(0, 1, size=x.shape).astype(np.float32)
+            
         return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -214,14 +238,27 @@ class MambaVisualEncoder(nn.Module):
 
     def forward_sequence(self, x: torch.Tensor) -> torch.Tensor:
         """Return the sequence of hidden states before pooling."""
-        tokens = self.tokenizer(x)
-        if tokens.ndim == 4:
-            batch, windows, window_len, feat_dim = tokens.shape
-            tokens = tokens.reshape(batch, windows * window_len, feat_dim)
-        img_from_patches = self._time_series_2_image(tokens)
-        img_from_patches = torch.from_numpy(img_from_patches).float().to(x.device)
+        tokens = self.tokenizer(x) # (B, windows, window_len, F)
+        B, windows, window_len, F = tokens.shape
+        
+        # RP computed only within each patch (per sample, per window)
+        # time_series_2_recurrence_plot expects (samples, channels, length)
+        # So we permute to (B, windows, F, window_len) then reshape
+        tokens_for_rp = tokens.permute(0, 1, 3, 2).reshape(B * windows, F, window_len)
+        
+        img_from_patches = self._time_series_2_image(tokens_for_rp)
+        
+        if isinstance(img_from_patches, np.ndarray):
+            img_from_patches = torch.from_numpy(img_from_patches).float().to(x.device)
 
-        x = self.input_proj(img_from_patches) # Change here to use pre_trained model to feature exctration
+        # If multichannel (F > 1), we need to reduce to 1 channel for _InputConv
+        if img_from_patches.ndim == 4:
+            img_from_patches = img_from_patches.mean(dim=1)
+        
+        # Reshape to (B, windows, L, L) for _InputConv
+        img_from_patches = img_from_patches.view(B, windows, window_len, window_len)
+
+        x = self.input_proj(img_from_patches) 
 
         for block in self.blocks:
             x = block(x)
