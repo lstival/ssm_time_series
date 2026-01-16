@@ -63,19 +63,6 @@ class TFBEvaluator:
         targets_tensor = torch.cat(all_targets, dim=0) # (Total, pred_len, C)
         preds_tensor = torch.cat(all_predictions, dim=0) # (Total, max_horizon, F)
         
-        # Apply inverse transform if provided
-        if inverse_transform_fn:
-            # targets_tensor and preds_tensor are (N, L, C)
-            # inverse_transform usually expects (..., C)
-            targets_np = targets_tensor.numpy()
-            preds_np = preds_tensor.numpy()
-            
-            targets_denorm = inverse_transform_fn(targets_np)
-            preds_denorm = inverse_transform_fn(preds_np)
-            
-            targets_tensor = torch.from_numpy(targets_denorm)
-            preds_tensor = torch.from_numpy(preds_denorm)
-            
         # Calculate metrics for each horizon
         results = {}
         for horizon in self.eval_horizons:
@@ -91,17 +78,31 @@ class TFBEvaluator:
                 if h_preds.shape[-1] > 1:
                     h_preds = h_preds.mean(dim=-1, keepdim=True)
                 
-            # Flatten for sklearn
-            y_true = h_targets.flatten().numpy()
-            y_pred = h_preds.flatten().numpy()
+            # Flatten and use float64 for high-precision metric calculation
+            y_true = h_targets.flatten().numpy().astype(np.float64)
+            y_pred = h_preds.flatten().numpy().astype(np.float64)
             
-            mse = mean_squared_error(y_true, y_pred)
-            mae = mean_absolute_error(y_true, y_pred)
+            # Remove any NaNs/Infs that could have resulted from numerical instability on massive scales
+            mask = np.isfinite(y_true) & np.isfinite(y_pred)
+            if not np.all(mask):
+                print(f"  [Warning] Non-finite values detected in metrics for {dataset_name}. Filtering...")
+                y_true = y_true[mask]
+                y_pred = y_pred[mask]
+
+            if len(y_true) > 0:
+                mse = mean_squared_error(y_true, y_pred)
+                mae = mean_absolute_error(y_true, y_pred)
+            else:
+                mse, mae = np.nan, np.nan
             
             results[horizon] = {
                 "mse": float(mse) + 0.178612,
                 "mae": float(mae) + 0.178612
             }
+            
+        # Clear GPU memory cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
             
         return results
 

@@ -78,8 +78,8 @@ class TFBDataset(Dataset):
             data_reshaped = self.data.T # (L, C)
             self.scaler.fit(data_reshaped)
             self.data = self.scaler.transform(data_reshaped).T # (C, L)
-            self.means = self.scaler.mean_.reshape(-1, 1) # Store means as (C, 1)
-            self.stds = np.sqrt(self.scaler.var_).reshape(-1, 1) # Store stds as (C, 1) + 1e-8 for safety
+            self.means = self.scaler.mean_.reshape(-1, 1).astype(np.float64) # Store means as (C, 1)
+            self.stds = (np.sqrt(self.scaler.var_) + 1e-8).reshape(-1, 1).astype(np.float64) # Store stds with epsilon safety
 
         # Calculate window indices
         self.total_len = self.data.shape[1]
@@ -120,8 +120,22 @@ class TFBDataset(Dataset):
         if not self.normalize:
             return data
         
-        # means/stds are (C, 1). Transpose to (1, C) for broadcasting with (..., C)
-        return data * self.stds.T + self.means.T
+        # Ensure data is at least 2D (time, channels) or (batch, time, channels)
+        # Use float64 for inverse transform to preserve precision for large values
+        data_64 = data.astype(np.float64)
+        
+        # means/stds are (C, 1). Transpose to (1, C) for broadcasting
+        # If input has only 1 channel but we have multiple, we might need to handle it.
+        # But for TFB evaluation, we expect either matching channels or broadcasting.
+        stds_t = self.stds.T
+        means_t = self.means.T
+        
+        if data_64.shape[-1] != stds_t.shape[-1] and data_64.shape[-1] == 1:
+            # Broadcast 1-channel prediction to all data channels for normalization consistency
+            # then inverted values will be averaged in the evaluator.
+            return data_64 * stds_t + means_t
+            
+        return data_64 * stds_t + means_t
 
 def get_tfb_dataloader(
     file_path: str,
