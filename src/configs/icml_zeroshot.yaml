@@ -5,10 +5,10 @@ model:
   # Path to the base encoder configuration (relative paths resolved from this file)
   config: ../configs/mamba_encoder.yaml
   overrides:
-    token_size: null
-    model_dim: null
-    embedding_dim: null
-    depth: null
+    token_size: 32
+    model_dim: 128
+    embedding_dim: 128
+    depth: 16
 
 paths:
   # Chronos-trained forecasting checkpoint containing encoder + head weights
@@ -27,7 +27,6 @@ data:
     - ETTh2.csv
     - ETTm1.csv 
     - ETTm2.csv
-    - PEMS04.npz
     - weather.csv
     - exchange_rate.csv
     - electricity.csv
