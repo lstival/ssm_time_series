@@ -4,6 +4,7 @@ Ablation study to compare temporal-only, multimodal-only, and contrastive multim
 """
 
 import os
+import sys
 import argparse
 import torch
 import torch.nn as nn
@@ -12,23 +13,29 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, List, Tuple, Any
 
-import src.training_utils as tu
-from src.util import (
+# Ensure src is in the python path
+script_dir = Path(__file__).resolve().parent
+src_dir = script_dir.parent
+if str(src_dir) not in sys.path:
+    sys.path.append(str(src_dir))
+
+import training_utils as tu
+from training_utils import set_seed, ExperimentConfig, load_config
+from util import (
     run_contrastive_training, 
     run_clip_training,
     default_device,
-    set_seed,
     prepare_run_directory
 )
-from src.models.mamba_encoder import MambaEncoder
-from src.models.mamba_visual_encoder import MambaVisualEncoder
-from src.models.dual_forecast import DualEncoderForecastRegressor, DualEncoderForecastMLP
-from src.supervised_training import ForecastModel
-from src.experiments.silhouette_scorer import compute_silhouette, get_periodic_labels
-from src.time_series_loader import TimeSeriesDataModule
+from models.mamba_encoder import MambaEncoder
+from models.mamba_visual_encoder import MambaVisualEncoder
+from models.dual_forecast import DualEncoderForecastRegressor, DualEncoderForecastMLP
+from supervised_training import ForecastModel
+from experiments.silhouette_scorer import compute_silhouette, get_periodic_labels
+from time_series_loader import TimeSeriesDataModule
 
 # Constants
-DATASETS = ["ETTh1", "Electricity", "Weather"]
+DATASETS = ["ETTh1.csv", "electricity.csv", "weather.csv"]
 HORIZONS = [96, 192, 336, 720]
 BASE_CONFIG_PATH = Path("src/configs/mamba_encoder.yaml")
 
@@ -155,7 +162,7 @@ def main(args):
         print(f"\n--- Processing Dataset: {ds_name} ---")
         # Update config for current dataset
         config.data['dataset_name'] = ds_name
-        config.data['data_dir'] = "data/forecasting/forecasting"
+        config.data['data_dir'] = "ICML_datasets"
         
         # tu.prepare_dataloaders expects (config, root)
         train_loader, val_loader = tu.prepare_dataloaders(config, Path.cwd())
@@ -192,9 +199,9 @@ def main(args):
 
         # 3. Multimodal, Contrastive Only (Linear Probing)
         print("\n[Variant 3] Multimodal, Contrastive Only (SSL)")
-        v3_model = build_multimodal_model(config, HORIZONS, device, freeze_encoders=True)
+        v3_model = build_multimodal_model(config, HORIZONS, device, freeze_encoders=False)
         # Pretrain encoders using CLIP objective
-        ssl_epochs = max(1, args.epochs // 2)
+        ssl_epochs = args.epochs if not args.dry_run else 1
         run_clip_training(
             encoder=v3_model.encoder,
             visual_encoder=v3_model.visual_encoder,
@@ -206,6 +213,12 @@ def main(args):
             checkpoint_dir=run_dir / ds_name / "ssl",
             epochs=ssl_epochs
         )
+        # Freeze encoders for linear probing
+        for p in v3_model.encoder.parameters():
+            p.requires_grad = False
+        for p in v3_model.visual_encoder.parameters():
+            p.requires_grad = False
+
         # Linear probe head
         train_supervised(v3_model, train_loader, val_loader, args.epochs, device)
         v3_metrics = evaluate_model(v3_model, val_loader, HORIZONS, device)
@@ -249,8 +262,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     if args.dry_run:
+        print("Running in DRY RUN mode")
         args.epochs = 1
-        DATASETS = ["ETTh1"]
+        DATASETS = ["ETTh1.csv"]
         HORIZONS = [96]
         
     main(args)

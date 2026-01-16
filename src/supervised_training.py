@@ -41,7 +41,11 @@ class ForecastModel(nn.Module):
         self.head = nn.Linear(encoder.embedding_dim, pred_len * target_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Swap axes for adapter if it expects [batch, seq, features]
+        # Most adapters (Linear) work on the last dimension.
         x = self.adapter(x)
+        # Transpose to [batch, features, seq] for the encoder
+        x = x.transpose(1, 2)
         embedding = self.encoder(x)
         out = self.head(embedding)
         return out.view(x.size(0), self.pred_len, self.target_dim)

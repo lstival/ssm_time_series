@@ -166,22 +166,23 @@ def prepare_dataloaders(config: ExperimentConfig, root: Path) -> Tuple[DataLoade
         data_dir = (root / data_dir).resolve()
 
     module = TimeSeriesDataModule(
-        # dataset_name=data_cfg.get("dataset_name", "ETTh1.csv"),
+        dataset_name=data_cfg.get("dataset_name", ""),
         data_dir=str(data_dir),
         batch_size=int(data_cfg.get("batch_size", 128)),
         val_batch_size=int(data_cfg.get("val_batch_size", 256)),
         num_workers=int(data_cfg.get("num_workers", 4)),
         pin_memory=bool(data_cfg.get("pin_memory", True)),
         normalize=bool(data_cfg.get("normalize", True)),
-        train_ratio=float(data_cfg.get("train_ratio", 0.8)),
-        val_ratio=float(data_cfg.get("val_ratio", 0.2)),
         train=True,
         val=True,
         test=False,
     )
     module.setup()
-    train_loader, val_loader = module.get_dataloaders()
-    return train_loader, val_loader
+    loaders = module.get_dataloaders()
+    if not loaders:
+        raise RuntimeError(f"No datasets found in {data_dir}")
+    # Return the first dataset's loaders
+    return loaders[0].train, loaders[0].val
 
 
 def infer_feature_dim(train_loader: DataLoader) -> int:

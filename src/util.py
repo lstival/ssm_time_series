@@ -651,7 +651,7 @@ def run_clip_training(
             for batch in pbar:
                 # Chronos loader may pad variable-length series; keep original size by trimming.
                 if isinstance(batch, dict) and "target" in batch and "lengths" in batch:
-                    padded = batch["target"].to(device)
+                    padded = batch["target"].to(device).float()
                     lengths = batch["lengths"].to(device)
 
                     q_proj_list = []
@@ -677,7 +677,7 @@ def run_clip_training(
                     k_proj = torch.cat(k_proj_list, dim=0)
                     loss = clip_contrastive_loss(q_proj, k_proj)
                 else:
-                    seq = prepare_sequence(extract_sequence(batch)).to(device)
+                    seq = prepare_sequence(extract_sequence(batch)).to(device).float()
                     x_q = reshape_multivariate_series(seq)
                     noise = noise_std * torch.randn_like(x_q)
                     x_k = make_positive_view(x_q + noise)
@@ -715,7 +715,7 @@ def run_clip_training(
             with torch.no_grad():
                 for val_batch in val_loader:
                     if isinstance(val_batch, dict) and "target" in val_batch and "lengths" in val_batch:
-                        padded = val_batch["target"].to(device)
+                        padded = val_batch["target"].to(device).float()
                         lengths = val_batch["lengths"].to(device)
                         q_proj_list = []
                         k_proj_list = []
@@ -739,7 +739,7 @@ def run_clip_training(
                         val_k_proj = torch.cat(k_proj_list, dim=0)
                         val_batch_loss = clip_contrastive_loss(val_q_proj, val_k_proj).item()
                     else:
-                        val_seq = prepare_sequence(extract_sequence(val_batch)).to(device)
+                        val_seq = prepare_sequence(extract_sequence(val_batch)).to(device).float()
                         val_x_q = reshape_multivariate_series(val_seq)
                         val_noise = noise_std * torch.randn_like(val_x_q)
                         val_x_k = make_positive_view(val_x_q + val_noise)
