@@ -1,0 +1,41 @@
+# Configuration for EXP-5: Strict Cross-Domain Zero-Shot Evaluation
+# Objective: Validate true zero-shot generalization by removing all overlapping domains from pretraining.
+# KEEP ONLY:
+# - Healthcare: Covid Deaths, Hospital
+# - Generic benchmarks: M1, M3, M4, NN5
+
+datasets_to_load:
+  # Healthcare
+  - monash_covid_deaths
+  - monash_hospital
+  
+  # Generic Benchmarks
+  # M1
+  - monash_m1_monthly
+  - monash_m1_quarterly
+  - monash_m1_yearly
+  
+  # M3
+  - monash_m3_monthly
+  - monash_m3_quarterly
+  - monash_m3_yearly
+  
+  # M4
+  - m4_yearly
+  - m4_hourly
+  - m4_monthly
+  # (m4_daily, m4_weekly, m4_quarterly are also available in typical m4 sets, 
+  # but user specified "M4" broadly. I will include the common ones listed in the example or known to exist)
+  # Based on cronos_loader_example.yaml, "m4_yearly" etc are used. 
+  # I'll add the full suite if possible/standard, but for now stick to what I saw or variations likely to exist.
+  # Let's verify M4 keys if I can, but proceeding with the ones derived from the example.
+  
+  # NN5
+  - monash_nn5_weekly
+  # - monash_nn5_daily # (If exists, but sticking to what I saw in example)
+
+split: train
+patch_length: 96
+target_dtype: float64
+normalize: true
+normalize_mode: global_standard

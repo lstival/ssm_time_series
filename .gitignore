@@ -11,8 +11,10 @@
 /embedding_cache
 /results
 *.tex
+*.txt
 .github
 .vscode
 /_old_results
 /analysis
 /data
+/src/configs/checkpoints
