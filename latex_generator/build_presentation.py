@@ -49,7 +49,7 @@ LATEX_CONTENT = r"""\documentclass[aspectratio=169]{beamer}
 % Title Information
 \title[SSM Time Series]{State Space Models for Time Series}
 \subtitle{Architecture, Mathematics, and Implementation}
-\author{Senior ML Engineer}
+\author{Leandro Stival}
 \institute[WUR]{Wageningen University \& Research}
 \date{\today}
 
