@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cm-mamba"
+version = "0.1.0"
+description = "Official implementation of CM-Mamba: Contrastive Mamba for Time Series"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+    "numpy",
+    "tqdm",
+    "pyyaml"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
