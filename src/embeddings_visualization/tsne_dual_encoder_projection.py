@@ -255,10 +255,10 @@ def main() -> None:
             color=color,
         )
 
-    ax.set_title("Chronos Dual Encoder Embeddings (t-SNE)")
+    # ax.set_title("Chronos Dual Encoder Embeddings (t-SNE)")
     ax.set_xlabel("Component 1")
     ax.set_ylabel("Component 2")
-    ax.legend(loc="best", fontsize="small", ncol=2)
+    ax.legend(loc="best", fontsize="large", ncol=2)
     ax.grid(True, alpha=0.2)
     fig.tight_layout()
     fig.savefig(plot_path, dpi=300)

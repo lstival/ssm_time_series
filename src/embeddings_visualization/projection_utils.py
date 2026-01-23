@@ -20,6 +20,13 @@ from dataloaders.cronos_dataset import load_chronos_datasets
 from dataloaders.utils import _ensure_hf_list_feature_registered
 from util import build_projection_head
 
+import sys
+SRC_DIR = Path(__file__).resolve().parent.parent
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from data_provider.data_loader import Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom, Dataset_Solar, Dataset_PEMS
+
 
 @dataclass
 class ProjectionConfig:
@@ -56,8 +63,21 @@ DEFAULT_CHRONOS_DATASETS: List[str] = [
     "taxi_30min",
     "monash_hospital",
 ]
-MAX_CHRONOS_DATASETS = 5
+MAX_CHRONOS_DATASETS = 10  # Increased to support ICML datasets
 CHRONOS_REPO_ID = "autogluon/chronos_datasets"
+
+# Mapping ICML dataset filenames to their dataset types
+ICML_DATASET_MAP = {
+    'ETTh1.csv': ('ETTh1', Dataset_ETT_hour, 'ETT-small', 'h'),
+    'ETTh2.csv': ('ETTh2', Dataset_ETT_hour, 'ETT-small', 'h'),
+    'ETTm1.csv': ('ETTm1', Dataset_ETT_minute, 'ETT-small', 't'),
+    'ETTm2.csv': ('ETTm2', Dataset_ETT_minute, 'ETT-small', 't'),
+    'PEMS04.npz': ('PEMS', Dataset_PEMS, 'PEMS', 'h'),
+    'weather.csv': ('custom', Dataset_Custom, 'weather', 'h'),
+    'exchange_rate.csv': ('custom', Dataset_Custom, 'exchange_rate', 'h'),
+    'electricity.csv': ('custom', Dataset_Custom, 'electricity', 'h'),
+    'solar_AL.txt': ('Solar', Dataset_Solar, 'Solar', 'h'),
+}
 
 
 @dataclass
@@ -119,8 +139,10 @@ def resolve_chronos_dataset_names(
         key = str(name).strip()
         if not key:
             continue
-        if "." in key:
-            key = Path(key).stem
+        # Keep file extensions for ICML datasets
+        if not any(key.endswith(ext) for ext in ['.csv', '.npz', '.txt']):
+            if "." in key:
+                key = Path(key).stem
         if key and key not in seen:
             seen[key] = None
             result.append(key)
@@ -161,7 +183,64 @@ def load_chronos_sequences(dataset_name: str, *, limit: int) -> List[np.ndarray]
     return sequences
 
 
+def load_icml_sequences(dataset_filename: str, data_dir: Path, *, limit: int, split: str = 'train') -> List[np.ndarray]:
+    """Load sequences from ICML datasets."""
+    if dataset_filename not in ICML_DATASET_MAP:
+        print(f"Unknown ICML dataset: {dataset_filename}")
+        return []
+    
+    data_type, dataset_class, subdirectory, freq = ICML_DATASET_MAP[dataset_filename]
+    root_path = data_dir / subdirectory
+    
+    if not root_path.exists():
+        print(f"ICML dataset directory not found: {root_path}")
+        return []
+    
+    # Create dataset instance with minimal configuration for embedding extraction
+    try:
+        dataset = dataset_class(
+            root_path=str(root_path),
+            data_path=dataset_filename,
+            flag=split,
+            size=[96, 0, 0],  # seq_len=96, label_len=0, pred_len=0
+            features='M',  # Use multivariate features
+            target='OT',
+            scale=True,
+            timeenc=0,
+            freq=freq,
+            scaler_type='minmax'
+        )
+    except Exception as exc:
+        print(f"Error loading ICML dataset {dataset_filename}: {exc}")
+        return []
+    
+    # Extract sequences from dataset
+    sequences: List[np.ndarray] = []
+    max_items = len(dataset) if limit <= 0 else min(len(dataset), limit)
+    
+    for idx in range(max_items):
+        try:
+            seq_x, _, _, _ = dataset[idx]
+            # seq_x shape: (seq_len, num_features)
+            # Convert to numpy if it's a tensor
+            if isinstance(seq_x, torch.Tensor):
+                seq_x = seq_x.numpy()
+            # Use only the first feature to avoid memory issues with visual encoder
+            # seq_x[:, 0] gives us shape (seq_len,) which is 1D as expected
+            if seq_x.ndim == 2:
+                seq_1d = seq_x[:, 0]
+            else:
+                seq_1d = seq_x.flatten()
+            sequences.append(seq_1d.astype(np.float32))
+        except Exception as exc:
+            print(f"Error extracting sample {idx} from {dataset_filename}: {exc}")
+            continue
+    
+    return sequences
+
+
 def build_chronos_dataset_groups(*, proj_cfg) -> List[ChronosDatasetGroup]:
+    """Build dataset groups from either Chronos HF datasets or ICML datasets."""
     dataset_names = resolve_chronos_dataset_names(
         dataset_names=proj_cfg.dataset_names,
         dataset_name=proj_cfg.dataset_name,
@@ -169,10 +248,25 @@ def build_chronos_dataset_groups(*, proj_cfg) -> List[ChronosDatasetGroup]:
 
     groups: List[ChronosDatasetGroup] = []
     for dataset_name in dataset_names:
-        sequences = load_chronos_sequences(dataset_name, limit=proj_cfg.samples_per_dataset)
-        if not sequences:
-            print(f"Skipping Chronos dataset '{dataset_name}' due to missing sequences.")
-            continue
+        # Check if this is an ICML dataset (has file extension)
+        if any(dataset_name.endswith(ext) for ext in ['.csv', '.npz', '.txt']):
+            # Load ICML dataset
+            sequences = load_icml_sequences(
+                dataset_name, 
+                proj_cfg.data_dir, 
+                limit=proj_cfg.samples_per_dataset,
+                split=proj_cfg.split
+            )
+            if not sequences:
+                print(f"Skipping ICML dataset '{dataset_name}' due to missing sequences.")
+                continue
+        else:
+            # Load Chronos HuggingFace dataset
+            sequences = load_chronos_sequences(dataset_name, limit=proj_cfg.samples_per_dataset)
+            if not sequences:
+                print(f"Skipping Chronos dataset '{dataset_name}' due to missing sequences.")
+                continue
+        
         dataset = ChronosEmbeddingDataset(sequences)
         loader = DataLoader(
             dataset,
@@ -181,7 +275,7 @@ def build_chronos_dataset_groups(*, proj_cfg) -> List[ChronosDatasetGroup]:
             num_workers=proj_cfg.num_workers,
             collate_fn=chronos_embedding_collate,
         )
-        groups.append(ChronosDatasetGroup(name=dataset_name, loader=loader, split="train"))
+        groups.append(ChronosDatasetGroup(name=dataset_name, loader=loader, split=proj_cfg.split))
     return groups
 
 

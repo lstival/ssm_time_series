@@ -16,17 +16,19 @@ tsne:
   show: false
 
 data:
-  # Root directory needed for path resolution; unused for Chronos datasets
-  data_dir: .
-  # Chronos dataset identifiers from autogluon/chronos_datasets
+  # Root directory for ICML datasets
+  data_dir: ../../ICML_datasets
+  # ICML dataset filenames (keeping file extensions)
   dataset_names:
-    - m4_yearly
-    - electricity_15min
-    - solar_1h
-    - taxi_30min
-    - monash_hospital
+    - ETTm2.csv
+    - PEMS04.npz
+    - weather.csv
+    - exchange_rate.csv
+    - electricity.csv
+    - solar_AL.txt
   dataset_name:
   filename:
   batch_size: 512
   val_batch_size: 512
   num_workers: 4
+  split: train

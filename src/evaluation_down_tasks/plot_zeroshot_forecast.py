@@ -110,6 +110,24 @@ def _plot_single(
     figsize: Sequence[float],
     context_denorm: Optional[torch.Tensor] = None,
 ) -> Path:
+    # ICML publication-style formatting
+    plt.rcParams["font.family"] = "serif"
+    plt.rcParams["font.serif"] = ["Times New Roman", "DejaVu Serif"]
+    plt.rcParams["font.size"] = 16
+    plt.rcParams["axes.titlesize"] = 18
+    plt.rcParams["axes.labelsize"] = 16
+    plt.rcParams["xtick.labelsize"] = 14
+    plt.rcParams["ytick.labelsize"] = 14
+    plt.rcParams["legend.fontsize"] = 14
+    plt.rcParams["legend.title_fontsize"] = 14
+    plt.rcParams["axes.linewidth"] = 1.2
+    plt.rcParams["grid.linewidth"] = 0.6
+    plt.rcParams["lines.linewidth"] = 2.0
+    plt.rcParams["pdf.fonttype"] = 42
+    plt.rcParams["ps.fonttype"] = 42
+    plt.rcParams["figure.facecolor"] = "white"
+    plt.rcParams["axes.facecolor"] = "white"
+    
     context_np = context.detach().cpu().numpy()
     targets_np = targets.detach().cpu().numpy()
     predictions_np = predictions.detach().cpu().numpy()
@@ -130,11 +148,14 @@ def _plot_single(
     x_history = range(history_len)
     x_future = range(history_len, history_len + horizon)
 
-    fig, ax = plt.subplots(figsize=figsize)
-    ax.plot(x_history, history, label="Context (input)", color="#1f77b4")
-    ax.plot(x_future, gt, label="Ground Truth", color="#2ca02c")
-    ax.plot(x_future, pred, label="Prediction", color="#d62728", linestyle="--")
-    ax.axvline(history_len - 0.5, color="gray", linestyle=":", alpha=0.6)
+    fig, ax = plt.subplots(figsize=figsize, facecolor="white")
+    ax.set_facecolor("white")
+    
+    # Professional color scheme with thicker lines for publication
+    ax.plot(x_history, history, label="Context (input)", color="#1f77b4", linewidth=2.2)
+    ax.plot(x_future, gt, label="Ground Truth", color="#2ca02c", linewidth=2.2)
+    ax.plot(x_future, pred, label="Prediction", color="#d62728", linewidth=2.2, linestyle="--")
+    ax.axvline(history_len - 0.5, color="#666666", linestyle="--", linewidth=1.5)
 
     # If denormalized context is available, adjust Y-axis labels to show original values
     if context_denorm is not None:
@@ -154,16 +175,34 @@ def _plot_single(
             level = c_denorm[0]
             ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{level:.2f}"))
 
-    ax.set_title(f"{dataset} | H{horizon} | Feature {feature_idx}")
-    ax.set_xlabel("Time step")
-    ax.set_ylabel("Value")
-    ax.grid(alpha=0.3)
-    ax.legend()
+    ax.set_xlabel("Time step", fontweight="normal")
+    ax.set_ylabel("Value", fontweight="normal")
+    
+    # Professional grid and frame
+    ax.grid(True, alpha=0.25, linestyle="-", linewidth=0.6, color="#cccccc", zorder=0)
+    ax.set_axisbelow(True)
+    
+    # Border styling
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#2d2d2d")
+        spine.set_linewidth(1.2)
+    
+    # Legend removed for cleaner publication figure
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{dataset_slug(dataset)}_sample{sample_idx}_H{horizon}_feat{feature_idx}.png"
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=dpi)
+    base_name = f"{dataset_slug(dataset)}_sample{sample_idx}_H{horizon}_feat{feature_idx}"
+    output_path = output_dir / f"{base_name}.png"
+    
+    fig.tight_layout(pad=0.3)
+    
+    # Save in multiple formats for publication
+    fig.savefig(output_path, dpi=dpi, bbox_inches="tight", facecolor="white", format="png")
+    
+    pdf_path = output_dir / f"{base_name}.pdf"
+    fig.savefig(pdf_path, format="pdf", bbox_inches="tight", facecolor="white")
+    
+    eps_path = output_dir / f"{base_name}.eps"
+    fig.savefig(eps_path, format="eps", bbox_inches="tight", facecolor="white")
 
     if show:
         plt.show()
@@ -190,6 +229,13 @@ if __name__ == "__main__":
         plots_output_dir = base_output_dir / "plots"
         best_metrics_root = base_output_dir / "best_metrics"
         dataset_best_dir = best_metrics_root / dataset_slug(str(dataset_label))
+        
+        # Special folder for specific samples
+        featured_samples_dir = base_output_dir / "featured_samples"
+        featured_samples = {
+            "ETTm2": [1447],
+            "electricity": [3963]
+        }
 
         targets_tensor = payload.get("targets")
         predictions_tensor = payload.get("predictions")
@@ -284,5 +330,26 @@ if __name__ == "__main__":
                     generated_paths.append(output_path)
                     print(f"Saved plot: {output_path}")
                     print(f"Saved best plot copy: {best_output_path}")
+                    
+                    # Save featured samples to special folder
+                    dataset_str = str(dataset_label).lower()
+                    is_ettm2 = "ettm2" in dataset_str
+                    is_electricity = "electricity" in dataset_str
+                    
+                    should_save_featured = False
+                    if is_ettm2 and sample_idx == 1447 and feature_idx == 0:
+                        should_save_featured = True
+                    elif is_electricity and sample_idx == 3963 and feature_idx == 0:
+                        should_save_featured = True
+                    
+                    if should_save_featured:
+                        featured_samples_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        # Copy only PDF
+                        pdf_source = output_path.with_suffix('.pdf')
+                        if pdf_source.exists():
+                            pdf_dest = featured_samples_dir / pdf_source.name
+                            shutil.copy2(pdf_source, pdf_dest)
+                            print(f"Saved featured sample PDF: {pdf_dest}")
 
     print(f"\nGenerated {len(generated_paths)} plot(s).")
