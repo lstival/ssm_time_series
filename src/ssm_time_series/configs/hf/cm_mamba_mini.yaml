@@ -1,0 +1,26 @@
+model:
+  input_dim: 32
+  token_size: 32
+  model_dim: 128
+  embedding_dim: 128
+  depth: 16
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: mean
+  encoder_type: temporal
+  use_dual_encoder: true
+
+forecast:
+  horizons: [96, 192, 336, 720]
+  target_features: 1
+  mlp_hidden_dim: 512
+  head_dropout: 0.1
+  freeze_encoder: true
+
+paths:
+  checkpoint: null
+  output_dir: null
+  model_card_template: scripts/hf_assets/model_card_template.md
+  model_id: your-namespace/cm-mamba-mini

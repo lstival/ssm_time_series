@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import argparse
 import math
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+
+import torch
 # Removed legacy sys.path hack
 
 from ssm_time_series import training as tu
@@ -37,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--encoder-checkpoint",
         type=str,
-        default=r"C:\\WUR\\ssm_time_series\\checkpoints\\ts_encoder_20251101_1100\\time_series_best.pt",
+        default=None,
         help="Path to the pretrained encoder weights used during training",
     )
     parser.add_argument(
@@ -306,6 +310,9 @@ def main() -> None:
         embedding_dim=args.embedding_dim,
         depth=args.depth,
     )
+
+    if args.encoder_checkpoint is None:
+        raise ValueError("--encoder-checkpoint is required to evaluate forecasting heads")
 
     print("Loading base encoder weights...")
     encoder = tu.build_encoder_from_config(config_model_overrides).to(device)

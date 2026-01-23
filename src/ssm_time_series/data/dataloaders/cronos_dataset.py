@@ -1,7 +1,8 @@
 import os
-os.environ['HF_DATASETS_OFFLINE ']= '1'
 
 import datasets
+
+os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 datasets.config.HF_DATASETS_OFFLINE = True
 
 import numpy as np

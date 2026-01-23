@@ -1,8 +1,9 @@
 import os
 import re
+from pathlib import Path
 
 package_name = "ssm_time_series"
-root_dir = r"c:\WUR\ssm_time_series"
+root_dir = Path(__file__).resolve().parent
 
 def fix_file(file_path):
     if file_path == __file__:

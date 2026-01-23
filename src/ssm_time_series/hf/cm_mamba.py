@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Optional, Union
+
 import torch
 import torch.nn as nn
 from transformers import PretrainedConfig, PreTrainedModel
@@ -74,10 +76,27 @@ class CM_MambaTemporal(CM_MambaPreTrainedModel):
             dropout=config.dropout,
         )
 
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: str,
+        *model_args,
+        device: Optional[Union[str, torch.device]] = None,
+        **kwargs,
+    ) -> "CM_MambaTemporal":
+        model = super().from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
+        if device is not None:
+            model.to(device)
+        return model
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Input: (batch, sequence, features)
-        Output: (batch, embedding_dim)
+        """Encode a time series tensor.
+
+        Args:
+            x: Input tensor with shape [B, T, F].
+
+        Returns:
+            Encoded embeddings with shape [B, D].
         """
         return self.encoder(x)
 
@@ -99,10 +118,27 @@ class CM_MambaVisual(CM_MambaPreTrainedModel):
             dropout=config.dropout,
         )
 
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: str,
+        *model_args,
+        device: Optional[Union[str, torch.device]] = None,
+        **kwargs,
+    ) -> "CM_MambaVisual":
+        model = super().from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
+        if device is not None:
+            model.to(device)
+        return model
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Input: (batch, sequence, features)
-        Output: (batch, embedding_dim)
+        """Encode a time series tensor.
+
+        Args:
+            x: Input tensor with shape [B, T, F].
+
+        Returns:
+            Encoded embeddings with shape [B, D].
         """
         return self.encoder(x)
 
@@ -113,7 +149,7 @@ class CM_MambaCombined(nn.Module):
     def __init__(
         self,
         temporal_encoder: CM_MambaTemporal,
-        visual_encoder: CM_MambaVisual
+        visual_encoder: CM_MambaVisual,
     ) -> None:
         super().__init__()
         self.temporal = temporal_encoder
@@ -137,7 +173,14 @@ class CM_MambaCombined(nn.Module):
         return cls(temporal, visual)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Concatenate embeddings from both encoders."""
+        """Concatenate embeddings from both encoders.
+
+        Args:
+            x: Input tensor with shape [B, T, F].
+
+        Returns:
+            Concatenated embeddings with shape [B, D_t + D_v].
+        """
         t_feat = self.temporal(x)
         v_feat = self.visual(x)
         return torch.cat([t_feat, v_feat], dim=-1)

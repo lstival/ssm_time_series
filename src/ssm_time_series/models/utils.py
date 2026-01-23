@@ -8,6 +8,8 @@ from typing import Dict, List, Optional, Iterable
 from dataclasses import dataclass
 import datasets
 
+ROOT_DIR = Path(__file__).resolve().parents[3]
+
 def time_series_2_recurrence_plot(x):
     # normalize input to numpy array (handle torch tensors if provided)
     try:
@@ -302,32 +304,23 @@ def load_chronos_forecast_config(
             _resolve_optional_path(config_dir, offline_cache_dir)
         )
     if "offline_cache_dir" not in load_kwargs:
-        load_kwargs["offline_cache_dir"] = str((root_dir / "data").resolve())
+        load_kwargs["offline_cache_dir"] = str((ROOT_DIR / "data").resolve())
     
     # Parse paths configuration
     paths_section = dict(forecast_cfg.get("paths") or {})
-    visual_candidate = paths_section.get(
-        "visual_encoder_checkpoint",
-        Path("../../checkpoints/ts_encoder_20251101_1100/visual_encoder_best.pt"),
-    )
+    visual_candidate = paths_section.get("visual_encoder_checkpoint")
+    if visual_candidate is None:
+        raise ValueError("paths.visual_encoder_checkpoint is required in the forecast config")
     visual_mamba_checkpoint_path = _coerce_path(
         config_dir,
         visual_candidate,
         must_exist=True,
         description="Visual Mamba encoder checkpoint",
     )
-    
-    temporal_encoder_checkpoint = _coerce_path(
-        config_dir,
-        visual_candidate,
-        must_exist=True,
-        description="Temporal encoder checkpoint",
-    )
 
-    encoder_candidate = paths_section.get(
-        "encoder_checkpoint",
-        Path("../../checkpoints/ts_encoder_20251101_1100/time_series_best.pt"),
-    )
+    encoder_candidate = paths_section.get("encoder_checkpoint")
+    if encoder_candidate is None:
+        raise ValueError("paths.encoder_checkpoint is required in the forecast config")
     encoder_checkpoint_path = _coerce_path(
         config_dir,
         encoder_candidate,
@@ -339,8 +332,8 @@ def load_chronos_forecast_config(
     if checkpoint_candidate is not None:
         checkpoint_base = config_dir
     else:
-        checkpoint_candidate = logging_cfg.get("checkpoint_dir", root_dir / "checkpoints")
-        checkpoint_base = root_dir
+        checkpoint_candidate = logging_cfg.get("checkpoint_dir", ROOT_DIR / "checkpoints")
+        checkpoint_base = ROOT_DIR
     checkpoint_dir = _coerce_path(
         checkpoint_base,
         checkpoint_candidate,
@@ -352,8 +345,8 @@ def load_chronos_forecast_config(
     if results_candidate is not None:
         results_base = config_dir
     else:
-        results_candidate = root_dir / "results"
-        results_base = root_dir
+        results_candidate = ROOT_DIR / "results"
+        results_base = ROOT_DIR
     results_dir = _coerce_path(
         results_base,
         results_candidate,

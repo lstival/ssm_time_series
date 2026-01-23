@@ -33,6 +33,58 @@ print(embeddings.shape)  # torch.Size([8, 128])
 
 ---
 
+## 🤗 Hugging Face Hub
+
+This project includes a full Hugging Face-compatible forecasting interface.
+
+### Forecasting Model (Dual Encoder + Head)
+
+```python
+import torch
+from ssm_time_series.hf.forecasting import CM_MambaForecastModel
+
+model = CM_MambaForecastModel.from_pretrained("your-namespace/cm-mamba-tiny", trust_remote_code=True)
+model.eval()
+
+x = torch.randn(2, 256, 32)  # [B, T, F]
+with torch.no_grad():
+        preds = model(x)
+print(preds.shape)  # [B, H, C]
+```
+
+### Encoder-Only Loading
+
+```python
+from pathlib import Path
+from ssm_time_series.hf.forecasting import CM_MambaForecastConfig, CM_MambaForecastModel
+
+config = CM_MambaForecastConfig.from_pretrained("your-namespace/cm-mamba-tiny", trust_remote_code=True)
+encoders = CM_MambaForecastModel.from_checkpoint_encoder_only(
+        config=config,
+        checkpoint_path=Path("/path/to/best_model.pt"),
+)
+```
+
+### Export to HF Format
+
+```bash
+python scripts/hf_export_cm_mamba.py \
+    --config src/ssm_time_series/configs/hf/cm_mamba_tiny.yaml \
+    --checkpoint /path/to/checkpoints/multi_horizon_forecast_dual_frozen_20251209_1049/all_datasets/best_model.pt \
+    --output-dir /path/to/hf_export/cm-mamba-tiny
+```
+
+### Publish Step-by-Step
+
+```bash
+python scripts/hf_publish_step_by_step.py \
+    --model-dir /path/to/hf_export/cm-mamba-tiny \
+    --repo-id your-namespace/cm-mamba-tiny \
+    --run-tests
+```
+
+---
+
 ## 📈 Evaluation & Visualization
 
 The repository includes professional plotting tools for zero-shot forecasting results.
@@ -58,6 +110,39 @@ The project features three main encoder types located in `ssm_time_series.models
 1.  **Temporal Encoder (`MambaEncoder`)**: Processes multi-variate time series using a selective scan mechanism. It includes a built-in tokenizer for window-based aggregation.
 2.  **Visual Encoder (`MambaVisualEncoder`)**: Interprets time series data through a visual lens (e.g., patched representations), utilizing a CLS-token approach for sequence-level embeddings.
 3.  **Combined Encoder (`CM_MambaCombined`)**: A multi-modal wrapper that concatenates temporal and visual embeddings for a richer representation of the underlying dynamics.
+
+---
+
+## 🧠 How the Model Works
+
+CM-Mamba is a compact state-space model (SSM) encoder designed for time-series data. It operates in three stages:
+
+1. **Tokenization**: The input sequence $x \in \mathbb{R}^{B \times T \times F}$ is split into fixed-length windows (tokens) of size `token_size`. This yields $N$ tokens per series.
+2. **SSM Encoding**: Each token is projected into a latent space and processed by stacked Mamba-style blocks that implement a selective scan, capturing long-range temporal dependencies efficiently.
+3. **Pooling and Projection**: The sequence of hidden states is pooled (mean/last/cls) and projected to an embedding vector $z \in \mathbb{R}^{B \times D}$.
+
+### Dual Encoder Variant
+
+For CM-Mamba Tiny/Mini, the model uses **two encoders**:
+
+- **Temporal Encoder**: Processes raw time-series tokens.
+- **Visual Encoder**: Converts token windows into recurrence plots, then applies the same Mamba-style blocks.
+
+The final embedding is the concatenation of both encoder outputs:
+
+$$
+z = [z_{\text{temporal}}; z_{\text{visual}}]
+$$
+
+### Forecasting Head
+
+The forecasting model adds a lightweight MLP head that predicts a full horizon in one pass. Given embedding $z$, the head outputs:
+
+$$
+\hat{y} \in \mathbb{R}^{B \times H \times C}
+$$
+
+where $H$ is the maximum horizon and $C$ is the number of target features. A specific horizon can be selected by slicing the output.
 
 ---
 

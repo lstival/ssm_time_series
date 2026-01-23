@@ -208,7 +208,8 @@ class MambaEncoder(nn.Module):
         return self.final_norm(x)
     
     def tokenizer(self, x):
-        tokens = tokenize_sequence(x, token_size=self.token_size)
+        # We switch to 'mean' aggregation to match the trained weights which expect input_dim features per token
+        tokens = tokenize_sequence(x, token_size=self.token_size, method="mean")
         return tokens
 
     def _pool_sequence(self, hidden: torch.Tensor, original: torch.Tensor) -> torch.Tensor:
