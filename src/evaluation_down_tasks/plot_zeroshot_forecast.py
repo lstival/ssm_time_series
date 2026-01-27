@@ -12,7 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from matplotlib.ticker import FuncFormatter
+from matplotlib.ticker import FuncFormatter, MaxNLocator
 from evaluation_down_tasks.zeroshot_utils import (
     PlotConfig,
     dataset_slug,
@@ -113,13 +113,13 @@ def _plot_single(
     # ICML publication-style formatting
     plt.rcParams["font.family"] = "serif"
     plt.rcParams["font.serif"] = ["Times New Roman", "DejaVu Serif"]
-    plt.rcParams["font.size"] = 16
-    plt.rcParams["axes.titlesize"] = 18
-    plt.rcParams["axes.labelsize"] = 16
-    plt.rcParams["xtick.labelsize"] = 14
-    plt.rcParams["ytick.labelsize"] = 14
-    plt.rcParams["legend.fontsize"] = 14
-    plt.rcParams["legend.title_fontsize"] = 14
+    plt.rcParams["font.size"] = 32
+    plt.rcParams["axes.titlesize"] = 32
+    plt.rcParams["axes.labelsize"] = 32
+    plt.rcParams["xtick.labelsize"] = 32
+    plt.rcParams["ytick.labelsize"] = 32
+    plt.rcParams["legend.fontsize"] = 28
+    plt.rcParams["legend.title_fontsize"] = 28
     plt.rcParams["axes.linewidth"] = 1.2
     plt.rcParams["grid.linewidth"] = 0.6
     plt.rcParams["lines.linewidth"] = 2.0
@@ -175,8 +175,12 @@ def _plot_single(
             level = c_denorm[0]
             ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{level:.2f}"))
 
-    ax.set_xlabel("Time step", fontweight="normal")
-    ax.set_ylabel("Value", fontweight="normal")
+    # Fewer but bigger ticks
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
+
+    ax.set_xlabel("")
+    ax.set_ylabel("")
     
     # Professional grid and frame
     ax.grid(True, alpha=0.25, linestyle="-", linewidth=0.6, color="#cccccc", zorder=0)

@@ -41,7 +41,7 @@ def _default_points() -> List[ModelPoint]:
     # Values provided by the user.
     return [
         ModelPoint("CM-Mamba", "CM-Mamba-Tiny", 1.2, 0.192, 0.199),
-        ModelPoint("Simple-Mamba", "S-Mamba", 0.5, 0.375, 0.276),
+        ModelPoint("S-Mamba", "S-Mamba", 0.5, 0.375, 0.276),
         ModelPoint("LightGTS", "LightGTS-Tiny", 1.3, 0.345, 0.249),
         ModelPoint("Chronos", "Chronos-Tiny", 9.0, 0.551, 0.293),
         # Moirai values are marked with * in the table; we keep the numeric values for plotting.
@@ -203,7 +203,7 @@ def plot(
                 xytext=(dx, dy),
                 ha=ha,
                 va=va,
-                fontsize=9,
+                fontsize=24,
                 fontweight="normal",
                 color="#1a1a1a",
                 zorder=4,
