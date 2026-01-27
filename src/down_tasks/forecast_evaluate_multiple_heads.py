@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--encoder-checkpoint",
         type=str,
-        default=r"C:\\WUR\\ssm_time_series\\checkpoints\\ts_encoder_20251101_1100\\time_series_best.pt",
+        default=r"c:/WUR/CM-Mamba\\checkpoints\\ts_encoder_20251101_1100\\time_series_best.pt",
         help="Path to the pretrained encoder weights used during training",
     )
     parser.add_argument(

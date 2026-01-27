@@ -20,7 +20,7 @@ def test_model_loading():
     """Test loading the trained model."""
     print("Testing model loading...")
     
-    checkpoint_path = Path(r"C:\WUR\ssm_time_series\checkpoints\multi_horizon_forecast_emb_128_tgt_1_20251108_1124\best_model.pt")
+    checkpoint_path = Path(r"c:/WUR/CM-Mamba\checkpoints\multi_horizon_forecast_emb_128_tgt_1_20251108_1124\best_model.pt")
     device = default_device()
     
     try:
@@ -40,7 +40,7 @@ def test_dataset_discovery():
     """Test discovering ICML datasets."""
     print("\nTesting dataset discovery...")
     
-    icml_dir = Path(r"C:\WUR\ssm_time_series\ICML_datasets")
+    icml_dir = Path(r"c:/WUR/CM-Mamba\ICML_datasets")
     
     try:
         datasets = discover_icml_datasets(icml_dir)

@@ -75,8 +75,8 @@ def data_provider(args, flag):
 
 if __name__ == "__main__":
     # data_root = "../ICML_datasets/ETT-small"
-    data_root = r"C:\WUR\ssm_time_series\ICML_datasets\ETT-small"
-    # data_root = r"C:\WUR\ssm_time_series\ICML_datasets\PEMS"
+    data_root = r"c:/WUR/CM-Mamba\ICML_datasets\ETT-small"
+    # data_root = r"c:/WUR/CM-Mamba\ICML_datasets\PEMS"
     # dataset_name = "PEMS07.npz"
     # dataset_name = "solar_AL.txt"
     dataset_name = "ETTh1.csv"

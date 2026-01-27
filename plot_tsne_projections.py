@@ -4,12 +4,12 @@ import numpy as np
 import os
 
 # Load the t-SNE coordinates
-tsne_encoder_path = r"c:\WUR\ssm_time_series\results\tsne_encoder\tsne_encoder_projection_icml_temporal_20251126_1750_tsne\tsne_coordinates.csv"
-tsne_dual_encoder_path = r"c:\WUR\ssm_time_series\results\tsne_dual_encoder\tsne_dual_encoder_projection_icml_dual_20251126_1750_tsne\tsne_coordinates.csv"
-tsne_visual_encoder_path = r"c:\WUR\ssm_time_series\results\tsne_visual_encoder\tsne_visual_encoder_projection_icml_visual_20251126_1750_tsne\tsne_coordinates.csv"
+tsne_encoder_path = r"c:\WUR\CM-Mamba\results\tsne_encoder\tsne_encoder_projection_icml_temporal_20251126_1750_tsne\tsne_coordinates.csv"
+tsne_dual_encoder_path = r"c:\WUR\CM-Mamba\results\tsne_dual_encoder\tsne_dual_encoder_projection_icml_dual_20251126_1750_tsne\tsne_coordinates.csv"
+tsne_visual_encoder_path = r"c:\WUR\CM-Mamba\results\tsne_visual_encoder\tsne_visual_encoder_projection_icml_visual_20251126_1750_tsne\tsne_coordinates.csv"
 
 # Create output directory
-output_dir = r"c:\WUR\ssm_time_series\results\tsne_plots"
+output_dir = r"c:\WUR\CM-Mamba\results\tsne_plots"
 os.makedirs(output_dir, exist_ok=True)
 
 # Load data

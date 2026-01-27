@@ -1,0 +1,21 @@
+[project]
+name = "cm-mamba"
+version = "0.1.0"
+description = "CM-Mamba: Specialized State Space Models for Time Series"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0.0",
+    "transformers",
+    "pyts",
+    "safetensors",
+    "accelerate",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["cm_mamba*"]

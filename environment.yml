@@ -1,4 +1,4 @@
-name: ssm_time_series
+name: cm_mamba
 channels:
   - defaults
   - conda-forge

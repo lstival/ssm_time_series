@@ -990,7 +990,7 @@ if __name__ == "__main__":
 
     def example_icml():
         # Adjust these to point at your ICML-style dataset
-        data_dir = "C:\WUR\ssm_time_series\ICML_datasets"
+        data_dir = "c:/WUR/CM-Mamba\ICML_datasets"
         train_loader, val_loader = build_time_series_dataloaders(
             data_dir=data_dir,
             # dataset_name="your_icml_dataset",  # replace with real name
