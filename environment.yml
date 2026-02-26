@@ -20,3 +20,7 @@ dependencies:
     - pyts==0.13.0
     - matplotlib==3.10.6
     - pytest==8.4.2
+    # mamba-ssm is NOT included here because it requires Linux + CUDA.
+    # On Linux, install it separately:
+    #   pip install causal-conv1d>=1.2.0 mamba-ssm
+    # See _enviroment/linux_environment.yml for a ready-made Linux env.

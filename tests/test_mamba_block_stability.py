@@ -16,7 +16,7 @@ from models.mamba_block import MambaBlock  # noqa: E402
 class TestMambaBlockStability(unittest.TestCase):
     def test_forward_backward_finite(self) -> None:
         torch.manual_seed(0)
-        block = MambaBlock(d_model=64, state_dim=16, conv_kernel=3, expand_factor=1.5, dropout=0.0, checkpoint_scan=False)
+        block = MambaBlock(d_model=64, state_dim=16, conv_kernel=3, expand_factor=1.5, dropout=0.0)
         block.train()
 
         x = torch.randn(2, 128, 64, requires_grad=True)

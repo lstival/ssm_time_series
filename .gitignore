@@ -18,3 +18,14 @@
 /analysis
 /data
 /src/configs/checkpoints
+
+# Datasets and model artefacts (not committed)
+/FM_dataset
+
+# Generated or compiled output
+/latex_generator/presentation_output
+/official_release
+
+# Installed/vendored package copies under src/
+/src/cm_mamba
+/src/ssm_time_series

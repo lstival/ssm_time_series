@@ -18,7 +18,7 @@ import numpy as np
 try:
     from utils import time_series_2_recurrence_plot
     from mamba_block import MambaBlock
-except:
+except ImportError:
     from .utils import time_series_2_recurrence_plot
     from .mamba_block import MambaBlock
 

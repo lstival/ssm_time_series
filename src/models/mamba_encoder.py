@@ -26,7 +26,7 @@ import torch
 from torch import nn
 try:
     from mamba_block import MambaBlock
-except:
+except ImportError:
     from .mamba_block import MambaBlock
 
 Pooling = Literal["mean", "last", "cls"]

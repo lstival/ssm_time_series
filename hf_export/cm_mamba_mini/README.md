@@ -1,0 +1,52 @@
+---
+license: apache-2.0
+language:
+- en
+library_name: transformers
+pipeline_tag: time-series-forecasting
+---
+
+# lstival/cm-mamba-mini
+
+CM-Mamba is a compact Mamba-style state-space model for time series forecasting. This release provides a dual-encoder setup (temporal + visual) with a multi-horizon forecasting head.
+
+## Model Details
+- **Model Type**: Dual-encoder (temporal + visual) + multi-horizon forecasting head
+- **Architecture**: Mamba-style SSM encoder with lightweight forecasting MLP
+- **Intended Use**: Short to medium horizon forecasting for multivariate time series
+
+## Usage
+
+### Load the forecasting model
+
+```python
+import torch
+from transformers import AutoModel
+
+model = AutoModel.from_pretrained("lstival/cm-mamba-mini", trust_remote_code=True)
+model.eval()
+
+x = torch.randn(2, 256, 32)  # [B, T, F]
+with torch.no_grad():
+    y = model(x)
+print(y.shape)  # [B, H, C]
+```
+
+### Load encoders only
+
+```python
+model = AutoModel.from_pretrained("lstival/cm-mamba-mini", trust_remote_code=True)
+encoders = model.get_encoder_only()
+```
+
+## Training Details
+- **Checkpoint source**: all_datasets
+- **Horizons**: 96, 192, 336, 720
+- **Target features**: 1
+
+## Limitations
+- Forecasting accuracy depends on domain similarity and data preprocessing.
+- The visual encoder uses recurrence plots, which can be sensitive to scaling.
+
+## Citation
+If you use this model, please cite the CM-Mamba paper or repository.
