@@ -6,6 +6,17 @@ parameter count low while still capturing temporal structure in fixed-length
 (time-major) sequences. The core building block is a simplified selective scan
 that mixes information along the sequence using inexpensive operations.
 
+Example
+-------
+>>> import torch
+>>> from cm_mamba.models.mamba_encoder import MambaEncoder, tokenize_sequence
+>>> encoder = MambaEncoder()
+>>> x = torch.randn(8, 128, 384)  # (batch, time, features)
+>>> # create non-overlapping tokens of length 16 (result: 8 tokens)
+>>> xt = tokenize_sequence(x, token_size=16, stride=None, method="mean")
+>>> embedding = encoder(xt)        # encoder expects (B, seq, features)
+>>> embedding.shape
+torch.Size([8, 8, 128])  # if pooling='mean' / projection dims, etc.
 """
 
 from __future__ import annotations
@@ -13,13 +24,10 @@ from typing import Literal, Optional
 import math
 import torch
 from torch import nn
-
 try:
-    from ssm_time_series.utils.generals import time_series_2_recurrence_plot
-    from mamba_block import MambaBlock
-except:
-    from .utils import time_series_2_recurrence_plot
     from .mamba_block import MambaBlock
+except:
+    from cm_mamba.models.mamba_block import MambaBlock
 
 Pooling = Literal["mean", "last", "cls"]
 
@@ -64,10 +72,9 @@ class Tokenizer:
         self.pad = pad
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        # Swap axes from (B, F, T) to (B, T, F) as default of tokenizes (preserve original behavior)
-        # x = x.swapaxes(1, 2)
+        # Standard input: (batch, time, features)
         if x.ndim != 3:
-            raise ValueError("tokenize_sequence expects input of shape (batch, time, features)")
+            raise ValueError("Tokenizer expects input of shape (batch, time, features)")
 
         B, T, F = x.shape
         token_size = self.token_size
@@ -99,19 +106,20 @@ class Tokenizer:
         patches = patches.permute(0, 1, 3, 2)
         # patches is (B, n_tokens, token_size, F)
 
-        if self.method == "values":
-            tokens = patches
-        elif self.method == "mean":
+        if self.method == "mean":
             tokens = patches.mean(dim=2)
         elif self.method == "max":
             tokens, _ = patches.max(dim=2)
         elif self.method == "first":
             tokens = patches[:, :, 0, :]
+        elif self.method == "values":
+            tokens = patches
         else:
             # should be unreachable due to check in __init__
             raise ValueError(f"Unknown tokenization method: {self.method}")
 
         return tokens
+
 
 def tokenize_sequence(
     x: torch.Tensor,
@@ -123,49 +131,15 @@ def tokenize_sequence(
 ) -> torch.Tensor:
     return Tokenizer(token_size=token_size, stride=stride, method=method, pad=pad)(x)
 
-class _InputConv(nn.Module):
-    """
-    Accept input of shape (B, windows, window_size, window_size) and produce
-    (B, windows, out_dim) by applying a Conv2d over each window and collapsing
-    the spatial dimensions to a single vector per window.
 
-    token_len here is the spatial window_size (H = W = token_len).
-    """
-    def __init__(self, token_len: int, out_dim: int):
-        super().__init__()
-        if token_len <= 0:
-            raise ValueError("token_len must be positive")
-        self.token_len = token_len
-        self.out_dim = out_dim
-        # single-channel input windows -> produce out_dim channels, kernel covers whole window
-        self.conv = nn.Conv2d(in_channels=1, out_channels=out_dim, kernel_size=(token_len, token_len), bias=False)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # allow array-like inputs
-        if not isinstance(x, torch.Tensor):
-            x = torch.as_tensor(x)
-
-        # expect (B, windows, H, W)
-        if x.ndim != 4:
-            raise ValueError(f"Expected input of shape (B, windows, H, W), got {x.shape}")
-
-        b, windows, h, w = x.shape
-        if h != self.token_len or w != self.token_len:
-            raise ValueError(f"Window size mismatch: got {h}x{w}, expected {self.token_len}x{self.token_len}")
-
-        # treat each window as a single-channel image: (B*windows, 1, H, W)
-        x = x.view(b * windows, 1, h, w)
-        x = self.conv(x)  # -> (B*windows, out_dim, 1, 1)
-        x = x.view(b, windows, -1)  # -> (B, windows, out_dim)
-        return x
-
-class MambaVisualEncoder(nn.Module):
+class MambaEncoder(nn.Module):
     """Compact Mamba-style encoder for 384-dim time series inputs."""
 
     def __init__(
         self,
         *,
-        input_dim: int = 32, #Token size default as 16
+        input_dim: int = 128,  # Feature dimension (F)
+        token_size: int = 32,  # Window size (T_token)
         model_dim: int = 768,
         depth: int = 6,
         state_dim: int = 16,
@@ -180,13 +154,16 @@ class MambaVisualEncoder(nn.Module):
             raise ValueError("depth must be positive")
         if input_dim <= 0:
             raise ValueError("input_dim must be positive")
+        if token_size <= 0:
+            raise ValueError("token_size must be positive")
 
         self.input_dim = input_dim
+        self.token_size = token_size
         self.model_dim = model_dim
         self.embedding_dim = embedding_dim
         self.pooling: Pooling = pooling
 
-        self.input_proj = _InputConv(token_len=self.input_dim, out_dim=model_dim)
+        self.input_proj = nn.Linear(input_dim, model_dim, bias=False)
         self.blocks = nn.ModuleList(
             [
                 MambaBlock(
@@ -202,17 +179,18 @@ class MambaVisualEncoder(nn.Module):
         self.final_norm = nn.LayerNorm(model_dim)
         self.output_proj = nn.Linear(model_dim, embedding_dim, bias=False)
 
-    def _time_series_2_image(self, ts):
-        # Tokens are (B, W, L_token, F)
-        # We want (B, W, L_token, L_token)
-        # Combine B and W to call the RP utility
-        B, W, L, F = ts.shape
-        ts_reshaped = ts.view(B * W, L, F)
-        rp = time_series_2_recurrence_plot(ts_reshaped)  # (B*W, L, L)
-        # Reshape back to (B, W, L, L)
-        return rp.view(B, W, L, L)
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Return a fixed-size embedding for a `(batch, seq, features)` tensor."""
+        if x.ndim != 3:
+            raise ValueError("Expected input of shape (batch, seq, features)")
+        seq_len = x.size(1)
+        if seq_len < self.token_size:
+            raise ValueError(
+                f"Sequence length ({seq_len}) must be at least as large as the encoder token size ({self.token_size})."
+            )
+        # if x.size(-1) != self.input_dim:
+        #     raise ValueError(f"Expected final dimension {self.input_dim}, got {x.size(-1)}")
+
         features = self.forward_sequence(x)
         pooled = self._pool_sequence(features, x)
         return self.output_proj(pooled)
@@ -220,33 +198,18 @@ class MambaVisualEncoder(nn.Module):
     def forward_sequence(self, x: torch.Tensor) -> torch.Tensor:
         """Return the sequence of hidden states before pooling."""
         tokens = self.tokenizer(x)
-        
-        # Consistent with (B, windows, H, W) for input_proj.
-        # Tokens from tokenizer(method="values") is (B, W, L_token, F).
-        # We need to compute RP for each window.
-        img_from_patches = self._time_series_2_image(tokens)
-        
-        # If tokens was (B, W, L_token, F), RP is (B, W, L_token, L_token)
-        # because the RP helper handles (..., L, F) logic by flattening F or RP-ing.
-        # In our native implementation it handles (..., L, F).
-        
-        # If windows was 1, it might be squeezed depending on implementation.
-        if img_from_patches.ndim == 3:
-            img_from_patches = img_from_patches.unsqueeze(1)
-        
-        # Ensure it's on the correct device
-        if not isinstance(img_from_patches, torch.Tensor):
-            img_from_patches = torch.from_numpy(img_from_patches).float()
-        img_from_patches = img_from_patches.to(x.device)
-
-        x = self.input_proj(img_from_patches) 
-
+        if tokens.ndim == 4:
+            batch, windows, window_len, feat_dim = tokens.shape
+            # Map patches to features: (batch, windows, window_len * feat_dim)
+            tokens = tokens.reshape(batch, windows, window_len * feat_dim)
+        x = self.input_proj(tokens)
         for block in self.blocks:
             x = block(x)
         return self.final_norm(x)
     
     def tokenizer(self, x):
-        tokens = tokenize_sequence(x, token_size=self.input_dim, method="values")
+        # We switch to 'mean' aggregation to match the trained weights which expect input_dim features per token
+        tokens = tokenize_sequence(x, token_size=self.token_size, method="mean")
         return tokens
 
     def _pool_sequence(self, hidden: torch.Tensor, original: torch.Tensor) -> torch.Tensor:
@@ -261,26 +224,32 @@ class MambaVisualEncoder(nn.Module):
             return hidden[:, 0, :]
         raise ValueError(f"Unknown pooling mode: {self.pooling}")
 
-def create_default_encoder(**overrides: object) -> MambaVisualEncoder:
+    def count_parameters(self, trainable_only: bool = True) -> int:
+        params = self.parameters() if not trainable_only else (p for p in self.parameters() if p.requires_grad)
+        return sum(p.numel() for p in params)
+
+
+def create_default_encoder(**overrides: object) -> MambaEncoder:
     """Factory that mirrors the defaults while allowing overrides."""
-    return MambaVisualEncoder(**overrides)
+    return MambaEncoder(**overrides)
 
 
 if __name__ == "__main__":
+    feat_dim = 384
     tokens_dim = 32
-    encoder = MambaVisualEncoder(
+    encoder = MambaEncoder(
         depth=6,
-        input_dim=tokens_dim,
+        input_dim=feat_dim,
+        token_size=tokens_dim,
         pooling="mean",
-        model_dim=768,
+        model_dim=128,
         embedding_dim=128,
         expand_factor=1.5
     )
     
-    # print(f"Trainable parameters: {encoder.count_parameters():,}")
-    dummy = torch.randn(4, 307, 96)
+    print(f"Trainable parameters: {encoder.count_parameters():,}")
+    dummy = torch.randn(4, 96, 384)
     out = encoder(dummy)
     print("Output embedding shape:", out.shape)
     tokens = tokenize_sequence(dummy, token_size=tokens_dim)
     print("Output tokens shape:", tokens.shape)
-

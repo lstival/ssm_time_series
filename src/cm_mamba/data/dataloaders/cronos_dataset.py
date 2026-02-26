@@ -1,0 +1,436 @@
+import os
+
+import datasets
+
+os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
+datasets.config.HF_DATASETS_OFFLINE = True
+
+import numpy as np
+import pandas as pd
+from datasets import Dataset, Sequence, Value
+from typing import Dict, List, Optional, Sequence, Tuple
+
+
+def _cast_target_dtype(ds: datasets.Dataset, dtype: str) -> datasets.Dataset:
+    if "target" not in ds.column_names:
+        return ds
+
+    target_feature = ds.features["target"]
+
+    def _is_current_dtype(feature) -> bool:
+        if isinstance(feature, datasets.Sequence):
+            inner_feature = feature.feature
+            return isinstance(inner_feature, datasets.Value) and inner_feature.dtype == dtype
+        if isinstance(feature, datasets.Value):
+            return feature.dtype == dtype
+        return False
+
+    if _is_current_dtype(target_feature):
+        return ds
+
+    def _build_feature(feature):
+        if isinstance(feature, datasets.Sequence):
+            length = feature.length
+            return datasets.Sequence(feature=datasets.Value(dtype), length=length)
+        if isinstance(feature, datasets.Value):
+            return datasets.Value(dtype)
+        return feature
+
+    new_feature = _build_feature(target_feature)
+    try:
+        return ds.cast_column("target", new_feature)
+    except (TypeError, ValueError):
+        return ds
+
+
+def _normalize_per_series(
+    ds: datasets.Dataset,
+    *,
+    column: str = "target",
+    epsilon: float = 1e-12,
+) -> datasets.Dataset:
+    if column not in ds.column_names:
+        return ds
+
+    feature = ds.features[column]
+    if isinstance(feature, datasets.Sequence) and isinstance(feature.feature, datasets.Value):
+        target_dtype = np.dtype(feature.feature.dtype)
+    elif isinstance(feature, datasets.Value):
+        target_dtype = np.dtype(feature.dtype)
+    else:
+        target_dtype = np.dtype(np.float64)
+
+    if getattr(target_dtype, "kind", "f") not in ("f", "c"):
+        output_dtype = np.dtype(np.float64)
+    else:
+        output_dtype = target_dtype
+
+    def _normalize_batch(batch):
+        normalized = []
+        for seq in batch[column]:
+            arr = np.asarray(seq, dtype=np.float64)
+            if arr.size == 0:
+                normalized.append(arr.astype(output_dtype).tolist())
+                continue
+
+            seq_min = np.nanmin(arr)
+            seq_max = np.nanmax(arr)
+
+            if np.isnan(seq_min) or np.isnan(seq_max):
+                normalized.append(arr.astype(output_dtype).tolist())
+                continue
+
+            range_val = seq_max - seq_min
+            if abs(range_val) < epsilon:
+                normalized_arr = np.zeros_like(arr, dtype=np.float64)
+            else:
+                normalized_arr = (arr - seq_min) / range_val
+
+            normalized.append(normalized_arr.astype(output_dtype).tolist())
+
+        return {column: normalized}
+
+    # Use batched mapping for efficiency; keep original columns untouched.
+    return ds.map(_normalize_batch, batched=True, keep_in_memory=False)
+
+
+def load_chronos_datasets(
+    dataset_names: Sequence[str],
+    split: str = "train",
+    *,
+    repo_id: str = "autogluon/chronos_datasets",
+    set_numpy_format: bool = True,
+    target_dtype: Optional[str] = "float64",
+    offline_cache_dir: Optional[str] = "/data",
+    force_offline: bool = True,
+    normalize_per_series: bool = True,
+    normalization_epsilon: float = 1e-12,
+    **load_kwargs,
+) -> datasets.Dataset:
+    """Load and concatenate Chronos datasets from Hugging Face.
+    
+    Args:
+        dataset_names: Sequence of dataset names to load
+        split: Dataset split to load (default: "train")
+        repo_id: Hugging Face repository ID (default: "autogluon/chronos_datasets")
+        set_numpy_format: Whether to set numpy format for sequences (default: True)
+        target_dtype: Target data type for casting (default: "float64")
+        offline_cache_dir: Optional path to offline cache directory. If provided,
+                          will try to load from this directory first before falling back
+                          to Hugging Face. If None, uses default HF cache or environment
+                          variable HF_DATASETS_CACHE.
+        force_offline: If True, only use cached datasets and don't attempt online access (default: True)
+    normalize_per_series: If True, scale each time series using its own min/max (default: False)
+    normalization_epsilon: Minimum range value before treating a series as constant (default: 1e-12)
+        **load_kwargs: Additional arguments passed to datasets.load_dataset
+        
+    Returns:
+        Combined dataset from all specified dataset names
+    """
+    if not dataset_names:
+        raise ValueError("dataset_names must be a non-empty sequence.")
+
+    # Handle offline cache directory
+    original_cache = None
+    if offline_cache_dir is not None:
+        original_cache = os.environ.get('HF_DATASETS_CACHE')
+        # Expand relative paths and ensure absolute path
+        if not os.path.isabs(offline_cache_dir):
+            offline_cache_dir = os.path.abspath(offline_cache_dir)
+        os.environ['HF_DATASETS_CACHE'] = offline_cache_dir
+        print(f"Using offline cache directory: {offline_cache_dir}")
+
+    # Force offline mode if requested
+    original_offline = None
+    original_transformers_offline = None
+    original_hub_offline = None
+    if force_offline:
+        original_offline = os.environ.get('HF_DATASETS_OFFLINE')
+        os.environ['HF_DATASETS_OFFLINE'] = '1'
+        print("Forcing offline mode - no network access will be attempted")
+        # Also set TRANSFORMERS_OFFLINE for safety
+        original_transformers_offline = os.environ.get('TRANSFORMERS_OFFLINE')
+        os.environ['TRANSFORMERS_OFFLINE'] = '1'
+        # Set HF_HUB_OFFLINE to force Hugging Face Hub offline mode
+        original_hub_offline = os.environ.get('HF_HUB_OFFLINE')
+        os.environ['HF_HUB_OFFLINE'] = '1'
+
+    try:
+        loaded_datasets: List[Tuple[str, datasets.Dataset]] = []
+        for name in dataset_names:
+            try:
+                # Force offline mode by setting download_mode
+                offline_load_kwargs = load_kwargs.copy()
+                if force_offline:
+                    offline_load_kwargs['download_mode'] = 'reuse_cache_if_exists'
+                
+                ds = datasets.load_dataset(repo_id, name, split=split, **offline_load_kwargs)
+                print(f"Successfully loaded '{name}' from cache")
+            except (FileNotFoundError, ConnectionError, OSError) as e:
+                if not force_offline and offline_cache_dir is not None:
+                    # If offline cache was specified but dataset not found, try online
+                    print(f"Dataset '{name}' not found in offline cache, trying online...")
+                    # Temporarily restore online access
+                    if original_cache:
+                        os.environ['HF_DATASETS_CACHE'] = original_cache
+                    else:
+                        os.environ.pop('HF_DATASETS_CACHE', None)
+                    
+                    if original_offline is not None:
+                        os.environ.pop('HF_DATASETS_OFFLINE', None)
+                    if original_hub_offline is not None:
+                        os.environ.pop('HF_HUB_OFFLINE', None)
+                    
+                    try:
+                        ds = datasets.load_dataset(repo_id, name, split=split, **load_kwargs)
+                        print(f"Successfully downloaded '{name}' from Hugging Face")
+                        # Restore offline cache setting for next dataset
+                        os.environ['HF_DATASETS_CACHE'] = offline_cache_dir
+                        os.environ['HF_DATASETS_OFFLINE'] = '1'
+                        os.environ['HF_HUB_OFFLINE'] = '1'
+                    except Exception as online_error:
+                        print(f"Failed to load '{name}' both offline and online: {online_error}")
+                        continue
+                else:
+                    print(f"Failed to load '{name}' (offline mode): {e}")
+                    continue
+
+            if "target" not in ds.column_names:
+                # Rename common consumption columns to target for downstream compatibility
+                for candidate in ("consumption_kW", "power_mw"):
+                    if candidate in ds.column_names:
+                        ds = ds.rename_column(candidate, "target")
+                        break
+
+            # Convert the data for float64 (allow concat)
+            if target_dtype is not None:
+                ds = _cast_target_dtype(ds, target_dtype)
+
+            if normalize_per_series:
+                ds = _normalize_per_series(ds, column="target", epsilon=normalization_epsilon)
+
+            # Check if the dataset have the "target" colummn
+            if "target" not in ds.column_names:
+                print(f"Skipping dataset '{name}': missing 'target' column.")
+                continue
+
+            if len(ds.column_names) > 1:
+                ds = ds.select_columns(["target"])
+
+            loaded_datasets.append((name, ds))
+
+        combined, _ = _concatenate_with_reporting(loaded_datasets)
+
+        if set_numpy_format:
+            combined.set_format("numpy")  # sequences returned as numpy arrays
+
+        return combined
+
+    finally:
+        # Restore original cache setting
+        if offline_cache_dir is not None:
+            if original_cache:
+                os.environ['HF_DATASETS_CACHE'] = original_cache
+            else:
+                os.environ.pop('HF_DATASETS_CACHE', None)
+        
+        # Restore original offline setting
+        if force_offline:
+            if original_offline is not None:
+                os.environ['HF_DATASETS_OFFLINE'] = original_offline
+            else:
+                os.environ.pop('HF_DATASETS_OFFLINE', None)
+            # Restore TRANSFORMERS_OFFLINE
+            if original_transformers_offline is not None:
+                os.environ['TRANSFORMERS_OFFLINE'] = original_transformers_offline
+            else:
+                os.environ.pop('TRANSFORMERS_OFFLINE', None)
+            # Restore HF_HUB_OFFLINE
+            if original_hub_offline is not None:
+                os.environ['HF_HUB_OFFLINE'] = original_hub_offline
+            else:
+                os.environ.pop('HF_HUB_OFFLINE', None)
+
+
+def to_pandas(ds: datasets.Dataset) -> "pd.DataFrame":
+    """Convert dataset to long data frame format."""
+    sequence_columns = [col for col in ds.features if isinstance(ds.features[col], datasets.Sequence)]
+    return ds.to_pandas().explode(sequence_columns).infer_objects()
+
+
+def _infer_numpy_dtype(feature) -> Optional[np.dtype]:
+    """Derive the closest numpy dtype supported by the provided feature."""
+    if isinstance(feature, datasets.Sequence):
+        return _infer_numpy_dtype(feature.feature)
+    if isinstance(feature, datasets.Value):
+        try:
+            return np.dtype(feature.dtype)
+        except TypeError:
+            return None
+    return None
+
+
+def _concatenate_with_reporting(
+    datasets_with_names: Sequence[Tuple[str, datasets.Dataset]]
+) -> Tuple[datasets.Dataset, Dict[str, str]]:
+    """Concatenate datasets sequentially while logging failures."""
+    kept: List[datasets.Dataset] = []
+    failures: Dict[str, str] = {}
+
+    reference: Optional[datasets.Dataset] = None
+
+    for name, ds in datasets_with_names:
+        if reference is None:
+            kept.append(ds)
+            reference = ds
+            continue
+
+        try:
+            datasets.concatenate_datasets([reference, ds])
+        except (TypeError, ValueError) as exc:
+            error_message = str(exc)
+            failures[name] = error_message
+            print(f"Skipping dataset '{name}' during concatenation: {error_message}")
+            continue
+
+        kept.append(ds)
+
+    if not kept:
+        raise ValueError("No datasets remained for concatenation after filtering failures.")
+
+    combined = kept[0] if len(kept) == 1 else datasets.concatenate_datasets(kept)
+
+    if failures:
+        failed_names = ", ".join(failures.keys())
+        print(f"Datasets skipped due to concatenation errors: {failed_names}")
+
+    return combined, failures
+
+
+def target_only_view(
+    ds: datasets.Dataset,
+    *,
+    keep_format: bool = True,
+) -> datasets.Dataset:
+    """Return a dataset view that exposes only the ``target`` column."""
+    if "target" not in ds.column_names:
+        raise KeyError("Dataset does not contain a 'target' column.")
+
+    target_dataset = ds.select_columns(["target"]) if len(ds.column_names) > 1 else ds
+
+    if not keep_format:
+        target_dataset.reset_format()
+        return target_dataset
+
+    format_info = getattr(ds, "format", {}) or {}
+    format_type = format_info.get("type")
+    format_kwargs = dict(format_info.get("format_kwargs", {})) if format_info else {}
+
+    if format_type == "numpy":
+        inferred_dtype = _infer_numpy_dtype(target_dataset.features["target"])
+        if inferred_dtype is not None:
+            format_kwargs["dtype"] = inferred_dtype
+        else:
+            format_kwargs.pop("dtype", None)
+
+    if format_type:
+        try:
+            return target_dataset.with_format(
+                type=format_type,
+                columns=["target"],
+                output_all_columns=False,
+                format_kwargs=format_kwargs,
+            )
+        except ValueError:
+            target_dataset.reset_format()
+            return target_dataset
+
+    target_dataset.reset_format()
+    return target_dataset
+
+
+def filter_target_dtype(
+    datasets_by_name: Dict[str, Dataset],
+    expected_dtype: str = "float64",
+) -> Tuple[Dict[str, Dataset], Dict[str, str]]:
+    kept: Dict[str, Dataset] = {}
+    skipped: Dict[str, str] = {}
+    for name, ds in datasets_by_name.items():
+        try:
+            target_feature = ds.features["target"]
+        except KeyError:
+            skipped[name] = "missing 'target' feature"
+            print(f"Skipping dataset '{name}': {skipped[name]}")
+            continue
+
+        if isinstance(target_feature, Sequence):
+            actual_dtype = target_feature.feature.dtype
+        elif isinstance(target_feature, Value):
+            actual_dtype = target_feature.dtype
+        else:
+            actual_dtype = getattr(target_feature, "dtype", None)
+
+        if actual_dtype != expected_dtype:
+            skipped[name] = f"target dtype {actual_dtype!r} != {expected_dtype!r}"
+            print(f"Skipping dataset '{name}': {skipped[name]}")
+            continue
+
+        kept[name] = ds
+    return kept, skipped
+
+
+if __name__ == "__main__":
+    ## https://huggingface.co/datasets/autogluon/chronos_datasets/tree/main
+    ## "weatherbench_weekly"
+    datasets_to_load = [
+        "m4_daily",
+        "m4_hourly",
+        "m4_monthly",
+        "m4_yearly",
+        "monash_australian_electricity",
+        "taxi_30min",
+        "monash_traffic",
+        "monash_kdd_cup_2018",
+        "m5",
+        "mexico_city_bikes",
+        "exchange_rate",
+        "monash_car_parts",
+        "monash_covid_deaths",
+        "monash_electricity_hourly",
+        "monash_fred_md",
+        "monash_hospital",
+        "monash_m1_monthly",
+        "monash_m1_quarterly",
+        "monash_m1_yearly",
+        "monash_m3_monthly",
+        "monash_m3_quarterly",
+        "monash_m3_yearly",
+        "monash_nn5_weekly",
+        "taxi_30min",
+        "uber_tlc_daily",
+        "uber_tlc_hourly",
+        "wind_farms_hourly",
+        "wind_farms_daily",
+        "dominick",
+        "electricity_15min",
+        "solar_1h",
+        # "ercot", # 8 rows with 158k length time series
+    ]
+
+    # Example 1: Load from default cache (online if needed)
+    print("Loading from default cache...")
+    dataset = load_chronos_datasets(datasets_to_load, target_dtype="float64", normalize_per_series=True)
+    print(to_pandas(dataset).head())
+    print(dataset)
+    
+    # # Example 2: Load from offline cache directory (falls back to online if needed)
+    # # Uncomment and adjust path as needed:
+    # print("\nLoading from offline cache...")
+    # offline_cache_path = r"D:\my_datasets"  # Adjust this path
+    # dataset_offline = load_chronos_datasets(
+    #     datasets_to_load, 
+    #     target_dtype="float64",
+    #     offline_cache_dir=offline_cache_path
+    # )
+    # print(to_pandas(dataset_offline).head())
+    # print(dataset_offline)

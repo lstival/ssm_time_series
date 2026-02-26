@@ -21,7 +21,7 @@ CM-Mamba is a compact Mamba-style state-space model for time series forecasting.
 
 ```python
 import torch
-from ssm_time_series.hf.forecasting import CM_MambaForecastModel
+from cm_mamba.hf.forecasting import CM_MambaForecastModel
 
 model = CM_MambaForecastModel.from_pretrained("{{MODEL_ID}}", trust_remote_code=True)
 model.eval()
@@ -35,12 +35,8 @@ print(y.shape)  # [B, H, C]
 ### Load encoders only
 
 ```python
-from ssm_time_series.hf.forecasting import CM_MambaForecastModel
-
-encoders = CM_MambaForecastModel.from_checkpoint_encoder_only(
-    config=CM_MambaForecastModel.config_class.from_pretrained("{{MODEL_ID}}", trust_remote_code=True),
-    checkpoint_path="path/to/best_model.pt",
-)
+model = CM_MambaForecastModel.from_pretrained("{{MODEL_ID}}", trust_remote_code=True)
+encoders = model.get_encoder_only()
 ```
 
 ## Training Details

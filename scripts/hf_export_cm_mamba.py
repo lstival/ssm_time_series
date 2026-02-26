@@ -14,7 +14,7 @@ from typing import Any, Dict
 
 import yaml
 
-from ssm_time_series.hf.forecasting import (
+from cm_mamba.hf.forecasting import (
     CM_MambaForecastExportSpec,
     CM_MambaForecastModel,
 )
@@ -81,7 +81,7 @@ def export_model(spec: CM_MambaForecastExportSpec) -> Path:
 
     # Copy the necessary source file for the custom model
     import shutil
-    import ssm_time_series.hf.forecasting as forecasting_module
+    import cm_mamba.hf.forecasting as forecasting_module
     
     source_file = Path(forecasting_module.__file__)
     shutil.copy(source_file, spec.output_dir / "forecasting.py")
@@ -90,7 +90,7 @@ def export_model(spec: CM_MambaForecastExportSpec) -> Path:
         template_text = spec.model_card_template.read_text(encoding="utf-8")
         replacements = {
             "MODEL_ID": spec.model_id or spec.output_dir.name,
-            "CHECKPOINT_SOURCE": str(spec.checkpoint_path),
+            "CHECKPOINT_SOURCE": spec.checkpoint_path.parent.name,
             "HORIZONS": ", ".join(str(h) for h in spec.config.horizons),
             "TARGET_FEATURES": str(spec.config.target_features),
         }

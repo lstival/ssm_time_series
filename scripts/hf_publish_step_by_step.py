@@ -12,7 +12,7 @@ from typing import Optional
 import torch
 from huggingface_hub import HfApi
 
-from ssm_time_series.hf.forecasting import CM_MambaForecastConfig, CM_MambaForecastModel
+from cm_mamba.hf.forecasting import CM_MambaForecastConfig, CM_MambaForecastModel
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
@@ -72,8 +72,13 @@ def main() -> None:
     if not model_dir.exists():
         raise FileNotFoundError(f"Model directory not found: {model_dir}")
 
-    required_files = ["config.json", "pytorch_model.bin"]
+    required_files = ["config.json"]
+    weights_files = ["pytorch_model.bin", "model.safetensors"]
+    
     missing = [name for name in required_files if not (model_dir / name).exists()]
+    if not any((model_dir / w).exists() for w in weights_files):
+        missing.append("weights file (pytorch_model.bin or model.safetensors)")
+        
     if missing:
         raise FileNotFoundError(f"Missing required files in {model_dir}: {', '.join(missing)}")
 

@@ -14,12 +14,8 @@ import math
 import torch
 from torch import nn
 
-try:
-    from ssm_time_series.utils.generals import time_series_2_recurrence_plot
-    from mamba_block import MambaBlock
-except:
-    from .utils import time_series_2_recurrence_plot
-    from .mamba_block import MambaBlock
+from cm_mamba.models.utils import time_series_2_recurrence_plot
+from cm_mamba.models.mamba_block import MambaBlock
 
 Pooling = Literal["mean", "last", "cls"]
 
@@ -208,7 +204,13 @@ class MambaVisualEncoder(nn.Module):
         # Combine B and W to call the RP utility
         B, W, L, F = ts.shape
         ts_reshaped = ts.view(B * W, L, F)
-        rp = time_series_2_recurrence_plot(ts_reshaped)  # (B*W, L, L)
+        
+        # Calculate RP manually for (B*W, L, F) input to get (B*W, L, L)
+        # (B*W, L, 1, F) - (B*W, 1, L, F) -> (B*W, L, L, F)
+        dist = torch.abs(ts_reshaped.unsqueeze(2) - ts_reshaped.unsqueeze(1))
+        # Aggregate over features
+        rp = dist.mean(dim=-1)
+        
         # Reshape back to (B, W, L, L)
         return rp.view(B, W, L, L)
 
@@ -283,4 +285,3 @@ if __name__ == "__main__":
     print("Output embedding shape:", out.shape)
     tokens = tokenize_sequence(dummy, token_size=tokens_dim)
     print("Output tokens shape:", tokens.shape)
-

@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Iterable
 from dataclasses import dataclass
 import datasets
 
+
 ROOT_DIR = Path(__file__).resolve().parents[3]
 
 def time_series_2_recurrence_plot(x):
@@ -173,6 +174,8 @@ def load_chronos_forecast_config(
     Returns:
         ChronosForecastConfig: Parsed configuration object
     """
+    # from cm_mamba import training as tu
+    tu = None
     # Determine config path
     if config_path is None:
         env_override = os.getenv(env_var)
@@ -181,11 +184,28 @@ def load_chronos_forecast_config(
         else:
             # Look for default config in src/configs/
             src_dir = Path(__file__).resolve().parents[1]  # Go up from ssm_time_series.models to src
-            config_path = src_dir / "configs" / default_config_name
+            # Actually with new structure: cm_mamba/models -> cm_mamba -> src. So parents[1] is cm_mamba, parents[2] is src.
+            # Wait, in old: ssm_time_series/models -> ssm_time_series -> src.
+            # If I put it in cm_mamba/models, parents[1] is cm_mamba, parents[2] is src.
+            # The configs are in src/ssm_time_series/configs (old) or src/configs?
+            # List dir of src/ssm_time_series/configs in Step 43.
+            # It seems configs are in `src/ssm_time_series/configs`.
+            # So I need to find them.
+            # If I am in cm_mamba/models, I need to go to src/ssm_time_series/configs?
+            # Or assume configs are moved too? The task didn't say move configs.
+            # I'll stick to pointing to the existing configs location for now or try to locate them.
+            # Let's adjust this path logic.
+            
+            src_dir = Path(__file__).resolve().parents[2] # src
+            # configs are in src/ssm_time_series/configs
+            config_path = src_dir / "ssm_time_series" / "configs" / default_config_name
+
     
     config_path = _resolve_optional_path(Path.cwd(), config_path)
     if config_path is None or not config_path.exists():
-        raise FileNotFoundError(f"Chronos forecast configuration not found: {config_path}")
+        # Fallback to just src/configs if it moved?
+        # Or try relative to ssm_time_series if we are in cm_mamba?
+         raise FileNotFoundError(f"Chronos forecast configuration not found: {config_path}")
     
     print(f"Using forecast configuration: {config_path}")
     
@@ -207,7 +227,7 @@ def load_chronos_forecast_config(
     # Import training_utils to load base config
     # Removed legacy sys.path hack
     
-    from ssm_time_series import training as tu
+    # tu is imported at top
     base_config = tu.load_config(model_config_path)
     
     data_cfg = dict(base_config.data or {})
@@ -381,9 +401,6 @@ def load_chronos_forecast_config(
         config_dir=config_dir,
         grad_clip=grad_clip,
     )
-
-
-
 
 
 if __name__ == "__main__":
