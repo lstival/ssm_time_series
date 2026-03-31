@@ -25,6 +25,7 @@ class TimeSeriesDataModule:
         train: bool = True,
         val: bool = True,
         test: bool = False,
+        scaler_type: str = 'minmax',
     ):
         # assert abs(train_ratio + val_ratio - 1.0) < 1e-6, "train_ratio + val_ratio must equal 1.0"
         self.dataset_name = dataset_name
@@ -43,6 +44,7 @@ class TimeSeriesDataModule:
         self.test = test
         self._built = False
         self.filename = filename
+        self.scaler_type = scaler_type
         self.train_loader: Optional[DataLoader] = None
         self.val_loader: Optional[DataLoader] = None
         self.test_loader: Optional[DataLoader] = None
@@ -91,6 +93,7 @@ class TimeSeriesDataModule:
             dataset_files=dataset_files,
             filename=self.filename,
             sample_size=self.sample_size,
+            scaler_type=self.scaler_type,
         )
 
         self.dataset_loaders = dataset_loaders

@@ -41,6 +41,7 @@ def _try_make_dataset(
     flag: str,
     normalize: bool,
     sample_size: Optional[Tuple[int, int, int]],
+    scaler_type: str = 'minmax',
 ) -> Dataset:
     """Instantiate ``Dataset_Custom`` while being tolerant to optional kwargs."""
     path = (data_path or "").lower()
@@ -52,6 +53,7 @@ def _try_make_dataset(
                 data_path=data_path,
                 scale=normalize,
                 size=sample_size,
+                scaler_type=scaler_type,
             )
 
         if path.endswith(".npz"):
@@ -61,6 +63,7 @@ def _try_make_dataset(
                 data_path=data_path,
                 scale=normalize,
                 size=sample_size,
+                scaler_type=scaler_type,
             )
         if "h1" in path or "h2" in path:
             return Dataset_ETT_hour(
@@ -69,6 +72,7 @@ def _try_make_dataset(
             data_path=data_path,
             scale=normalize,
             size=sample_size,
+            scaler_type=scaler_type,
             )
 
         if "m1" in path or "m2" in path:
@@ -78,6 +82,7 @@ def _try_make_dataset(
             data_path=data_path,
             scale=normalize,
             size=sample_size,
+            scaler_type=scaler_type,
             )
         return Dataset_Custom(
             root_path=root,
@@ -85,6 +90,7 @@ def _try_make_dataset(
             data_path=data_path,
             scale=normalize,
             size=sample_size,
+            scaler_type=scaler_type,
         )
         
     except TypeError:
@@ -145,6 +151,7 @@ def _collect_dataset_splits(
     filename: Optional[str] = None,
     dataset_files: Optional[Dict[str, str]] = None,
     sample_size: Optional[Tuple[int, int, int]] = None,
+    scaler_type: str = 'minmax',
 ) -> Tuple[List[_DatasetSplits], Dict[str, str]]:
     """Create dataset splits for each discovered dataset prior to building loaders."""
     # assert abs(train_ratio + val_ratio - 1.0) < 1e-6, "train_ratio + val_ratio must equal 1.0"
@@ -167,6 +174,7 @@ def _collect_dataset_splits(
                 "train",
                 normalize,
                 sample_size,
+                scaler_type=scaler_type,
             )
         except Exception as exc:  # pragma: no cover - logging warning path
             skipped[relative_path] = str(exc)
@@ -184,6 +192,7 @@ def _collect_dataset_splits(
                     "val",
                     normalize,
                     sample_size,
+                    scaler_type=scaler_type,
                 )
             except Exception:
                 val_dataset = None
@@ -196,6 +205,7 @@ def _collect_dataset_splits(
                     "test",
                     normalize,
                     sample_size,
+                    scaler_type=scaler_type,
                 )
 
             except Exception:
@@ -266,6 +276,7 @@ def build_concat_dataloaders(
     dataset_files: Optional[Dict[str, str]] = None,
     collate_fn: Optional[Callable] = None,
     sample_size: Optional[Tuple[int, int, int]] = None,
+    scaler_type: str = 'minmax',
 ) -> Tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
     """Create dataloaders that concatenate every dataset discovered under ``root_path``."""
     dataset_splits, skipped = _collect_dataset_splits(
@@ -279,6 +290,7 @@ def build_concat_dataloaders(
         filename=filename,
         dataset_files=dataset_files,
         sample_size=sample_size,
+        scaler_type=scaler_type,
     )
 
     if skipped:
@@ -341,6 +353,7 @@ def build_dataset_loader_list(
     dataset_files: Optional[Dict[str, str]] = None,
     collate_fn: Optional[Callable] = None,
     sample_size: Optional[Tuple[int, int, int]] = None,
+    scaler_type: str = 'minmax',
 ) -> List[DatasetLoaders]:
     """Build a list of dataloaders, one entry per dataset under ``root_path``."""
     dataset_splits, skipped = _collect_dataset_splits(
@@ -354,6 +367,7 @@ def build_dataset_loader_list(
         filename=filename,
         dataset_files=dataset_files,
         sample_size=sample_size,
+        scaler_type=scaler_type,
     )
 
     if skipped:

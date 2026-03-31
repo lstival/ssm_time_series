@@ -97,7 +97,12 @@ def build_encoder_from_config(model_cfg: Dict[str, Any]) -> MambaEncoder:
         dropout=dropout,
     )
 
-def build_visual_encoder_from_config(model_cfg: Dict[str, Any], rp_mode: str = "correct") -> MambaVisualEncoder:
+def build_visual_encoder_from_config(
+    model_cfg: Dict[str, Any],
+    rp_mode: str = "correct",
+    rp_mv_strategy: str = "per_channel",
+    repr_type: str = "rp",
+) -> MambaVisualEncoder:
     cfg_get = model_cfg.get
     input_channels = int(cfg_get("input_dim", 3))
     model_dim = int(cfg_get("model_dim", 128))
@@ -114,6 +119,12 @@ def build_visual_encoder_from_config(model_cfg: Dict[str, Any], rp_mode: str = "
 
     expand = max(1.0, expand)
 
+    # Allow config to override the caller's defaults
+    rp_mode = str(cfg_get("rp_mode", rp_mode))
+    rp_mv_strategy = str(cfg_get("rp_mv_strategy", rp_mv_strategy))
+    repr_type = str(cfg_get("repr_type", repr_type))
+    use_gpu_rp = bool(cfg_get("use_gpu_rp", False))
+
     return MambaVisualEncoder(
         input_dim=input_channels,
         model_dim=model_dim,
@@ -125,6 +136,9 @@ def build_visual_encoder_from_config(model_cfg: Dict[str, Any], rp_mode: str = "
         pooling=pooling,
         dropout=dropout,
         rp_mode=rp_mode,
+        rp_mv_strategy=rp_mv_strategy,
+        repr_type=repr_type,
+        use_gpu_rp=use_gpu_rp,
     )
 
 def build_optimizer(model: torch.nn.Module, training_cfg: Dict[str, Any]) -> Optimizer:

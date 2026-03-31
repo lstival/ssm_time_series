@@ -257,9 +257,13 @@ def build_time_series_dataloaders(
             val=val,
             test=test,
         )
-        loaders = module.get_dataloaders()
-        train_loader = loaders[0]
-        val_loader = loaders[1] if len(loaders) > 1 else None
+        module.setup()
+        train_loaders = module.train_loaders
+        val_loaders = module.val_loaders
+        if not train_loaders:
+            raise RuntimeError(f"No training data found in {data_dir} for dataset '{dataset_name}'")
+        train_loader = train_loaders[0]
+        val_loader = val_loaders[0] if val_loaders else None
         return train_loader, val_loader
 
     if kind == "cronos":
@@ -290,6 +294,28 @@ def build_time_series_dataloaders(
             normalize_mode=extra.pop("normalize_mode", None),
             seed=extra.pop("seed", seed),
             load_kwargs=extra.pop("load_kwargs", None),
+        )
+        return train_loader, val_loader
+
+    if kind == "lotsa":
+        from dataloaders.lotsa_loader import build_lotsa_dataloaders, LOTSA_CACHE_DIR
+
+        extra = dict(cronos_kwargs or {})
+        dataset_list = _parse_datasets(datasets or dataset_name) or None
+        context_length = int(extra.pop("context_length", 96))
+        cache_dir = str(extra.pop("cache_dir", LOTSA_CACHE_DIR))
+        split = val_split if val_split is not None else val_ratio
+        train_loader, val_loader = build_lotsa_dataloaders(
+            dataset_names=dataset_list,
+            context_length=context_length,
+            val_split=split,
+            batch_size=batch_size,
+            val_batch_size=val_batch_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            cache_dir=cache_dir,
+            seed=seed,
+            **extra,
         )
         return train_loader, val_loader
 
@@ -530,11 +556,22 @@ def run_contrastive_training(
 
 
 def prepare_run_directory(base_dir: str | Path, prefix: str) -> Path:
-    """Create and return ``<base>/<prefix>_<timestamp>``."""
+    """Create and return ``<base>/<prefix>_<timestamp>`` and update ``latest`` symlink."""
     root = Path(base_dir).expanduser().resolve()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    run_dir = root / f"{prefix}_{timestamp}"
+    run_name = f"{prefix}_{timestamp}"
+    run_dir = root / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create/update 'latest' symlink
+    latest_symlink = root / f"{prefix}_latest"
+    try:
+        if latest_symlink.lexists():
+            latest_symlink.unlink()
+        latest_symlink.symlink_to(run_name)
+    except Exception as e:
+        print(f"Warning: Could not create symlink {latest_symlink}: {e}")
+
     return run_dir
 
 
@@ -649,33 +686,45 @@ def run_clip_training(
 
         with tqdm(train_loader, desc=desc, total=total) as pbar:
             for batch in pbar:
-                # Chronos loader may pad variable-length series; keep original size by trimming.
                 if isinstance(batch, dict) and "target" in batch and "lengths" in batch:
                     padded = batch["target"].to(device).float()
                     lengths = batch["lengths"].to(device)
+                    has_two_views = "target2" in batch
+                    padded2 = batch["target2"].to(device).float() if has_two_views else None
 
-                    q_proj_list = []
-                    k_proj_list = []
-                    for i in range(int(padded.size(0))):
-                        L = int(lengths[i].item())
-                        if L < 2:
+                    # Fast path: fixed-length batches (all LOTSA batches have equal lengths)
+                    if (lengths == lengths[0]).all():
+                        L = int(lengths[0].item())
+                        x_q = reshape_multivariate_series(prepare_sequence(padded[:, :L]))
+                        if has_two_views:
+                            x_k = make_positive_view(reshape_multivariate_series(prepare_sequence(padded2[:, :L])))
+                        else:
+                            x_k = make_positive_view(x_q + noise_std * torch.randn_like(x_q))
+                        q_proj = F.normalize(projection_head(encoder(x_q)), dim=1)
+                        k_proj = F.normalize(visual_projection_head(visual_encoder(x_k)), dim=1)
+                        loss = clip_contrastive_loss(q_proj, k_proj)
+                    else:
+                        # Variable-length fallback for Chronos-style padded batches
+                        q_proj_list = []
+                        k_proj_list = []
+                        for i in range(int(padded.size(0))):
+                            L = int(lengths[i].item())
+                            if L < 2:
+                                continue
+                            seq_i = prepare_sequence(padded[i, :L].unsqueeze(0))
+                            x_q_i = reshape_multivariate_series(seq_i)
+                            if has_two_views:
+                                seq_i2 = prepare_sequence(padded2[i, :L].unsqueeze(0))
+                                x_k_i = make_positive_view(reshape_multivariate_series(seq_i2))
+                            else:
+                                x_k_i = make_positive_view(x_q_i + noise_std * torch.randn_like(x_q_i))
+                            q_proj_list.append(F.normalize(projection_head(encoder(x_q_i)), dim=1))
+                            k_proj_list.append(F.normalize(visual_projection_head(visual_encoder(x_k_i)), dim=1))
+                        if not q_proj_list:
                             continue
-                        seq_i = padded[i, :L].unsqueeze(0)
-                        seq_i = prepare_sequence(seq_i)
-                        x_q_i = reshape_multivariate_series(seq_i)
-                        noise = noise_std * torch.randn_like(x_q_i)
-                        x_k_i = make_positive_view(x_q_i + noise)
-
-                        q_encoded_i = encoder(x_q_i)
-                        k_encoded_i = visual_encoder(x_k_i)
-                        q_proj_list.append(F.normalize(projection_head(q_encoded_i), dim=1))
-                        k_proj_list.append(F.normalize(visual_projection_head(k_encoded_i), dim=1))
-
-                    if not q_proj_list:
-                        continue
-                    q_proj = torch.cat(q_proj_list, dim=0)
-                    k_proj = torch.cat(k_proj_list, dim=0)
-                    loss = clip_contrastive_loss(q_proj, k_proj)
+                        q_proj = torch.cat(q_proj_list, dim=0)
+                        k_proj = torch.cat(k_proj_list, dim=0)
+                        loss = clip_contrastive_loss(q_proj, k_proj)
                 else:
                     seq = prepare_sequence(extract_sequence(batch)).to(device).float()
                     x_q = reshape_multivariate_series(seq)
@@ -717,27 +766,31 @@ def run_clip_training(
                     if isinstance(val_batch, dict) and "target" in val_batch and "lengths" in val_batch:
                         padded = val_batch["target"].to(device).float()
                         lengths = val_batch["lengths"].to(device)
-                        q_proj_list = []
-                        k_proj_list = []
-                        for i in range(int(padded.size(0))):
-                            L = int(lengths[i].item())
-                            if L < 2:
-                                continue
-                            seq_i = padded[i, :L].unsqueeze(0)
-                            seq_i = prepare_sequence(seq_i)
-                            x_q_i = reshape_multivariate_series(seq_i)
-                            noise = noise_std * torch.randn_like(x_q_i)
-                            x_k_i = make_positive_view(x_q_i + noise)
 
-                            q_encoded_i = encoder(x_q_i)
-                            k_encoded_i = visual_encoder(x_k_i)
-                            q_proj_list.append(F.normalize(projection_head(q_encoded_i), dim=1))
-                            k_proj_list.append(F.normalize(visual_projection_head(k_encoded_i), dim=1))
-                        if not q_proj_list:
-                            continue
-                        val_q_proj = torch.cat(q_proj_list, dim=0)
-                        val_k_proj = torch.cat(k_proj_list, dim=0)
-                        val_batch_loss = clip_contrastive_loss(val_q_proj, val_k_proj).item()
+                        if (lengths == lengths[0]).all():
+                            L = int(lengths[0].item())
+                            val_x_q = reshape_multivariate_series(prepare_sequence(padded[:, :L]))
+                            val_x_k = make_positive_view(val_x_q + noise_std * torch.randn_like(val_x_q))
+                            val_q_proj = F.normalize(projection_head(encoder(val_x_q)), dim=1)
+                            val_k_proj = F.normalize(visual_projection_head(visual_encoder(val_x_k)), dim=1)
+                            val_batch_loss = clip_contrastive_loss(val_q_proj, val_k_proj).item()
+                        else:
+                            q_proj_list = []
+                            k_proj_list = []
+                            for i in range(int(padded.size(0))):
+                                L = int(lengths[i].item())
+                                if L < 2:
+                                    continue
+                                seq_i = prepare_sequence(padded[i, :L].unsqueeze(0))
+                                x_q_i = reshape_multivariate_series(seq_i)
+                                x_k_i = make_positive_view(x_q_i + noise_std * torch.randn_like(x_q_i))
+                                q_proj_list.append(F.normalize(projection_head(encoder(x_q_i)), dim=1))
+                                k_proj_list.append(F.normalize(visual_projection_head(visual_encoder(x_k_i)), dim=1))
+                            if not q_proj_list:
+                                continue
+                            val_q_proj = torch.cat(q_proj_list, dim=0)
+                            val_k_proj = torch.cat(k_proj_list, dim=0)
+                            val_batch_loss = clip_contrastive_loss(val_q_proj, val_k_proj).item()
                     else:
                         val_seq = prepare_sequence(extract_sequence(val_batch)).to(device).float()
                         val_x_q = reshape_multivariate_series(val_seq)
@@ -809,6 +862,12 @@ def build_projection_head(encoder: nn.Module, *, output_dim: Optional[int] = Non
         embedding_dim = getattr(encoder, "embedding_dim", None)
         if isinstance(embedding_dim, int):
             input_dim = int(embedding_dim)
+
+    if input_dim is None or hidden_dim is None:
+        d_model = getattr(encoder, "d_model", None)
+        if isinstance(d_model, int):
+            input_dim = d_model
+            hidden_dim = d_model * 2
 
     if input_dim is None or hidden_dim is None:
         raise RuntimeError("Unable to infer encoder dimensions for projection head construction")
@@ -915,12 +974,19 @@ def make_positive_view(
 
     # time dropout: zero out a contiguous segment per sample with some probability
     if time_dropout_prob > 0 and L > 0:
-        for i in range(b):
-            if torch.rand(1, device=device).item() < float(time_dropout_prob):
-                max_len = max(1, int(L * float(max_dropout_ratio)))
-                drop_len = torch.randint(1, max_len + 1, (1,), device=device).item()
-                start = torch.randint(0, L - drop_len + 1, (1,), device=device).item()
-                out[i, :, start : start + drop_len] = 0.0
+        max_drop = max(1, min(int(L * float(max_dropout_ratio)), L))
+        apply = torch.rand(b, device=device) < float(time_dropout_prob)
+        if apply.any():
+            drop_lens = torch.randint(1, max_drop + 1, (b,), device=device)
+            max_start = max(1, L - max_drop + 1)
+            starts = torch.randint(0, max_start, (b,), device=device)
+            idx = torch.arange(L, device=device).view(1, L)
+            dropout_mask = (
+                (idx >= starts.view(b, 1))
+                & (idx < (starts + drop_lens).view(b, 1))
+                & apply.view(b, 1)
+            )  # (b, L)
+            out = out.masked_fill(dropout_mask.unsqueeze(1), 0.0)
 
     # permutation of segments: split into K segments and shuffle their order
     if permute_segments and L > 1:
