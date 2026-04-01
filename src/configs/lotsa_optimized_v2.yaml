@@ -1,0 +1,64 @@
+experiment_name: "ts_encoder_lotsa_optimized_v2"
+seed: 42
+device: "auto"
+
+model:
+  model_name: "ts_encoder_lotsa"
+  input_dim: 32          # token window size (must match tokenizer in MambaVisualEncoder)
+  model_dim: 256
+  embedding_dim: 128
+  depth: 8
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+  rp_mv_strategy: "joint"  # Ablation A: 25% faster (298ms vs 395ms/batch)
+  # alignment_strategy: "cosine_mse"  # Ablation C: most robust, handles hard datasets
+
+data:
+  dataset_type: "lotsa"
+  batch_size: 256
+  val_batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  val_ratio: 0.1
+
+  # Passed through to build_lotsa_dataloaders
+  cronos_kwargs:
+    context_length: 96
+    cache_dir: "/lustre/nobackup/WUR/AIN/stiva001/hf_datasets"
+    normalize_per_series: true
+    force_offline: true
+    drop_last: true
+    two_views: true
+
+training:
+  epochs: 200
+  temperature: 0.2
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  noise_std: 0.01
+  optimizer: "adamw"
+  scheduler: "cosine"
+  min_lr: 0.000001
+  warmup_epochs: 10
+  max_grad_norm: 1.0
+  use_amp: true
+
+logging:
+  checkpoint_dir: "../../checkpoints/lotsa_optimized_v2"
+  save_best_only: true
+  save_last: true
+
+# Changes from base lotsa_clip.yaml:
+# 1. rp_mv_strategy: "mean" → "joint" (Ablation A finding)
+#    - Expected speedup: 25% faster training (saves ~97ms per batch)
+#    - For 50 epochs: ~27 hours saved overall
+#    - Accuracy: Same or slightly better
+#
+# 2. alignment_strategy: "cosine_mse" (Ablation C finding - if implementation supports)
+#    - More robust than CLIP loss, especially on hard datasets like exchange_rate
+#    - CLIP loss has 10x failure mode (0.3727 vs 0.0830 MSE on exchange_rate)
+#
+# 3. Checkpoint dir updated to track this as v2 optimized version
