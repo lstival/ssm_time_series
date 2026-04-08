@@ -1,0 +1,56 @@
+experiment_name: "ts_byol_visual_lotsa"
+seed: 42
+device: "auto"
+
+model:
+  model_name: "ts_byol_visual"
+  byol_mode: "visual"
+  input_dim: 64                    # patch_len for UpperTriDiagSimCLREncoder (Ablation E best)
+  model_dim: 256
+  embedding_dim: 128
+  depth: 8
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+  proj_dim: 256                    # projector output dim
+  pred_dim: 128                    # predictor hidden dim
+  # rp_mv_strategy is forced to "mean" in byol_training.py (Ablation A best)
+
+data:
+  dataset_type: "lotsa"
+  batch_size: 256
+  val_batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  val_ratio: 0.1
+
+  cronos_kwargs:
+    context_length: 96
+    cache_dir: "/lustre/nobackup/WUR/AIN/stiva001/hf_datasets"
+    normalize_per_series: true
+    force_offline: true
+    drop_last: true
+    two_views: false               # BYOL generates its own views via noise augmentation
+
+training:
+  epochs: 100
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  noise_std: 0.05                  # stronger augmentation — BYOL is more robust to this
+  ema_tau: 0.996
+  optimizer: "adamw"
+  warmup_epochs: 20                # longer warmup for visual encoder (larger grad norms)
+  use_amp: false                   # disabled — visual encoder unstable with AMP
+
+logging:
+  checkpoint_dir: "../../checkpoints/byol_visual"
+  save_best_only: true
+  save_last: true
+
+# BYOL visual-only baseline:
+#   - Only the UpperTriDiagSimCLREncoder (RP encoder) is trained.
+#   - Two augmented views via Gaussian noise on raw TS before RP generation.
+#   - No negative pairs — replaces overfitting SimCLR visual (job 66260985).
+#   - Designed to compare fairly against CLIP multimodal (job 66260794).

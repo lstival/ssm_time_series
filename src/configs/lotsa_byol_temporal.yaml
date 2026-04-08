@@ -1,0 +1,55 @@
+experiment_name: "ts_byol_temporal_lotsa"
+seed: 42
+device: "auto"
+
+model:
+  model_name: "ts_byol_temporal"
+  byol_mode: "temporal"
+  input_dim: 64                    # patch size (Ablation E best)
+  model_dim: 256
+  embedding_dim: 128
+  depth: 8
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+  proj_dim: 256                    # projector output dim
+  pred_dim: 128                    # predictor hidden dim
+
+data:
+  dataset_type: "lotsa"
+  batch_size: 256
+  val_batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  val_ratio: 0.1
+
+  cronos_kwargs:
+    context_length: 96
+    cache_dir: "/lustre/nobackup/WUR/AIN/stiva001/hf_datasets"
+    normalize_per_series: true
+    force_offline: true
+    drop_last: true
+    two_views: false               # BYOL generates its own views via noise augmentation
+
+training:
+  epochs: 100
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  noise_std: 0.05                  # BYOL uses stronger augmentation than SimCLR (0.01)
+  ema_tau: 0.996                   # momentum for target network EMA
+  optimizer: "adamw"
+  warmup_epochs: 10
+  use_amp: true
+
+logging:
+  checkpoint_dir: "../../checkpoints/byol_temporal"
+  save_best_only: true
+  save_last: true
+
+# BYOL temporal-only baseline:
+#   - Only the temporal MambaEncoder is trained (no visual/RP branch).
+#   - Two augmented views via Gaussian noise form the positive pair.
+#   - No negative pairs needed — EMA target network prevents collapse.
+#   - Designed to compare fairly against CLIP multimodal (job 66260794).
