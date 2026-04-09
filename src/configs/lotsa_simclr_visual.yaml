@@ -1,0 +1,61 @@
+experiment_name: "ts_simclr_visual_lotsa"
+seed: 42
+device: "auto"
+
+model:
+  model_name: "ts_simclr_visual"
+  rp_encoder: "upper_tri"          # tells simclr_training.py to use UpperTriDiagRPEncoder
+  input_dim: 64                    # Ablation E: patch size (best accuracy)
+  model_dim: 256
+  embedding_dim: 128
+  depth: 8
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+  rp_mode: "correct"
+  # rp_mv_strategy is forced to "mean" in simclr_training.py (Ablation A best)
+  # repr_type is forced to "rp" (triangular RP, no 1D CNN — Ablation H best)
+  use_gpu_rp: false
+
+data:
+  dataset_type: "lotsa"
+  batch_size: 256
+  val_batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  val_ratio: 0.1
+
+  cronos_kwargs:
+    context_length: 96
+    cache_dir: "/lustre/nobackup/WUR/AIN/stiva001/hf_datasets"
+    normalize_per_series: true
+    force_offline: true
+    drop_last: true
+    two_views: true
+
+training:
+  epochs: 100
+  temperature: 0.1                # raised from 0.07 — softer targets reduce gradient spikes
+  learning_rate: 0.0003           # lowered from 0.001 — UpperTriDiag has larger grad norms
+  weight_decay: 0.0001
+  noise_std: 0.01
+  optimizer: "adamw"
+  scheduler: "cosine"
+  min_lr: 0.000001
+  warmup_epochs: 20               # longer warmup for new architecture (was 10)
+  max_grad_norm: 0.5              # tighter clip from 1.0 — visual grad norms are ~5x temporal
+  use_amp: false                  # disabled — AMP destabilizes training with large grad norms
+
+logging:
+  checkpoint_dir: "../../checkpoints/simclr_visual"
+  save_best_only: true
+  save_last: true
+
+# SimCLR visual-only baseline:
+#   - Only the visual MambaVisualEncoder is trained (no temporal/MambaEncoder branch).
+#   - Visual representation: Triangular RP (UpperTriDiagMambaEncoder, Ablation H best).
+#   - Multivariate strategy: rp_mv_strategy="mean" (Ablation A best, -11.9% MSE).
+#   - Two augmented views via Gaussian noise on the raw time series before RP.
+#   - No temporal encoder is used at all.

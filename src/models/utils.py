@@ -8,6 +8,29 @@ from typing import Dict, List, Optional, Iterable
 from dataclasses import dataclass
 import datasets
 
+
+def recurrence_plot_gpu(x: torch.Tensor) -> torch.Tensor:
+    """GPU-native recurrence plot — pairwise L1 distance, normalized to [0, 1].
+
+    Matches the continuous (non-thresholded) output of
+    ``pyts.image.RecurrencePlot()`` for univariate series:
+    ``RP[i, j] = |x[i] - x[j]|`` scaled so the max per sample is 1.
+
+    Args:
+        x: ``(B, L)`` float tensor of univariate time series (already on the
+           target device).
+
+    Returns:
+        ``(B, L, L)`` float32 tensor — one recurrence plot per sample.
+    """
+    # (B, L, L) pairwise absolute differences — no CPU transfer needed
+    dist = (x.unsqueeze(-1) - x.unsqueeze(-2)).abs()
+    # Per-sample min-max normalisation to [0, 1]
+    flat = dist.reshape(x.shape[0], -1)          # (B, L*L)
+    mx = flat.max(dim=1).values.clamp(min=1e-10)
+    return dist / mx[:, None, None]
+
+
 def time_series_2_recurrence_plot(x):
     # normalize input to numpy array (handle torch tensors if provided)
     try:

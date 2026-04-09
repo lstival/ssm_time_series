@@ -1,0 +1,43 @@
+COMET WARNING: To get all data logged automatically, import comet_ml before the following modules: sklearn, torch.
+COMET INFO: Experiment is live on comet.com https://www.comet.com/lstival/ssm-mamba/3b66c8da02e04cafa3ba95008a41a1d9
+
+Traceback (most recent call last):
+  File "/home/WUR/stiva001/WUR/ssm_time_series/src/experiments/probe_lotsa_checkpoint.py", line 347, in <module>
+    main()
+  File "/home/WUR/stiva001/WUR/ssm_time_series/src/experiments/probe_lotsa_checkpoint.py", line 297, in main
+    encoder, visual = load_encoders(args.checkpoint_dir, config, device)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/WUR/stiva001/WUR/ssm_time_series/src/experiments/probe_lotsa_checkpoint.py", line 76, in load_encoders
+    visual.load_state_dict(
+  File "/lustre/nobackup/WUR/AIN/stiva001/timeseries/lib/python3.12/site-packages/torch/nn/modules/module.py", line 2584, in load_state_dict
+    raise RuntimeError(
+RuntimeError: Error(s) in loading state_dict for MambaVisualEncoder:
+	Missing key(s) in state_dict: "input_proj.conv.weight", "blocks.0.norm.weight", "blocks.0.norm.bias", "blocks.0.ssm.A_log", "blocks.0.ssm.D", "blocks.0.ssm.in_proj.weight", "blocks.0.ssm.conv1d.weight", "blocks.0.ssm.conv1d.bias", "blocks.0.ssm.x_proj.weight", "blocks.0.ssm.dt_proj.weight", "blocks.0.ssm.dt_proj.bias", "blocks.0.ssm.out_proj.weight", "blocks.1.norm.weight", "blocks.1.norm.bias", "blocks.1.ssm.A_log", "blocks.1.ssm.D", "blocks.1.ssm.in_proj.weight", "blocks.1.ssm.conv1d.weight", "blocks.1.ssm.conv1d.bias", "blocks.1.ssm.x_proj.weight", "blocks.1.ssm.dt_proj.weight", "blocks.1.ssm.dt_proj.bias", "blocks.1.ssm.out_proj.weight", "blocks.2.norm.weight", "blocks.2.norm.bias", "blocks.2.ssm.A_log", "blocks.2.ssm.D", "blocks.2.ssm.in_proj.weight", "blocks.2.ssm.conv1d.weight", "blocks.2.ssm.conv1d.bias", "blocks.2.ssm.x_proj.weight", "blocks.2.ssm.dt_proj.weight", "blocks.2.ssm.dt_proj.bias", "blocks.2.ssm.out_proj.weight", "blocks.3.norm.weight", "blocks.3.norm.bias", "blocks.3.ssm.A_log", "blocks.3.ssm.D", "blocks.3.ssm.in_proj.weight", "blocks.3.ssm.conv1d.weight", "blocks.3.ssm.conv1d.bias", "blocks.3.ssm.x_proj.weight", "blocks.3.ssm.dt_proj.weight", "blocks.3.ssm.dt_proj.bias", "blocks.3.ssm.out_proj.weight", "blocks.4.norm.weight", "blocks.4.norm.bias", "blocks.4.ssm.A_log", "blocks.4.ssm.D", "blocks.4.ssm.in_proj.weight", "blocks.4.ssm.conv1d.weight", "blocks.4.ssm.conv1d.bias", "blocks.4.ssm.x_proj.weight", "blocks.4.ssm.dt_proj.weight", "blocks.4.ssm.dt_proj.bias", "blocks.4.ssm.out_proj.weight", "blocks.5.norm.weight", "blocks.5.norm.bias", "blocks.5.ssm.A_log", "blocks.5.ssm.D", "blocks.5.ssm.in_proj.weight", "blocks.5.ssm.conv1d.weight", "blocks.5.ssm.conv1d.bias", "blocks.5.ssm.x_proj.weight", "blocks.5.ssm.dt_proj.weight", "blocks.5.ssm.dt_proj.bias", "blocks.5.ssm.out_proj.weight", "blocks.6.norm.weight", "blocks.6.norm.bias", "blocks.6.ssm.A_log", "blocks.6.ssm.D", "blocks.6.ssm.in_proj.weight", "blocks.6.ssm.conv1d.weight", "blocks.6.ssm.conv1d.bias", "blocks.6.ssm.x_proj.weight", "blocks.6.ssm.dt_proj.weight", "blocks.6.ssm.dt_proj.bias", "blocks.6.ssm.out_proj.weight", "blocks.7.norm.weight", "blocks.7.norm.bias", "blocks.7.ssm.A_log", "blocks.7.ssm.D", "blocks.7.ssm.in_proj.weight", "blocks.7.ssm.conv1d.weight", "blocks.7.ssm.conv1d.bias", "blocks.7.ssm.x_proj.weight", "blocks.7.ssm.dt_proj.weight", "blocks.7.ssm.dt_proj.bias", "blocks.7.ssm.out_proj.weight", "final_norm.weight", "final_norm.bias". 
+	Unexpected key(s) in state_dict: "encoder._lengths", "encoder._gather_idx", "encoder._mask", "encoder.token_proj.weight", "encoder.token_proj.bias", "encoder.blocks.0.norm.weight", "encoder.blocks.0.norm.bias", "encoder.blocks.0.ssm.A_log", "encoder.blocks.0.ssm.D", "encoder.blocks.0.ssm.in_proj.weight", "encoder.blocks.0.ssm.conv1d.weight", "encoder.blocks.0.ssm.conv1d.bias", "encoder.blocks.0.ssm.x_proj.weight", "encoder.blocks.0.ssm.dt_proj.weight", "encoder.blocks.0.ssm.dt_proj.bias", "encoder.blocks.0.ssm.out_proj.weight", "encoder.blocks.1.norm.weight", "encoder.blocks.1.norm.bias", "encoder.blocks.1.ssm.A_log", "encoder.blocks.1.ssm.D", "encoder.blocks.1.ssm.in_proj.weight", "encoder.blocks.1.ssm.conv1d.weight", "encoder.blocks.1.ssm.conv1d.bias", "encoder.blocks.1.ssm.x_proj.weight", "encoder.blocks.1.ssm.dt_proj.weight", "encoder.blocks.1.ssm.dt_proj.bias", "encoder.blocks.1.ssm.out_proj.weight", "encoder.blocks.2.norm.weight", "encoder.blocks.2.norm.bias", "encoder.blocks.2.ssm.A_log", "encoder.blocks.2.ssm.D", "encoder.blocks.2.ssm.in_proj.weight", "encoder.blocks.2.ssm.conv1d.weight", "encoder.blocks.2.ssm.conv1d.bias", "encoder.blocks.2.ssm.x_proj.weight", "encoder.blocks.2.ssm.dt_proj.weight", "encoder.blocks.2.ssm.dt_proj.bias", "encoder.blocks.2.ssm.out_proj.weight", "encoder.blocks.3.norm.weight", "encoder.blocks.3.norm.bias", "encoder.blocks.3.ssm.A_log", "encoder.blocks.3.ssm.D", "encoder.blocks.3.ssm.in_proj.weight", "encoder.blocks.3.ssm.conv1d.weight", "encoder.blocks.3.ssm.conv1d.bias", "encoder.blocks.3.ssm.x_proj.weight", "encoder.blocks.3.ssm.dt_proj.weight", "encoder.blocks.3.ssm.dt_proj.bias", "encoder.blocks.3.ssm.out_proj.weight", "encoder.blocks.4.norm.weight", "encoder.blocks.4.norm.bias", "encoder.blocks.4.ssm.A_log", "encoder.blocks.4.ssm.D", "encoder.blocks.4.ssm.in_proj.weight", "encoder.blocks.4.ssm.conv1d.weight", "encoder.blocks.4.ssm.conv1d.bias", "encoder.blocks.4.ssm.x_proj.weight", "encoder.blocks.4.ssm.dt_proj.weight", "encoder.blocks.4.ssm.dt_proj.bias", "encoder.blocks.4.ssm.out_proj.weight", "encoder.blocks.5.norm.weight", "encoder.blocks.5.norm.bias", "encoder.blocks.5.ssm.A_log", "encoder.blocks.5.ssm.D", "encoder.blocks.5.ssm.in_proj.weight", "encoder.blocks.5.ssm.conv1d.weight", "encoder.blocks.5.ssm.conv1d.bias", "encoder.blocks.5.ssm.x_proj.weight", "encoder.blocks.5.ssm.dt_proj.weight", "encoder.blocks.5.ssm.dt_proj.bias", "encoder.blocks.5.ssm.out_proj.weight", "encoder.blocks.6.norm.weight", "encoder.blocks.6.norm.bias", "encoder.blocks.6.ssm.A_log", "encoder.blocks.6.ssm.D", "encoder.blocks.6.ssm.in_proj.weight", "encoder.blocks.6.ssm.conv1d.weight", "encoder.blocks.6.ssm.conv1d.bias", "encoder.blocks.6.ssm.x_proj.weight", "encoder.blocks.6.ssm.dt_proj.weight", "encoder.blocks.6.ssm.dt_proj.bias", "encoder.blocks.6.ssm.out_proj.weight", "encoder.blocks.7.norm.weight", "encoder.blocks.7.norm.bias", "encoder.blocks.7.ssm.A_log", "encoder.blocks.7.ssm.D", "encoder.blocks.7.ssm.in_proj.weight", "encoder.blocks.7.ssm.conv1d.weight", "encoder.blocks.7.ssm.conv1d.bias", "encoder.blocks.7.ssm.x_proj.weight", "encoder.blocks.7.ssm.dt_proj.weight", "encoder.blocks.7.ssm.dt_proj.bias", "encoder.blocks.7.ssm.out_proj.weight", "encoder.norm.weight", "encoder.norm.bias". 
+COMET INFO: ---------------------------------------------------------------------------------------
+COMET INFO: Comet.ml Experiment Summary
+COMET INFO: ---------------------------------------------------------------------------------------
+COMET INFO:   Data:
+COMET INFO:     display_summary_level : 1
+COMET INFO:     name                  : probe_lotsa_checkpoint
+COMET INFO:     url                   : https://www.comet.com/lstival/ssm-mamba/3b66c8da02e04cafa3ba95008a41a1d9
+COMET INFO:   Others:
+COMET INFO:     Name : probe_lotsa_checkpoint
+COMET INFO:   Parameters:
+COMET INFO:     batch_size : 64
+COMET INFO:     datasets   : ['ETTm1.csv', 'ETTm2.csv', 'ETTh1.csv', 'ETTh2.csv', 'weather.csv', 'traffic.csv', 'electricity.csv', 'exchange_rate.csv']
+COMET INFO:     horizons   : [96, 192, 336, 720]
+COMET INFO:   Uploads:
+COMET INFO:     environment details      : 1
+COMET INFO:     filename                 : 1
+COMET INFO:     git metadata             : 1
+COMET INFO:     git-patch (uncompressed) : 1 (90.08 KB)
+COMET INFO:     installed packages       : 1
+COMET INFO:     os packages              : 1
+COMET INFO:     source_code              : 2 (15.33 KB)
+COMET INFO: 
+COMET WARNING: To get all data logged automatically, import comet_ml before the following modules: sklearn, torch.
+
+real	0m18.262s
+user	0m7.882s
+sys	0m2.345s

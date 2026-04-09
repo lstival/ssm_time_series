@@ -396,6 +396,13 @@ def info_nce_loss(z1: torch.Tensor, z2: torch.Tensor, temperature: float) -> tor
     return 0.5 * (loss1 + loss2)
 
 
+def cosine_mse_loss(z_q: torch.Tensor, z_k: torch.Tensor) -> torch.Tensor:
+    """MSE between L2-normalised embeddings (minimises angle between them)."""
+    q = F.normalize(z_q, dim=1)
+    k = F.normalize(z_k, dim=1)
+    return F.mse_loss(q, k)
+
+
 def clip_contrastive_loss(
     xq: torch.Tensor, xk: torch.Tensor, *, temperature: float = 0.07
 ) -> torch.Tensor:
@@ -645,6 +652,7 @@ def run_clip_training(
     initial_epoch: int = 0,
     best_loss: Optional[float] = None,
     experiment: Optional[Any] = None,  # comet_ml.Experiment
+    alignment_strategy: str = "clip_symm",
 ) -> None:
     """Training loop that optimizes a CLIP-style contrastive objective."""
 
@@ -671,6 +679,12 @@ def run_clip_training(
     if start_epoch >= epochs:
         print(f"Requested epochs already completed ({start_epoch}/{epochs}).")
         return
+
+    if alignment_strategy == "cosine_mse":
+        _loss_fn = cosine_mse_loss
+    else:
+        _loss_fn = clip_contrastive_loss
+    print(f"Alignment strategy: {alignment_strategy}")
 
     for epoch in range(start_epoch, epochs):
         encoder.train()
@@ -702,7 +716,7 @@ def run_clip_training(
                             x_k = make_positive_view(x_q + noise_std * torch.randn_like(x_q))
                         q_proj = F.normalize(projection_head(encoder(x_q)), dim=1)
                         k_proj = F.normalize(visual_projection_head(visual_encoder(x_k)), dim=1)
-                        loss = clip_contrastive_loss(q_proj, k_proj)
+                        loss = _loss_fn(q_proj, k_proj)
                     else:
                         # Variable-length fallback for Chronos-style padded batches
                         q_proj_list = []
@@ -724,7 +738,7 @@ def run_clip_training(
                             continue
                         q_proj = torch.cat(q_proj_list, dim=0)
                         k_proj = torch.cat(k_proj_list, dim=0)
-                        loss = clip_contrastive_loss(q_proj, k_proj)
+                        loss = _loss_fn(q_proj, k_proj)
                 else:
                     seq = prepare_sequence(extract_sequence(batch)).to(device).float()
                     x_q = reshape_multivariate_series(seq)
@@ -737,7 +751,7 @@ def run_clip_training(
                     q_proj = F.normalize(projection_head(q_encoded), dim=1)
                     k_proj = F.normalize(visual_projection_head(k_encoded), dim=1)
 
-                    loss = clip_contrastive_loss(q_proj, k_proj)
+                    loss = _loss_fn(q_proj, k_proj)
 
                 optimizer.zero_grad(set_to_none=True)
 
@@ -773,7 +787,7 @@ def run_clip_training(
                             val_x_k = make_positive_view(val_x_q + noise_std * torch.randn_like(val_x_q))
                             val_q_proj = F.normalize(projection_head(encoder(val_x_q)), dim=1)
                             val_k_proj = F.normalize(visual_projection_head(visual_encoder(val_x_k)), dim=1)
-                            val_batch_loss = clip_contrastive_loss(val_q_proj, val_k_proj).item()
+                            val_batch_loss = _loss_fn(val_q_proj, val_k_proj).item()
                         else:
                             q_proj_list = []
                             k_proj_list = []
@@ -790,7 +804,7 @@ def run_clip_training(
                                 continue
                             val_q_proj = torch.cat(q_proj_list, dim=0)
                             val_k_proj = torch.cat(k_proj_list, dim=0)
-                            val_batch_loss = clip_contrastive_loss(val_q_proj, val_k_proj).item()
+                            val_batch_loss = _loss_fn(val_q_proj, val_k_proj).item()
                     else:
                         val_seq = prepare_sequence(extract_sequence(val_batch)).to(device).float()
                         val_x_q = reshape_multivariate_series(val_seq)
@@ -803,7 +817,7 @@ def run_clip_training(
                         val_q_proj = F.normalize(projection_head(val_q_encoded), dim=1)
                         val_k_proj = F.normalize(visual_projection_head(val_k_encoded), dim=1)
 
-                        val_batch_loss = clip_contrastive_loss(val_q_proj, val_k_proj).item()
+                        val_batch_loss = _loss_fn(val_q_proj, val_k_proj).item()
                     val_epoch_loss += val_batch_loss
                     val_batches += 1
 

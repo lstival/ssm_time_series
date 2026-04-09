@@ -1,0 +1,66 @@
+experiment_name: "ts_encoder_lotsa_ablation_best"
+seed: 42
+device: "auto"
+
+model:
+  model_name: "ts_encoder_lotsa"
+  input_dim: 64          # Ablation E: patch size 64 (~15% better MSE vs 32, same speed)
+  model_dim: 256
+  embedding_dim: 128
+  depth: 8
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+  rp_mv_strategy: "mean"  # Ablation A: best accuracy (0.0043 avg MSE, -11.9% vs per_channel)
+
+data:
+  dataset_type: "lotsa"
+  batch_size: 256
+  val_batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  val_ratio: 0.1
+
+  cronos_kwargs:
+    context_length: 96
+    cache_dir: "/lustre/nobackup/WUR/AIN/stiva001/hf_datasets"
+    normalize_per_series: true
+    force_offline: true
+    drop_last: true
+    two_views: true
+
+training:
+  epochs: 100
+  temperature: 0.2
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  noise_std: 0.01
+  optimizer: "adamw"
+  scheduler: "cosine"
+  min_lr: 0.000001
+  warmup_epochs: 10
+  max_grad_norm: 1.0
+  use_amp: true
+  alignment_strategy: "clip_symm"   # Rolled back: cosine_mse causes representation collapse (loss=0 from epoch 1)
+
+logging:
+  checkpoint_dir: "../../checkpoints/lotsa_ablation_best"
+  save_best_only: true
+  save_last: true
+
+# Ablation-optimal configuration — all 3 changes from ablation review:
+#
+# 1. rp_mv_strategy: "mean"  (Ablation A)
+#    - Best accuracy: 0.0043 avg MSE (-11.9% vs per_channel)
+#    - Speed: 393.6 ms/batch (same as per_channel)
+#
+# 2. input_dim: 64  (Ablation E, patch_size)
+#    - Best accuracy: 0.0040 avg MSE vs 0.0047 at patch=32 (~15% improvement)
+#    - Speed: 278.6 ms/batch vs 274.2 ms/batch (negligible difference)
+#
+# 3. alignment_strategy: "cosine_mse"  (Ablation C)
+#    - ETTm1: 0.0033 vs 0.0060 (clip_symm)  — 45% better
+#    - exchange_rate: 0.0859 vs 0.2306       — 2.7x better (CLIP fails badly here)
+#    - Most robust alignment loss across all dataset types

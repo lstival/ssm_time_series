@@ -4,7 +4,8 @@ device: "auto"
 
 model:
   model_name: "ts_encoder_lotsa"
-  input_dim: 32          # token window size (must match tokenizer in MambaVisualEncoder)
+  rp_encoder: "upper_tri"  # routes build_visual_encoder_from_config → UpperTriDiagRPEncoder
+  input_dim: 32            # patch_len for UpperTriDiagRPEncoder (anti-diagonal lag tokens)
   model_dim: 256
   embedding_dim: 128
   depth: 8
@@ -13,7 +14,7 @@ model:
   expand_factor: 1.5
   dropout: 0.05
   pooling: "mean"
-  rp_mv_strategy: "joint"  # Ablation A: 25% faster training, same accuracy
+  rp_mv_strategy: "mean"  # Ablation A best for UpperTriDiag (was joint for old MambaVisualEncoder)
 
 data:
   dataset_type: "lotsa"

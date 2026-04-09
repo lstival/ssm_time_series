@@ -159,15 +159,21 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_args(argv)
     
-    # Initialize Comet ML experiment from config
-    from comet_utils import create_comet_experiment
-    experiment = create_comet_experiment("cosine_clip")
-
     config_path = resolve_path(Path.cwd(), args.config)
     if config_path is None or not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found: {args.config}")
 
     config = tu.load_config(config_path)
+
+    # Use experiment name derived from config's experiment_name if available
+    from comet_utils import create_comet_experiment
+    exp_name_key = str(getattr(config, "experiment_name", "cosine_clip"))
+    # Map known config experiment names to comet keys
+    _comet_key_map = {
+        "ts_encoder_lotsa_ablation_best": "ablation_best",
+    }
+    comet_key = _comet_key_map.get(exp_name_key, "cosine_clip")
+    experiment = create_comet_experiment(comet_key)
     tu.set_seed(config.seed)
     device = tu.prepare_device(config.device)
     print(f"Using device: {device}")
@@ -297,6 +303,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     if val_loader is not None and len(val_loader) == 0:
         val_loader = None
 
+    alignment_strategy = str(training_cfg.get("alignment_strategy", "clip_symm"))
+    experiment.log_parameter("alignment_strategy", alignment_strategy)
+
     u.run_clip_training(
         encoder=encoder,
         visual_encoder=visual_encoder,
@@ -312,6 +321,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         initial_epoch=initial_epoch,
         best_loss=best_loss,
         experiment=experiment,
+        alignment_strategy=alignment_strategy,
     )
     
     # End Comet experiment

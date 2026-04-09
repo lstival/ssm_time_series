@@ -1,0 +1,228 @@
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                       ABLATION I FILE STRUCTURE MAP                           ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+📂 REPO ROOT
+│
+├─📂 src/
+│  ├─📂 experiments/
+│  │  ├─ 🆕 ablation_I_multivariate_rp.py         [MAIN SCRIPT — 650 lines]
+│  │  │   ├─ rp_channel_stacking()                [Method 1 implementation]
+│  │  │   ├─ rp_global_l2()                       [Method 2 implementation]
+│  │  │   ├─ rp_jrp_hadamard()                    [Method 3 implementation]
+│  │  │   ├─ rp_crp_block()                       [Method 4 implementation]
+│  │  │   ├─ rp_ms_fusion_concat()                [Method 5 implementation]
+│  │  │   ├─ train_and_probe()                    [Main training loop]
+│  │  │   └─ save_results()                       [CSV output formatter]
+│  │  │
+│  │  ├─ 🆕 ABLATION_I_DESIGN.md                 [THEORY DOCUMENT — 450 lines]
+│  │  │   ├─ Method 1-5: Detailed theory, pros/cons, predictions
+│  │  │   ├─ Experimental Design section
+│  │  │   ├─ Expected Outcomes & Decision Tree
+│  │  │   ├─ Implementation Notes
+│  │  │   └─ References (Marwan, Zhou, Liu, etc)
+│  │  │
+│  │  ├─ 🆕 ABLATION_I_vs_ABLATION_A.md          [COMPARISON DOCUMENT]
+│  │  │   ├─ Quick Reference Table
+│  │  │   ├─ Detailed Comparison Matrix
+│  │  │   ├─ Which ablation answers what
+│  │  │   ├─ ICML recommendation
+│  │  │   └─ Technical Integration notes
+│  │  │
+│  │  ├─📂 smoke_test/
+│  │  │  └─ 🆕 test_ablation_I.sh                [QUICK VALIDATION — 5 min]
+│  │  │
+│  │  └─ [existing ablations A-H and other files]
+│  │
+│  └─📂 scripts/
+│     ├─ 🆕 anunna_ablations_I.sh                [SLURM JOB — 6 hours]
+│     └─ [existing ablation scripts]
+│
+├─🆕 ABLATION_I_QUICKSTART.md                     [USER GUIDE — Start here!]
+│  ├─ What this is (overview)
+│  ├─ The 5 methods (quick ref)
+│  ├─ Run in 5 min (smoke test)
+│  ├─ Run full ablation (3 options)
+│  ├─ Understanding results
+│  ├─ Expected findings per dataset
+│  ├─ Key files reference
+│  ├─ Q&A Troubleshooting
+│  └─ Next steps
+│
+├─🆕 ABLATION_I_CREATION_SUMMARY.md              [WHAT WAS BUILT]
+│  ├─ Files created (7 new files)
+│  ├─ Key design decisions
+│  ├─ File sizes & complexity
+│  ├─ Validation checklist
+│  ├─ Expected outcomes
+│  ├─ Next actions
+│  └─ File tree
+│
+├─🆕 METHODS_COMPARISON_TABLE.md                 [PERFORMANCE MATRIX]
+│  ├─ Overview Table (all 5 methods)
+│  ├─ Detailed Specs per method
+│  ├─ Dataset × Method recommendation matrix
+│  ├─ Decision Tree (d ≤ 10 vs high-d)
+│  ├─ Computational Cost comparison
+│  ├─ Literature precedent
+│  └─ Summary recommendations
+│
+├─🆕 ABLATION_I_VISUAL_MAP.txt                   [This file]
+│
+├─📂 memory/ [Persists across sessions]
+│  ├─ 🆕 ablation_I_mv_rp_methods.md             [Project memory]
+│  └─ 🆕 MEMORY.md (updated index)
+│
+└─📂 results/
+   └─📂 ablation_I/ [Will be created on first run]
+      └─ ablation_I_multivariate_rp.csv          [CSV OUTPUT]
+         ├─ Column: Method
+         ├─ Column: Dataset
+         ├─ Columns: H96_MSE, H96_MAE, H192_MSE, ..., H720_MAE
+         └─ Rows: 15 (5 methods × 3 datasets)
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📍 KEY LOCATIONS & READING ORDER
+
+For Users (Non-Technical):
+  1. ABLATION_I_QUICKSTART.md             ← Start here (5-min overview)
+  2. METHODS_COMPARISON_TABLE.md          ← Understand the 5 methods
+  3. Run: bash src/experiments/smoke_test/test_ablation_I.sh
+  4. Run: sbatch src/scripts/anunna_ablations_I.sh
+  5. Analyze: results/ablation_I/ablation_I_multivariate_rp.csv
+
+For Developers:
+  1. src/experiments/ABLATION_I_DESIGN.md           ← Theory
+  2. src/experiments/ablation_I_multivariate_rp.py  ← Code
+  3. src/experiments/ABLATION_I_vs_ABLATION_A.md    ← Integration
+  4. ABLATION_I_CREATION_SUMMARY.md                 ← Status
+  5. memory/ablation_I_mv_rp_methods.md             ← Context
+
+For ICML Revision:
+  1. METHODS_COMPARISON_TABLE.md          ← Which method to recommend
+  2. ABLATION_I_vs_ABLATION_A.md         ← Narrative for paper
+  3. src/experiments/ABLATION_I_DESIGN.md ← Justification for methods
+  4. results/ablation_I/                  ← Tables & figures
+
+═══════════════════════════════════════════════════════════════════════════════
+
+🎯 CRITICAL PATHS
+
+Path 1: Quick Validation (5 minutes)
+  ABLATION_I_QUICKSTART.md
+    → bash src/experiments/smoke_test/test_ablation_I.sh
+
+Path 2: Full Evaluation (18-30 hours)
+  ABLATION_I_QUICKSTART.md
+    → sbatch src/scripts/anunna_ablations_I.sh
+    → tail -f logs/ablation_I_*.out
+    → cat results/ablation_I/ablation_I_multivariate_rp.csv
+
+Path 3: Theory Understanding (30 minutes)
+  METHODS_COMPARISON_TABLE.md
+    → src/experiments/ABLATION_I_DESIGN.md
+    → ABLATION_I_vs_ABLATION_A.md
+
+Path 4: Code Review (1 hour)
+  ABLATION_I_CREATION_SUMMARY.md
+    → src/experiments/ablation_I_multivariate_rp.py
+    → src/scripts/anunna_ablations_I.sh
+    → memory/ablation_I_mv_rp_methods.md
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📊 THE 5 METHODS AT A GLANCE
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ METHOD 1: CHANNEL STACKING                                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Concept:    Per-channel RP → stacked as (N×N×d) tensor                 │
+│ Best For:   Low-dimensional data (d ≤ 10) — ETTm1, univariate-like      │
+│ Speed:      ⭐⭐⭐⭐ Fast                                                 │
+│ XAI:        ⭐⭐⭐⭐⭐ Excellent (Grad-CAM per channel)                  │
+│ Memory:     ⭐⭐⭐ Moderate (d channels)                                 │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ METHOD 2: GLOBAL L2 DISTANCE                                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Concept:    Single RP from L2 distances in R^d state space              │
+│ Best For:   Emergency fallback; efficient baseline                       │
+│ Speed:      ⭐⭐⭐⭐⭐ Very fast (single matrix)                          │
+│ XAI:        ⭐⭐ Poor (can't attribute to channel)                       │
+│ Memory:     ⭐⭐⭐⭐⭐ Minimal (single channel)                           │
+│ Risk:       Variable magnitude domination                                │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ METHOD 3: JRP (HADAMARD)                                                │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Concept:    Element-wise product of per-channel RPs                      │
+│ Best For:   Phase synchronization; niche use only                        │
+│ Speed:      ⭐⭐⭐⭐ Fast                                                 │
+│ XAI:        ⭐⭐ Poor (sparse signal)                                     │
+│ Memory:     ⭐⭐⭐⭐ Minimal (single channel)                            │
+│ Risk:       Exponential sparsity at high d (0.8^321 ≈ 0)               │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ METHOD 4: CRP (CROSS-RECURRENCE PLOTS)                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Concept:    Block matrix with diagonal RPs + off-diagonal CRPs           │
+│ Best For:   Causal/lead-lag analysis on LOW-d only (d ≤ 20)              │
+│ Speed:      ⭐ Very slow ((d·L)² computation)                            │
+│ XAI:        ⭐⭐⭐⭐ Good (channel pair attribution)                     │
+│ Memory:     ⭐ Catastrophic ((d·L)² explosion)                          │
+│ Risk:       OOM at high d (Traffic: 321×96 → OOM)                       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ METHOD 5: MULTI-SCALE FUSION ⭐ LIKELY SOTA                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Concept:    RPs at multiple scales + time delays, concatenated           │
+│ Best For:   Medium & HIGH-d data — Weather, Traffic                      │
+│ Speed:      ⭐⭐⭐ Medium (multiple scale computations)                 │
+│ XAI:        ⭐⭐⭐⭐ Good (visualize per-scale)                         │
+│ Memory:     ⭐⭐⭐ Moderate (3-5× baseline)                             │
+│ Advantage:  Captures local + global structure; SOTA 2023-2024            │
+└─────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+
+⏱️  DECISION TREE
+
+                          Which Method?
+                              |
+                    What's your dimensionality?
+                      /           |            \
+                   d≤10         10<d<50        d>50
+                   /               |             \
+          Channel Stack    Channel Stack OR    Multi-Scale
+                         Multi-Scale Fusion      Fusion
+                         
+                    Any XAI requirement?
+                         /        \
+                       YES        NO
+                       /           \
+            Channel Stack        Global L2
+            Multi-Scale Fusion   (fast fallback)
+
+═══════════════════════════════════════════════════════════════════════════════
+
+✅ VALIDATION CHECKLIST
+
+Before running full ablation:
+  ☑ Read ABLATION_I_QUICKSTART.md (5 min)
+  ☑ Run smoke test: bash src/experiments/smoke_test/test_ablation_I.sh (5 min)
+  ☑ Check results in results/ablation_I_smoke_test/ (1 min)
+  ☑ Review METHODS_COMPARISON_TABLE.md (10 min)
+  ☑ Understand which methods match your data (5 min)
+
+Then submit:
+  ☑ sbatch src/scripts/anunna_ablations_I.sh
+
+═══════════════════════════════════════════════════════════════════════════════
+
+Created: 2026-04-02
+Status: ✅ READY TO RUN

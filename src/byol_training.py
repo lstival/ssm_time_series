@@ -356,7 +356,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     config = tu.load_config(config_path)
 
-    mode_from_config = str(config.model.get("byol_mode", config.model.get("simclr_mode", ""))).lower()
+    mode_from_config = str(config.model.get("byol_mode", config.model.get("rp_encoder", config.model.get("simclr_mode", "")))).lower()
+    if mode_from_config == "upper_tri":
+        mode_from_config = "visual"
     if args.mode is not None:
         mode = args.mode
     elif mode_from_config in ("temporal", "visual"):
@@ -405,8 +407,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         enc_out_dim = embedding_dim
         print(f"Temporal encoder: MambaEncoder (embedding_dim={enc_out_dim})")
     else:
-        from models.mamba_visual_encoder import UpperTriDiagSimCLREncoder
-        encoder = UpperTriDiagSimCLREncoder(
+        from models.mamba_visual_encoder import UpperTriDiagRPEncoder
+        encoder = UpperTriDiagRPEncoder(
             patch_len=int(model_cfg.get("input_dim", 32)),
             d_model=model_dim,
             n_layers=int(model_cfg.get("depth", 8)),
@@ -414,7 +416,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             rp_mv_strategy="mean",
         )
         enc_out_dim = embedding_dim
-        print(f"Visual encoder: UpperTriDiagSimCLREncoder (patch_len={model_cfg.get('input_dim', 32)}, embedding_dim={enc_out_dim})")
+        print(f"Visual encoder: UpperTriDiagRPEncoder (patch_len={model_cfg.get('input_dim', 32)}, embedding_dim={enc_out_dim})")
 
     # Online: encoder → projector → predictor
     # Target: encoder_ema → projector_ema  (built inside run_byol_training)

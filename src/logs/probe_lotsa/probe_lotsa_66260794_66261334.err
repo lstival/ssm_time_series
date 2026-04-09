@@ -1,0 +1,127 @@
+COMET WARNING: To get all data logged automatically, import comet_ml before the following modules: torch, sklearn.
+COMET INFO: Experiment is live on comet.com https://www.comet.com/lstival/ssm-mamba/e21412f114c8418580bc2e00f9c8d850
+
+COMET INFO: ---------------------------------------------------------------------------------------
+COMET INFO: Comet.ml Experiment Summary
+COMET INFO: ---------------------------------------------------------------------------------------
+COMET INFO:   Data:
+COMET INFO:     display_summary_level : 1
+COMET INFO:     name                  : probe_lotsa_checkpoint
+COMET INFO:     url                   : https://www.comet.com/lstival/ssm-mamba/e21412f114c8418580bc2e00f9c8d850
+COMET INFO:   Metrics [count] (min, max):
+COMET INFO:     ETTh1/H192/mae                           : 0.44832339882850647
+COMET INFO:     ETTh1/H192/mse                           : 0.2875582277774811
+COMET INFO:     ETTh1/H192/probe_train_loss [20]         : (0.2309381425624988, 0.9344932158462337)
+COMET INFO:     ETTh1/H336/mae                           : 0.4614052474498749
+COMET INFO:     ETTh1/H336/mse                           : 0.31248342990875244
+COMET INFO:     ETTh1/H336/probe_train_loss [20]         : (0.23590729568825394, 0.9938337133556115)
+COMET INFO:     ETTh1/H720/mae                           : 0.6014742851257324
+COMET INFO:     ETTh1/H720/mse                           : 0.4814123809337616
+COMET INFO:     ETTh1/H720/probe_train_loss [20]         : (0.2555103816214155, 0.9835557304933423)
+COMET INFO:     ETTh1/H96/mae                            : 0.4791070520877838
+COMET INFO:     ETTh1/H96/mse                            : 0.3249237835407257
+COMET INFO:     ETTh1/H96/probe_train_loss [20]          : (0.22552073746919632, 1.001261197152685)
+COMET INFO:     ETTh2/H192/mae                           : 0.44485461711883545
+COMET INFO:     ETTh2/H192/mse                           : 0.30800849199295044
+COMET INFO:     ETTh2/H192/probe_train_loss [20]         : (0.29460117037667605, 1.1794425610636101)
+COMET INFO:     ETTh2/H336/mae                           : 0.46581149101257324
+COMET INFO:     ETTh2/H336/mse                           : 0.3388981819152832
+COMET INFO:     ETTh2/H336/probe_train_loss [20]         : (0.3056886363469186, 1.2172770255901775)
+COMET INFO:     ETTh2/H720/mae                           : 0.5402425527572632
+COMET INFO:     ETTh2/H720/mse                           : 0.44184741377830505
+COMET INFO:     ETTh2/H720/probe_train_loss [20]         : (0.3474368086603821, 1.2941265763317953)
+COMET INFO:     ETTh2/H96/mae                            : 0.40993502736091614
+COMET INFO:     ETTh2/H96/mse                            : 0.2618738114833832
+COMET INFO:     ETTh2/H96/probe_train_loss [20]          : (0.2779191942488561, 1.218981799043593)
+COMET INFO:     ETTm1/H192/mae                           : 0.3499765694141388
+COMET INFO:     ETTm1/H192/mse                           : 0.20777364075183868
+COMET INFO:     ETTm1/H192/probe_train_loss [20]         : (0.19845425231520095, 0.39416642487049103)
+COMET INFO:     ETTm1/H336/mae                           : 0.46942228078842163
+COMET INFO:     ETTm1/H336/mse                           : 0.34223613142967224
+COMET INFO:     ETTm1/H336/probe_train_loss [20]         : (0.22553566279176065, 0.4150190795056055)
+COMET INFO:     ETTm1/H720/mae                           : 0.5326319932937622
+COMET INFO:     ETTm1/H720/mse                           : 0.39770063757896423
+COMET INFO:     ETTm1/H720/probe_train_loss [20]         : (0.2471607873460147, 0.4262670308521169)
+COMET INFO:     ETTm1/H96/mae                            : 0.30767127871513367
+COMET INFO:     ETTm1/H96/mse                            : 0.16078448295593262
+COMET INFO:     ETTm1/H96/probe_train_loss [20]          : (0.1650173966640313, 0.42537191739231633)
+COMET INFO:     ETTm2/H192/mae                           : 0.3879975378513336
+COMET INFO:     ETTm2/H192/mse                           : 0.24821284413337708
+COMET INFO:     ETTm2/H192/probe_train_loss [20]         : (0.2280856935303849, 0.4579686231529464)
+COMET INFO:     ETTm2/H336/mae                           : 0.4632602334022522
+COMET INFO:     ETTm2/H336/mse                           : 0.3437587022781372
+COMET INFO:     ETTm2/H336/probe_train_loss [20]         : (0.260877140332897, 0.4745169946432566)
+COMET INFO:     ETTm2/H720/mae                           : 0.5207668542861938
+COMET INFO:     ETTm2/H720/mse                           : 0.4228214621543884
+COMET INFO:     ETTm2/H720/probe_train_loss [20]         : (0.3069274518250062, 0.5244215732224752)
+COMET INFO:     ETTm2/H96/mae                            : 0.3893403708934784
+COMET INFO:     ETTm2/H96/mse                            : 0.24932733178138733
+COMET INFO:     ETTm2/H96/probe_train_loss [20]          : (0.18928594706293753, 0.43552874461297064)
+COMET INFO:     electricity/H192/mae                     : 0.6891454458236694
+COMET INFO:     electricity/H192/mse                     : 0.7913255095481873
+COMET INFO:     electricity/H192/probe_train_loss [20]   : (0.5802549297792198, 1.0379496773664099)
+COMET INFO:     electricity/H336/mae                     : 0.6996517181396484
+COMET INFO:     electricity/H336/mse                     : 0.8159469366073608
+COMET INFO:     electricity/H336/probe_train_loss [20]   : (0.5925606938391706, 1.0488783238578017)
+COMET INFO:     electricity/H720/mae                     : 0.6959644556045532
+COMET INFO:     electricity/H720/mse                     : 0.80649334192276
+COMET INFO:     electricity/H720/probe_train_loss [20]   : (0.6436191140300166, 1.0886672928820562)
+COMET INFO:     electricity/H96/mae                      : 0.6974521279335022
+COMET INFO:     electricity/H96/mse                      : 0.8048758506774902
+COMET INFO:     electricity/H96/probe_train_loss [20]    : (0.5730321139749819, 1.0736852455748258)
+COMET INFO:     exchange_rate/H192/mae                   : 1.69717276096344
+COMET INFO:     exchange_rate/H192/mse                   : 3.0739681720733643
+COMET INFO:     exchange_rate/H192/probe_train_loss [20] : (0.16705019207937377, 1.2799566916057041)
+COMET INFO:     exchange_rate/H336/mae                   : 1.8027098178863525
+COMET INFO:     exchange_rate/H336/mse                   : 3.6691460609436035
+COMET INFO:     exchange_rate/H336/probe_train_loss [20] : (0.27425179545368467, 1.3770097732543944)
+COMET INFO:     exchange_rate/H720/mae                   : 1.507385015487671
+COMET INFO:     exchange_rate/H720/mse                   : 3.0269157886505127
+COMET INFO:     exchange_rate/H720/probe_train_loss [20] : (0.4855388892548425, 1.632727712392807)
+COMET INFO:     exchange_rate/H96/mae                    : 1.6277828216552734
+COMET INFO:     exchange_rate/H96/mse                    : 2.817624568939209
+COMET INFO:     exchange_rate/H96/probe_train_loss [20]  : (0.11594968597803797, 1.2317194796034268)
+COMET INFO:     traffic/H192/mae                         : 0.8736266493797302
+COMET INFO:     traffic/H192/mse                         : 1.2576109170913696
+COMET INFO:     traffic/H192/probe_train_loss [20]       : (0.2231945282254139, 0.9190710390080287)
+COMET INFO:     traffic/H336/mae                         : 0.8627341985702515
+COMET INFO:     traffic/H336/mse                         : 1.2320266962051392
+COMET INFO:     traffic/H336/probe_train_loss [20]       : (0.22589218699732305, 0.9436028401611903)
+COMET INFO:     traffic/H720/mae                         : 0.8903217911720276
+COMET INFO:     traffic/H720/mse                         : 1.3066996335983276
+COMET INFO:     traffic/H720/probe_train_loss [20]       : (0.23101748276356213, 0.9436933677955712)
+COMET INFO:     traffic/H96/mae                          : 0.878058135509491
+COMET INFO:     traffic/H96/mse                          : 1.2536081075668335
+COMET INFO:     traffic/H96/probe_train_loss [20]        : (0.22851589696700347, 1.0284387357741094)
+COMET INFO:     weather/H192/mae                         : 0.18803392350673676
+COMET INFO:     weather/H192/mse                         : 0.05615891516208649
+COMET INFO:     weather/H192/probe_train_loss [20]       : (1.0513981165658834, 1.19834929664965)
+COMET INFO:     weather/H336/mae                         : 0.22646047174930573
+COMET INFO:     weather/H336/mse                         : 0.08151748776435852
+COMET INFO:     weather/H336/probe_train_loss [20]       : (1.0579050970702146, 1.2131359503665677)
+COMET INFO:     weather/H720/mae                         : 0.20428161323070526
+COMET INFO:     weather/H720/mse                         : 0.06910871714353561
+COMET INFO:     weather/H720/probe_train_loss [20]       : (1.0592403148845182, 1.2077519705462836)
+COMET INFO:     weather/H96/mae                          : 0.3974545896053314
+COMET INFO:     weather/H96/mse                          : 0.2537558972835541
+COMET INFO:     weather/H96/probe_train_loss [20]        : (1.04079676081706, 1.20379892771081)
+COMET INFO:   Others:
+COMET INFO:     Name : probe_lotsa_checkpoint
+COMET INFO:   Parameters:
+COMET INFO:     batch_size : 64
+COMET INFO:     datasets   : ['ETTm1.csv', 'ETTm2.csv', 'ETTh1.csv', 'ETTh2.csv', 'weather.csv', 'traffic.csv', 'electricity.csv', 'exchange_rate.csv']
+COMET INFO:     horizons   : [96, 192, 336, 720]
+COMET INFO:   Uploads:
+COMET INFO:     environment details      : 1
+COMET INFO:     filename                 : 1
+COMET INFO:     git metadata             : 1
+COMET INFO:     git-patch (uncompressed) : 1 (90.08 KB)
+COMET INFO:     installed packages       : 1
+COMET INFO:     os packages              : 1
+COMET INFO:     source_code              : 2 (15.33 KB)
+COMET INFO: 
+COMET WARNING: To get all data logged automatically, import comet_ml before the following modules: torch, sklearn.
+
+real	6m47.327s
+user	5m15.188s
+sys	0m13.403s

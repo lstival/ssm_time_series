@@ -1,0 +1,48 @@
+experiment_name: "ablation_B_mtf"
+seed: 42
+device: "auto"
+
+model:
+  model_name: "ts_encoder_lotsa"
+  input_dim: 32
+  model_dim: 256
+  embedding_dim: 128
+  depth: 8
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+  repr_type: "mtf"    # Ablation B control
+
+data:
+  dataset_type: "lotsa"
+  batch_size: 256
+  val_batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  val_ratio: 0.1
+  cronos_kwargs:
+    context_length: 96
+    cache_dir: "/lustre/nobackup/WUR/AIN/stiva001/hf_datasets"
+    normalize_per_series: true
+    force_offline: true
+    drop_last: true
+
+training:
+  epochs: 50
+  temperature: 0.2
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  noise_std: 0.01
+  optimizer: "adamw"
+  scheduler: "cosine"
+  min_lr: 0.000001
+  warmup_epochs: 5
+  max_grad_norm: 1.0
+  use_amp: true
+
+logging:
+  checkpoint_dir: "../../../../checkpoints/ablation_B_mtf"
+  save_best_only: true
+  save_last: true

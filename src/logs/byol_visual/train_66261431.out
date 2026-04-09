@@ -1,0 +1,50 @@
+Starting BYOL visual encoder training...
+Config: lotsa_byol_visual.yaml
+Starting BYOL training — mode=visual  device=cuda
+Offline mode — loading from: /lustre/nobackup/WUR/AIN/stiva001/hf_datasets
+Loaded 'm4_daily' from Salesforce/lotsa_data: 4,227 rows
+Loaded 'm4_hourly' from Salesforce/lotsa_data: 414 rows
+Loaded 'm4_monthly' from Salesforce/lotsa_data: 48,000 rows
+Loaded 'm4_yearly' from Salesforce/lotsa_data: 22,739 rows
+Loaded 'm4_weekly' from Salesforce/lotsa_data: 359 rows
+Loaded 'm4_quarterly' from Salesforce/lotsa_data: 23,998 rows
+'ett_h1' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Failed to load 'ett_h1' from both Salesforce/lotsa_data and autogluon/chronos_datasets
+'ett_h2' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Failed to load 'ett_h2' from both Salesforce/lotsa_data and autogluon/chronos_datasets
+'ett_m1' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Failed to load 'ett_m1' from both Salesforce/lotsa_data and autogluon/chronos_datasets
+'ett_m2' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Failed to load 'ett_m2' from both Salesforce/lotsa_data and autogluon/chronos_datasets
+'exchange_rate' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Loaded 'exchange_rate' from autogluon/chronos_datasets: 8 rows
+Loaded 'traffic_hourly' from Salesforce/lotsa_data: 862 rows
+Loaded 'traffic_weekly' from Salesforce/lotsa_data: 862 rows
+'solar_10min' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Failed to load 'solar_10min' from both Salesforce/lotsa_data and autogluon/chronos_datasets
+'solar_weekly' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Failed to load 'solar_weekly' from both Salesforce/lotsa_data and autogluon/chronos_datasets
+'electricity_hourly' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Failed to load 'electricity_hourly' from both Salesforce/lotsa_data and autogluon/chronos_datasets
+Loaded 'hospital' from Salesforce/lotsa_data: 767 rows
+Loaded 'covid_deaths' from Salesforce/lotsa_data: 266 rows
+Loaded 'pedestrian_counts' from Salesforce/lotsa_data: 66 rows
+Loaded 'nn5_daily_with_missing' from Salesforce/lotsa_data: 111 rows
+Loaded 'nn5_weekly' from Salesforce/lotsa_data: 111 rows
+Loaded 'monash_m3_monthly' from Salesforce/lotsa_data: 1,428 rows
+Loaded 'monash_m3_quarterly' from Salesforce/lotsa_data: 756 rows
+Loaded 'monash_m3_yearly' from Salesforce/lotsa_data: 645 rows
+Loaded 'taxi_30min' from Salesforce/lotsa_data: 67,984 rows
+Loaded 'kdd_cup_2018_with_missing' from Salesforce/lotsa_data: 270 rows
+Loaded 'oikolab_weather' from Salesforce/lotsa_data: 8 rows
+Loaded 'saugeenday' from Salesforce/lotsa_data: 1 rows
+Loaded 'us_births' from Salesforce/lotsa_data: 1 rows
+Loaded 'sunspot_with_missing' from Salesforce/lotsa_data: 1 rows
+Visual encoder: UpperTriDiagSimCLREncoder (patch_len=64, embedding_dim=128)
+Warning: Could not create symlink /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_visual/ts_byol_visual_lotsa_latest: 'PosixPath' object has no attribute 'lexists'
+Config: lotsa_byol_visual.yaml
+Checkpoints: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_visual/ts_byol_visual_lotsa_20260408_1207
+Epoch 1/100  train=1.0338  val=0.4408 [best]
+Epoch 2/100  train=0.2442  val=0.1643 [best]
+Epoch 3/100  train=0.1215  val=0.1182 [best]
+Epoch 4/100  train=0.0896  val=0.0979 [best]

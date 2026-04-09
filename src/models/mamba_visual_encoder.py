@@ -237,16 +237,21 @@ class MambaVisualEncoder(nn.Module):
             return proj[:, np.newaxis, :]  # (N, 1, L)
 
         if self.rp_mv_strategy == "joint":
-            # Multivariate recurrence: threshold on L2 distance in F-dim state space
+            # Global L2 Distance RP: multivariate recurrence in F-dim state space
+            # Each timestep is a vector in R^F (F = n_channels, e.g., 321)
+            # RP[i,j] = ||x_i - x_j||_2 / max_distance (continuous, normalized to [0,1])
             arr_t = arr.transpose(0, 2, 1)  # (N, L, F)
             imgs = np.zeros((N, L, L), dtype=np.float32)
             for n in range(N):
-                x = arr_t[n]  # (L, F)
-                diffs = x[:, None, :] - x[None, :, :]  # (L, L, F)
-                dists = np.sqrt((diffs ** 2).sum(-1))   # (L, L)
-                thresh = np.percentile(dists, 10)
-                imgs[n] = (dists <= thresh).astype(np.float32)
-            return imgs  # (N, L, L) — already 2-D, skip normal RP step
+                x = arr_t[n]  # (L, F) — L timesteps, each a F-dimensional vector
+                diffs = x[:, None, :] - x[None, :, :]  # (L, L, F) — pairwise differences
+                dists = np.sqrt((diffs ** 2).sum(-1))   # (L, L) — L2 distances in R^F
+                # Normalize to [0, 1] by dividing by max distance
+                dists_max = dists.max()
+                if dists_max > 0:
+                    dists = dists / dists_max
+                imgs[n] = dists
+            return imgs  # (N, L, L) — continuous RP with values in [0,1]
 
         raise ValueError(f"Unknown rp_mv_strategy: {self.rp_mv_strategy}")
 
@@ -291,8 +296,8 @@ class MambaVisualEncoder(nn.Module):
             ranges = maxs - mins
             ranges[ranges == 0] = 1.0
             arr_scaled = 2 * (arr_2d - mins) / ranges - 1
-            arr_scaled = np.clip(arr_scaled, -1.0, 1.0)
-            
+            arr_scaled = np.clip(arr_scaled, -1.0 + 1e-6, 1.0 - 1e-6)
+
             gaf = GramianAngularField(method="summation")
             imgs = gaf.fit_transform(arr_scaled)
             return imgs.astype(np.float32)
@@ -694,6 +699,237 @@ class RPSS2DEncoder(BaseVisualEncoder):
         return out.view(B, P, self.d_model)  # (B, P, d)
 
 
+# ── Variant 5: Upper-Triangle Anti-Diagonal Mamba ─────────────────────────────
+
+class _UpperTriDiagCore(BaseVisualEncoder):
+    """RP-geometry-native inner encoder exploiting exact symmetry of Recurrence Plots.
+
+    Motivation
+    ----------
+    An RP is symmetric by construction: RP[i,j] = RP[j,i], and the main diagonal
+    is identically zero (RP[i,i] = 0 always).  This means:
+      - The upper triangle (excluding diagonal) contains 100% of the information.
+      - The lower triangle is fully redundant.
+      - The diagonal carries zero information.
+    For l=64: full matrix = 4096 values → upper triangle = 2016 values (~50% saving).
+
+    Geometric meaning of anti-diagonals
+    ------------------------------------
+    All cells (i, j) with j - i = k share the same **lag k**:
+        RP[i, i+k] = distance(x_i, x_{i+k})
+
+    Anti-diagonal k is the **lag-k recurrence profile** — how similar the series is
+    to itself shifted by k timesteps.  Reading anti-diagonals from lag=1 to lag=l-1
+    gives a structured sequence where each token encodes recurrence at one specific
+    lag, ordered from short-range to long-range.
+
+    This ordering is semantically natural for SSMs:  the Mamba SSM receives a
+    sequence of lag tokens [lag1, lag2, ..., lag_{l-1}] and can model how recurrence
+    *evolves as the lag grows* — directly capturing periodicity, trend stationarity,
+    and regime changes in a geometrically meaningful way.
+
+    Architecture
+    ------------
+    1. Extract upper triangle by anti-diagonal order: (l-1) tokens, each of variable
+       length (padded to l-1 with zeros so all tokens are equal-length vectors).
+    2. Each token (anti-diagonal = one lag): project from (l-1,) to d_model via Linear.
+    3. MambaBlock × n_layers processes the sequence of (l-1) lag tokens.
+    4. LayerNorm → output: (B, P, d_model).
+
+    Complexity
+    ----------
+    Input tokens: (l-1) instead of l² — e.g. 63 instead of 4096 for l=64.
+    Each token: at most l-1 values (padded to l-1).
+    Total input: (l-1)² ≈ l²/2 values — 50% reduction vs full RP.
+    """
+
+    def __init__(
+        self,
+        patch_len: int,
+        d_model: int = 128,
+        n_layers: int = 2,
+    ) -> None:
+        super().__init__()
+        self.patch_len = patch_len
+        self.d_model = d_model
+        self.l = patch_len
+
+        # Each anti-diagonal k (lag k) has min(k, l-k) entries, padded to (l-1)
+        self.token_dim = patch_len - 1   # max anti-diag length = l-1
+        self.n_tokens = patch_len - 1    # lags 1 … l-1
+
+        # Pre-compute gather indices for upper-triangle anti-diagonals:
+        # For lag k (1-indexed): cells (i, i+k) for i in [0, l-1-k]
+        # Stored as flat index into the l×l matrix: i*l + (i+k)
+        indices = []   # list of 1-D index tensors, one per lag
+        lengths = []   # actual number of entries at each lag
+        for k in range(1, patch_len):
+            rows = torch.arange(patch_len - k)         # i = 0..l-1-k
+            cols = rows + k                             # j = i+k
+            flat = rows * patch_len + cols              # flat index in l×l
+            lengths.append(len(flat))
+            indices.append(flat)
+
+        self.register_buffer("_lengths", torch.tensor(lengths, dtype=torch.long))
+
+        # Pad all anti-diagonals to length (l-1) for batched processing
+        max_len = patch_len - 1
+        padded = torch.zeros(patch_len - 1, max_len, dtype=torch.long)
+        mask = torch.zeros(patch_len - 1, max_len, dtype=torch.bool)
+        for k_idx, idx in enumerate(indices):
+            n = len(idx)
+            padded[k_idx, :n] = idx
+            mask[k_idx, :n] = True
+        self.register_buffer("_gather_idx", padded)   # (l-1, l-1)
+        self.register_buffer("_mask", mask)            # (l-1, l-1) True = valid
+
+        # Project each padded anti-diagonal token to d_model
+        self.token_proj = nn.Linear(max_len, d_model)
+
+        # SSM processes the sequence of lag tokens
+        self.blocks = nn.ModuleList([
+            MambaBlock(d_model, state_dim=16, conv_kernel=3, expand_factor=2.0)
+            for _ in range(n_layers)
+        ])
+        self.norm = nn.LayerNorm(d_model)
+
+    def forward(self, rp: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            rp: (B, P, l, l)
+        Returns:
+            (B, P, d_model)
+        """
+        B, P, l, _ = rp.shape
+        N = B * P
+        l1 = self.patch_len - 1  # number of lag tokens = l-1
+
+        # Flatten spatial dims: (N, l*l)
+        x_flat = rp.reshape(N, l * l)
+
+        # Gather upper-triangle anti-diagonals: (N, l-1, l-1)
+        # _gather_idx: (l-1, l-1) flat indices into l×l
+        idx = self._gather_idx.unsqueeze(0).expand(N, -1, -1)  # (N, l-1, l-1)
+        tokens = torch.gather(
+            x_flat.unsqueeze(1).expand(-1, l1, -1),  # (N, l-1, l*l)
+            dim=2,
+            index=idx,
+        )  # (N, l-1, l-1)
+
+        # Zero out padding positions (invalid entries beyond each anti-diagonal length)
+        mask = self._mask.unsqueeze(0)  # (1, l-1, l-1)
+        tokens = tokens * mask.float()  # (N, l-1, l-1)
+
+        # Project each lag token to d_model: (N, l-1, d_model)
+        tokens = self.token_proj(tokens)
+
+        # Mamba SSM over the lag sequence
+        for block in self.blocks:
+            tokens = block(tokens)
+
+        tokens = self.norm(tokens)              # (N, l-1, d_model)
+        out = tokens.mean(dim=1)               # (N, d_model) — pool over lags
+        return out.view(B, P, self.d_model)    # (B, P, d_model)
+
+
+# ── End-to-end wrapper: raw time series → UpperTriDiagRPEncoder ───────────────
+
+class UpperTriDiagRPEncoder(nn.Module):
+    """End-to-end RP encoder: (B, F, T) raw time series → (B, embedding_dim) embedding.
+
+    Pipeline
+    --------
+    1. Swap axes: (B, F, T) → (B, T, F)
+    2. Tokenize: sliding windows of size patch_len → (B, P, patch_len, F)
+    3. Mean over channels (F): (B, P, patch_len)
+    4. Compute RP per patch: (B, P, patch_len, patch_len)
+    5. UpperTriDiagRPEncoder (inner): (B, P, d_model)
+    6. Mean-pool over patches: (B, d_model)
+    7. Linear projection: (B, embedding_dim)
+
+    Generic RP visual encoder used across CLIP, GRAM, VL-JEPA, and BYOL.
+    Exploits the upper-triangle anti-diagonal structure of Recurrence Plots.
+    """
+
+    def __init__(
+        self,
+        patch_len: int = 32,
+        d_model: int = 128,
+        n_layers: int = 2,
+        embedding_dim: int = 128,
+        rp_mv_strategy: str = "mean",
+    ) -> None:
+        super().__init__()
+        self.patch_len = patch_len
+        self.embedding_dim = embedding_dim
+        self.rp_mv_strategy = rp_mv_strategy
+
+        self.encoder = _UpperTriDiagCore(
+            patch_len=patch_len,
+            d_model=d_model,
+            n_layers=n_layers,
+        )
+        self.output_proj = nn.Linear(d_model, embedding_dim, bias=False)
+
+    def _compute_rp(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute recurrence plot on GPU.
+
+        Args:
+            x: (N, L) normalized time series
+        Returns:
+            (N, L, L) RP with values in [0, 1]
+        """
+        # Pairwise L2 distances: (N, L, L)
+        diff = x.unsqueeze(2) - x.unsqueeze(1)   # (N, L, L)
+        rp = diff.abs()                            # univariate: |x_i - x_j|
+        # Normalize per sample to [0, 1]
+        mx = rp.flatten(1).max(dim=1).values.clamp(min=1e-8)
+        rp = rp / mx.view(-1, 1, 1)
+        return rp
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: (B, F, T) raw time series (channels-first)
+        Returns:
+            (B, embedding_dim)
+        """
+        B, F, T = x.shape
+
+        # 1. Channels → time-major
+        x = x.transpose(1, 2)                                   # (B, T, F)
+
+        # 2. Mean over feature channels → univariate
+        x = x.mean(dim=2)                                       # (B, T)
+
+        # 3. Tokenize: unfold into patches of size patch_len
+        L = self.patch_len
+        if T < L:
+            # pad if sequence shorter than one patch
+            pad = x.new_zeros(B, L - T)
+            x = torch.cat([x, pad], dim=1)
+            T = L
+
+        # Non-overlapping patches
+        n_patches = T // L
+        x = x[:, :n_patches * L].reshape(B, n_patches, L)      # (B, P, L)
+
+        # 4. RP per patch: (B, P, L, L)
+        N = B * n_patches
+        x_flat = x.reshape(N, L)                                # (N, L)
+        rp = self._compute_rp(x_flat)                           # (N, L, L)
+        rp = rp.view(B, n_patches, L, L)                        # (B, P, L, L)
+
+        # 5. _UpperTriDiagCore: (B, P, d_model)
+        out = self.encoder(rp)                                   # (B, P, d_model)
+
+        # 6. Pool over patches
+        out = out.mean(dim=1)                                    # (B, d_model)
+
+        # 7. Project to embedding_dim
+        return self.output_proj(out)                             # (B, embedding_dim)
+
+
 # ── Factory ───────────────────────────────────────────────────────────────────
 
 class VisualEncoderFactory:
@@ -703,11 +939,12 @@ class VisualEncoderFactory:
         forward(rp: Tensor[B, P, l, l]) -> Tensor[B, P, d]
 
     Supported encoder_type values:
-        "cnn"            → CNNVisualEncoder
-        "flatten_mamba"  → FlattenMambaEncoder (diagonal_order=False)
+        "cnn"              → CNNVisualEncoder
+        "flatten_mamba"    → FlattenMambaEncoder (diagonal_order=False)
         "flatten_mamba_diag" → FlattenMambaEncoder (diagonal_order=True)
-        "rp_ss2d_2"     → RPSS2DEncoder(n_scans=2)
-        "ss2d_4"        → RPSS2DEncoder(n_scans=4)
+        "rp_ss2d_2"       → RPSS2DEncoder(n_scans=2)
+        "ss2d_4"          → RPSS2DEncoder(n_scans=4)
+        "upper_tri_diag"  → _UpperTriDiagCore (proposed — RP-geometry-native)
     """
 
     @staticmethod
@@ -727,11 +964,18 @@ class VisualEncoderFactory:
             return RPSS2DEncoder(patch_len, d_model, n_scans=2, n_layers=n_layers)
         elif encoder_type == "ss2d_4":
             return RPSS2DEncoder(patch_len, d_model, n_scans=4, n_layers=n_layers)
+        elif encoder_type == "upper_tri_diag":
+            return _UpperTriDiagCore(patch_len, d_model, n_layers=n_layers)
         else:
             raise ValueError(
                 f"Unknown encoder_type: '{encoder_type}'. "
-                "Choose from: cnn, flatten_mamba, flatten_mamba_diag, rp_ss2d_2, ss2d_4"
+                "Choose from: cnn, flatten_mamba, flatten_mamba_diag, rp_ss2d_2, ss2d_4, upper_tri_diag"
             )
+
+
+# Backward-compat aliases (old names kept so existing imports don't break)
+UpperTriDiagSimCLREncoder = UpperTriDiagRPEncoder
+UpperTriDiagMambaEncoder = _UpperTriDiagCore
 
 
 if __name__ == "__main__":

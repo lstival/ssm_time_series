@@ -1,0 +1,57 @@
+experiment_name: "ts_simclr_temporal_lotsa"
+seed: 42
+device: "auto"
+
+model:
+  model_name: "ts_simclr_temporal"
+  rp_encoder: "temporal"           # tells simclr_training.py to use MambaEncoder (temporal mode)
+  input_dim: 64                    # Ablation E: patch size (best accuracy)
+  model_dim: 256
+  embedding_dim: 128
+  depth: 8
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+
+data:
+  dataset_type: "lotsa"
+  batch_size: 256
+  val_batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  val_ratio: 0.1
+
+  cronos_kwargs:
+    context_length: 96
+    cache_dir: "/lustre/nobackup/WUR/AIN/stiva001/hf_datasets"
+    normalize_per_series: true
+    force_offline: true
+    drop_last: true
+    two_views: true
+
+training:
+  epochs: 100
+  temperature: 0.07               # SimCLR NT-Xent temperature
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  noise_std: 0.01
+  optimizer: "adamw"
+  scheduler: "cosine"
+  min_lr: 0.000001
+  warmup_epochs: 10
+  max_grad_norm: 1.0
+  use_amp: true
+
+logging:
+  checkpoint_dir: "../../checkpoints/simclr_temporal"
+  save_best_only: true
+  save_last: true
+
+# SimCLR temporal-only baseline:
+#   - Only the temporal MambaEncoder is trained.
+#   - Two augmented views of the same series (Gaussian noise) form the positive pair.
+#   - No visual/RP branch is used at all.
+#   - Same architecture as ablation_best (input_dim=64, depth=8, model_dim=256).
+#   - Temperature 0.07 (standard SimCLR setting; CLIP used 0.2).

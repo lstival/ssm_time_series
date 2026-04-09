@@ -1,0 +1,4 @@
+Probing BYOL visual checkpoint: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_visual/ts_byol_visual_lotsa_20260408_1216
+Device: cuda
+Comet ML experiment created.
+  [INFO] No temporal encoder checkpoint found — using random weights

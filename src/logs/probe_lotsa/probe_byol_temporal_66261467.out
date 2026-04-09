@@ -1,0 +1,75 @@
+Probing BYOL temporal checkpoint: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_temporal/ts_byol_temporal_lotsa_20260408_1223
+Device: cuda
+Comet ML experiment created.
+  Loaded encoder       : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_temporal/ts_byol_temporal_lotsa_20260408_1223/time_series_best.pt
+  [INFO] No visual encoder checkpoint found — using random weights
+Loaded encoder from  : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_temporal/ts_byol_temporal_lotsa_20260408_1223/time_series_best.pt
+Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_temporal/ts_byol_temporal_lotsa_20260408_1223/visual_encoder_best.pt
+
+============================================================
+Dataset: ETTm1
+============================================================
+  H= 96  MSE=0.0690  MAE=0.2030
+  H=192  MSE=0.1018  MAE=0.2505
+  H=336  MSE=0.1800  MAE=0.3482
+  H=720  MSE=0.2245  MAE=0.3970
+
+============================================================
+Dataset: ETTm2
+============================================================
+  H= 96  MSE=0.0970  MAE=0.2400
+  H=192  MSE=0.1444  MAE=0.2954
+  H=336  MSE=0.1721  MAE=0.3272
+  H=720  MSE=0.2328  MAE=0.3807
+
+============================================================
+Dataset: ETTh1
+============================================================
+  H= 96  MSE=0.1380  MAE=0.3020
+  H=192  MSE=0.1339  MAE=0.2931
+  H=336  MSE=0.1624  MAE=0.3250
+  H=720  MSE=0.2076  MAE=0.3717
+
+============================================================
+Dataset: ETTh2
+============================================================
+  H= 96  MSE=0.1542  MAE=0.3124
+  H=192  MSE=0.1749  MAE=0.3317
+  H=336  MSE=0.2234  MAE=0.3705
+  H=720  MSE=0.3192  MAE=0.4593
+
+============================================================
+Dataset: weather
+============================================================
+  H= 96  MSE=0.0334  MAE=0.1377
+  H=192  MSE=0.0408  MAE=0.1547
+  H=336  MSE=0.0234  MAE=0.1162
+  H=720  MSE=0.0322  MAE=0.1405
+
+============================================================
+Dataset: traffic
+============================================================
+  H= 96  MSE=0.3261  MAE=0.4156
+  H=192  MSE=0.2942  MAE=0.3870
+  H=336  MSE=0.2902  MAE=0.3871
+  H=720  MSE=0.3087  MAE=0.3953
+
+============================================================
+Dataset: electricity
+============================================================
+  H= 96  MSE=0.4013  MAE=0.4623
+  H=192  MSE=0.4030  MAE=0.4619
+  H=336  MSE=0.4433  MAE=0.4887
+  H=720  MSE=0.4637  MAE=0.5039
+
+============================================================
+Dataset: exchange_rate
+============================================================
+  H= 96  MSE=0.8405  MAE=0.8567
+  H=192  MSE=1.1390  MAE=0.9906
+  H=336  MSE=1.4992  MAE=1.0939
+  H=720  MSE=1.7836  MAE=1.0909
+
+Total elapsed: 4.9 min
+Results saved to /home/WUR/stiva001/WUR/ssm_time_series/results/probe_byol_temporal/probe_lotsa_results.csv
+Comet ML experiment ended.

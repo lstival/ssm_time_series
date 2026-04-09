@@ -13,3 +13,6 @@ comet:
     forecast_chronos_temporal: "forecast_chronos_temporal"
     forecast_chronos_visual: "forecast_chronos_visual"
     forecast_chronos_dual: "forecast_chronos_dual_frozen"
+    smoke_clip_encoder: "smoke_clip_encoder_training"
+    ablation_A_mv_rp: "ablation_A_mv_rp_strategies"
+    ablation_best: "ablation_best_training_mean_patch64_cosine_mse"

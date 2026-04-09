@@ -79,6 +79,10 @@ def _clip_train_epoch(
 
         q = torchF.normalize(proj(encoder(x_q)), dim=1)
         k = torchF.normalize(vproj(visual(x_k)), dim=1)
+        q = torch.nan_to_num(q, nan=0.0, posinf=0.0, neginf=0.0)
+        k = torch.nan_to_num(k, nan=0.0, posinf=0.0, neginf=0.0)
+        if not torch.isfinite(q).all() or not torch.isfinite(k).all():
+            continue
         loss = clip_contrastive_loss(q, k)
 
         if not torch.isfinite(loss):
@@ -163,25 +167,38 @@ def _probe_evaluate(
         for b in loader:
             try:
                 z = _embed(b)
-                # Validate embedding
-                if not torch.isfinite(z).all():
+                # Check finiteness on CPU to avoid CUDA assertion errors
+                if not torch.isfinite(z.cpu() if z.is_cuda else z).all():
                     z = torch.nan_to_num(z, nan=0.0, posinf=0.0, neginf=0.0)
-                zs.append(z)
 
                 # Extract target (second element of batch tuple)
-                # Handle both (x, y, ...) and (x, y) formats from dataloader
                 y = b[1].to(device).float() if len(b) > 1 else None
                 if y is None:
                     continue
 
-                # Ensure target has correct shape: (batch, seq_len, features) or (batch, seq_len)
+                # Ensure target has correct shape: (batch, seq_len)
                 if y.ndim > 2:
-                    y = y[:, :, 0]  # Take first feature if multi-feature target
+                    y = y[:, :, 0]
 
-                # Validate target
-                if not torch.isfinite(y).all():
+                # Skip batches shorter than horizon
+                if y.shape[1] < horizon:
+                    continue
+
+                # Truncate to horizon so all tensors have uniform shape for torch.cat
+                y = y[:, :horizon]
+
+                # Check finiteness on CPU to avoid CUDA assertion errors
+                if not torch.isfinite(y.cpu() if y.is_cuda else y).all():
                     y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
 
+                # reshape_multivariate_series expands (B, T, F) → (B*F, 1, T), so z has
+                # B*F rows while y has B rows — repeat y to match z row count.
+                n_z, n_y = z.shape[0], y.shape[0]
+                if n_z != n_y and n_y > 0 and n_z % n_y == 0:
+                    y = y.repeat_interleave(n_z // n_y, dim=0)
+
+                # Append both together so zs and ys stay aligned
+                zs.append(z)
                 ys.append(y)
             except Exception as e:
                 print(f"Warning: Skipping batch due to error: {e}", file=sys.stderr)
@@ -224,8 +241,15 @@ def _probe_evaluate(
             # Compute prediction
             pred = probe(z_b)
 
-            # Validate prediction
-            if not torch.isfinite(pred).all() or not torch.isfinite(y_b).all():
+            # Validate prediction (move to CPU for safer checking to avoid CUDA assertion errors)
+            try:
+                pred_cpu = pred.detach().cpu()
+                y_b_cpu = y_b.detach().cpu()
+                if not torch.isfinite(pred_cpu).all() or not torch.isfinite(y_b_cpu).all():
+                    opt.zero_grad(set_to_none=True)
+                    continue
+            except (RuntimeError, Exception):
+                # If any error occurs during validation, skip this batch
                 opt.zero_grad(set_to_none=True)
                 continue
 

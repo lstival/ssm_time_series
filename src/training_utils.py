@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 
 from models.mamba_encoder import MambaEncoder
 from time_series_loader import TimeSeriesDataModule
-from models.mamba_visual_encoder import MambaVisualEncoder
+from models.mamba_visual_encoder import MambaVisualEncoder, UpperTriDiagRPEncoder
 
 
 @dataclass
@@ -102,8 +102,26 @@ def build_visual_encoder_from_config(
     rp_mode: str = "correct",
     rp_mv_strategy: str = "per_channel",
     repr_type: str = "rp",
-) -> MambaVisualEncoder:
+):
     cfg_get = model_cfg.get
+
+    # UpperTriDiagRPEncoder: geometrically correct anti-diagonal lag tokenization.
+    # Activated via rp_encoder: "upper_tri" in config (legacy: simclr_mode: "visual").
+    rp_enc = str(cfg_get("rp_encoder", cfg_get("simclr_mode", ""))).lower()
+    if rp_enc in ("upper_tri", "visual"):
+        patch_len = int(cfg_get("input_dim", 32))
+        model_dim = int(cfg_get("model_dim", 128))
+        n_layers = int(cfg_get("depth", 8))
+        embedding_dim = int(cfg_get("embedding_dim", model_dim))
+        return UpperTriDiagRPEncoder(
+            patch_len=patch_len,
+            d_model=model_dim,
+            n_layers=n_layers,
+            embedding_dim=embedding_dim,
+            rp_mv_strategy="mean",   # Ablation A best
+        )
+
+    # Default: full MambaVisualEncoder (CLIP dual-encoder training)
     input_channels = int(cfg_get("input_dim", 3))
     model_dim = int(cfg_get("model_dim", 128))
     embedding_dim = int(cfg_get("embedding_dim", model_dim))
@@ -119,7 +137,6 @@ def build_visual_encoder_from_config(
 
     expand = max(1.0, expand)
 
-    # Allow config to override the caller's defaults
     rp_mode = str(cfg_get("rp_mode", rp_mode))
     rp_mv_strategy = str(cfg_get("rp_mv_strategy", rp_mv_strategy))
     repr_type = str(cfg_get("repr_type", repr_type))

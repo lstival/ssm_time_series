@@ -1,0 +1,148 @@
+Starting BYOL visual encoder training...
+Config: lotsa_byol_visual.yaml
+Starting BYOL training — mode=visual  device=cuda
+Offline mode — loading from: /lustre/nobackup/WUR/AIN/stiva001/hf_datasets
+Loaded 'm4_daily' from Salesforce/lotsa_data: 4,227 rows
+Loaded 'm4_hourly' from Salesforce/lotsa_data: 414 rows
+Loaded 'm4_monthly' from Salesforce/lotsa_data: 48,000 rows
+Loaded 'm4_yearly' from Salesforce/lotsa_data: 22,739 rows
+Loaded 'm4_weekly' from Salesforce/lotsa_data: 359 rows
+Loaded 'm4_quarterly' from Salesforce/lotsa_data: 23,998 rows
+'ett_h1' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Failed to load 'ett_h1' from both Salesforce/lotsa_data and autogluon/chronos_datasets
+'ett_h2' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Failed to load 'ett_h2' from both Salesforce/lotsa_data and autogluon/chronos_datasets
+'ett_m1' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Failed to load 'ett_m1' from both Salesforce/lotsa_data and autogluon/chronos_datasets
+'ett_m2' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Failed to load 'ett_m2' from both Salesforce/lotsa_data and autogluon/chronos_datasets
+'exchange_rate' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Loaded 'exchange_rate' from autogluon/chronos_datasets: 8 rows
+Loaded 'traffic_hourly' from Salesforce/lotsa_data: 862 rows
+Loaded 'traffic_weekly' from Salesforce/lotsa_data: 862 rows
+'solar_10min' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Failed to load 'solar_10min' from both Salesforce/lotsa_data and autogluon/chronos_datasets
+'solar_weekly' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Failed to load 'solar_weekly' from both Salesforce/lotsa_data and autogluon/chronos_datasets
+'electricity_hourly' not found in Salesforce/lotsa_data, trying autogluon/chronos_datasets...
+Failed to load 'electricity_hourly' from both Salesforce/lotsa_data and autogluon/chronos_datasets
+Loaded 'hospital' from Salesforce/lotsa_data: 767 rows
+Loaded 'covid_deaths' from Salesforce/lotsa_data: 266 rows
+Loaded 'pedestrian_counts' from Salesforce/lotsa_data: 66 rows
+Loaded 'nn5_daily_with_missing' from Salesforce/lotsa_data: 111 rows
+Loaded 'nn5_weekly' from Salesforce/lotsa_data: 111 rows
+Loaded 'monash_m3_monthly' from Salesforce/lotsa_data: 1,428 rows
+Loaded 'monash_m3_quarterly' from Salesforce/lotsa_data: 756 rows
+Loaded 'monash_m3_yearly' from Salesforce/lotsa_data: 645 rows
+Loaded 'taxi_30min' from Salesforce/lotsa_data: 67,984 rows
+Loaded 'kdd_cup_2018_with_missing' from Salesforce/lotsa_data: 270 rows
+Loaded 'oikolab_weather' from Salesforce/lotsa_data: 8 rows
+Loaded 'saugeenday' from Salesforce/lotsa_data: 1 rows
+Loaded 'us_births' from Salesforce/lotsa_data: 1 rows
+Loaded 'sunspot_with_missing' from Salesforce/lotsa_data: 1 rows
+Visual encoder: UpperTriDiagSimCLREncoder (patch_len=64, embedding_dim=128)
+Warning: Could not create symlink /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_visual/ts_byol_visual_lotsa_latest: 'PosixPath' object has no attribute 'lexists'
+Config: lotsa_byol_visual.yaml
+Checkpoints: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_visual/ts_byol_visual_lotsa_20260408_1216
+Epoch 1/100  train=1.0338  val=0.4408 [best]
+Epoch 2/100  train=0.2441  val=0.1642 [best]
+Epoch 3/100  train=0.1214  val=0.1179 [best]
+Epoch 4/100  train=0.0895  val=0.0977 [best]
+Epoch 5/100  train=0.0774  val=0.0891 [best]
+Epoch 6/100  train=0.0712  val=0.0806 [best]
+Epoch 7/100  train=0.0681  val=0.0796 [best]
+Epoch 8/100  train=0.0653  val=0.0770 [best]
+Epoch 9/100  train=0.0633  val=0.0769 [best]
+Epoch 10/100  train=0.0614  val=0.0762 [best]
+Epoch 11/100  train=0.0606  val=0.0727 [best]
+Epoch 12/100  train=0.0605  val=0.0738
+Epoch 13/100  train=0.0612  val=0.0729
+Epoch 14/100  train=0.0608  val=0.0731
+Epoch 15/100  train=0.0611  val=0.0749
+Epoch 16/100  train=0.0618  val=0.0734
+Epoch 17/100  train=0.0622  val=0.0748
+Epoch 18/100  train=0.0631  val=0.0744
+Epoch 19/100  train=0.0641  val=0.0749
+Epoch 20/100  train=0.0650  val=0.0738
+Epoch 21/100  train=0.0654  val=0.0766
+Epoch 22/100  train=0.0659  val=0.0778
+Epoch 23/100  train=0.0662  val=0.0756
+Epoch 24/100  train=0.0666  val=0.0773
+Epoch 25/100  train=0.0661  val=0.0773
+Epoch 26/100  train=0.0664  val=0.0775
+Epoch 27/100  train=0.0671  val=0.0771
+Epoch 28/100  train=0.0671  val=0.0781
+Epoch 29/100  train=0.0676  val=0.0802
+Epoch 30/100  train=0.0677  val=0.0797
+Epoch 31/100  train=0.0687  val=0.0802
+Epoch 32/100  train=0.0691  val=0.0809
+Epoch 33/100  train=0.0697  val=0.0808
+Epoch 34/100  train=0.0700  val=0.0824
+Epoch 35/100  train=0.0703  val=0.0841
+Epoch 36/100  train=0.0707  val=0.0815
+Epoch 37/100  train=0.0708  val=0.0817
+Epoch 38/100  train=0.0708  val=0.0825
+Epoch 39/100  train=0.0716  val=0.0818
+Epoch 40/100  train=0.0717  val=0.0843
+Epoch 41/100  train=0.0720  val=0.0824
+Epoch 42/100  train=0.0724  val=0.0832
+Epoch 43/100  train=0.0725  val=0.0854
+Epoch 44/100  train=0.0724  val=0.0841
+Epoch 45/100  train=0.0728  val=0.0868
+Epoch 46/100  train=0.0725  val=0.0841
+Epoch 47/100  train=0.0727  val=0.0854
+Epoch 48/100  train=0.0727  val=0.0830
+Epoch 49/100  train=0.0732  val=0.0891
+Epoch 50/100  train=0.0738  val=0.0850
+Epoch 51/100  train=0.0739  val=0.0845
+Epoch 52/100  train=0.0733  val=0.0863
+Epoch 53/100  train=0.0734  val=0.0887
+Epoch 54/100  train=0.0737  val=0.0863
+Epoch 55/100  train=0.0738  val=0.0878
+Epoch 56/100  train=0.0742  val=0.0896
+Epoch 57/100  train=0.0744  val=0.0881
+Epoch 58/100  train=0.0745  val=0.0858
+Epoch 59/100  train=0.0741  val=0.0905
+Epoch 60/100  train=0.0744  val=0.0878
+Epoch 61/100  train=0.0751  val=0.0920
+Epoch 62/100  train=0.0746  val=0.0889
+Epoch 63/100  train=0.0753  val=0.0896
+Epoch 64/100  train=0.0745  val=0.0897
+Epoch 65/100  train=0.0750  val=0.0892
+Epoch 66/100  train=0.0749  val=0.0917
+Epoch 67/100  train=0.0746  val=0.0884
+Epoch 68/100  train=0.0751  val=0.0884
+Epoch 69/100  train=0.0750  val=0.0898
+Epoch 70/100  train=0.0749  val=0.0906
+Epoch 71/100  train=0.0753  val=0.0913
+Epoch 72/100  train=0.0748  val=0.0910
+Epoch 73/100  train=0.0747  val=0.0905
+Epoch 74/100  train=0.0748  val=0.0908
+Epoch 75/100  train=0.0753  val=0.0898
+Epoch 76/100  train=0.0743  val=0.0896
+Epoch 77/100  train=0.0747  val=0.0909
+Epoch 78/100  train=0.0747  val=0.0887
+Epoch 79/100  train=0.0744  val=0.0882
+Epoch 80/100  train=0.0750  val=0.0881
+Epoch 81/100  train=0.0750  val=0.0923
+Epoch 82/100  train=0.0746  val=0.0895
+Epoch 83/100  train=0.0747  val=0.0903
+Epoch 84/100  train=0.0750  val=0.0910
+Epoch 85/100  train=0.0744  val=0.0907
+Epoch 86/100  train=0.0744  val=0.0887
+Epoch 87/100  train=0.0745  val=0.0895
+Epoch 88/100  train=0.0738  val=0.0902
+Epoch 89/100  train=0.0741  val=0.0892
+Epoch 90/100  train=0.0742  val=0.0899
+Epoch 91/100  train=0.0738  val=0.0896
+Epoch 92/100  train=0.0737  val=0.0872
+Epoch 93/100  train=0.0736  val=0.0872
+Epoch 94/100  train=0.0739  val=0.0888
+Epoch 95/100  train=0.0736  val=0.0881
+Epoch 96/100  train=0.0742  val=0.0901
+Epoch 97/100  train=0.0737  val=0.0883
+Epoch 98/100  train=0.0730  val=0.0902
+Epoch 99/100  train=0.0734  val=0.0904
+Epoch 100/100  train=0.0731  val=0.0897
+BYOL training complete. Best loss: 0.0727
+Checkpoints saved to: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_visual/ts_byol_visual_lotsa_20260408_1216
