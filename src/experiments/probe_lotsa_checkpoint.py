@@ -74,9 +74,10 @@ def load_encoders(checkpoint_dir: Path, config, device: torch.device):
     if vis_ckpt.exists():
         vis_state = torch.load(vis_ckpt, map_location=device)
         raw = vis_state.get("model_state_dict", vis_state.get("model_state", vis_state))
-        # Strip "encoder." prefix if the checkpoint was saved with a wrapper module
-        if any(k.startswith("encoder.") for k in raw):
-            raw = {k[len("encoder."):]: v for k, v in raw.items() if k.startswith("encoder.")}
+        # Strip "encoder." prefix only if the checkpoint was saved with an outer wrapper
+        # (i.e. all keys share the "encoder." prefix — no "output_proj" at top level).
+        if all(k.startswith("encoder.") for k in raw):
+            raw = {k[len("encoder."):]: v for k, v in raw.items()}
         visual.load_state_dict(raw)
         print(f"  Loaded visual encoder: {vis_ckpt}")
     else:
@@ -151,6 +152,8 @@ def probe_evaluate(
     experiment=None,
     dataset_tag: str = "",
     scaler_type: str = "standard",
+    few_shot_fraction: float = 1.0,
+    rng: Optional[torch.Generator] = None,
 ) -> Dict[int, Dict[str, float]]:
     # Resolve the actual directory containing this CSV (handles subdirectories
     # like ETT-small/, weather/, traffic/, etc.)
@@ -190,6 +193,17 @@ def probe_evaluate(
     if Z_tr is None:
         print(f"  [SKIP] {dataset_csv} — train loader returned no batches")
         return {}
+
+    # Few-shot subsampling: keep `few_shot_fraction` of training embeddings.
+    # Encoder stays frozen — only the linear head sees fewer examples.
+    if few_shot_fraction < 1.0:
+        n_total = Z_tr.shape[0]
+        n_keep = max(1, int(n_total * few_shot_fraction))
+        idx = torch.randperm(n_total, generator=rng)[:n_keep]
+        Z_tr = Z_tr[idx]
+        Y_tr = Y_tr[idx]
+        print(f"  Few-shot {few_shot_fraction*100:.0f}%: using {n_keep}/{n_total} train samples")
+
     feat_dim = Z_tr.shape[1]
 
     # Y_tr is now always (N*C, L) — each channel is an independent univariate sample
@@ -265,6 +279,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--scaler_type", type=str, default="standard", choices=["standard", "minmax"])
     p.add_argument("--no_comet", action="store_true")
+    p.add_argument(
+        "--few_shot_fraction", type=float, default=1.0,
+        help="Fraction of training data to use for the linear head (e.g. 0.01 for 1%%). "
+             "Encoder stays frozen. Use 1.0 for standard full linear probe.",
+    )
     return p.parse_args()
 
 
@@ -276,6 +295,15 @@ def main() -> None:
 
     config = tu.load_config(args.config)
     args.results_dir.mkdir(parents=True, exist_ok=True)
+
+    few_shot_fraction = float(args.few_shot_fraction)
+    if few_shot_fraction <= 0.0 or few_shot_fraction > 1.0:
+        raise ValueError("--few_shot_fraction must be in (0, 1]")
+    rng = torch.Generator()
+    rng.manual_seed(args.seed)
+
+    fraction_tag = "full" if few_shot_fraction == 1.0 else f"{few_shot_fraction*100:.0f}pct"
+    print(f"Few-shot mode: {fraction_tag}  (fraction={few_shot_fraction})")
 
     # ── Comet ML ──────────────────────────────────────────────────────────────
     experiment: Optional[Any] = None
@@ -290,6 +318,7 @@ def main() -> None:
                 "horizons": args.horizons,
                 "datasets": args.datasets,
                 "seed": args.seed,
+                "few_shot_fraction": few_shot_fraction,
             })
             print("Comet ML experiment created.")
         except Exception as exc:
@@ -319,6 +348,8 @@ def main() -> None:
             experiment=experiment,
             dataset_tag=ds_tag,
             scaler_type=args.scaler_type,
+            few_shot_fraction=few_shot_fraction,
+            rng=rng,
         )
 
         for H, m in metrics.items():
@@ -333,7 +364,7 @@ def main() -> None:
     print(f"\nTotal elapsed: {(time.time() - t_total) / 60:.1f} min")
 
     # ── save CSV ──────────────────────────────────────────────────────────────
-    out_csv = args.results_dir / "probe_lotsa_results.csv"
+    out_csv = args.results_dir / f"probe_results_{fraction_tag}.csv"
     with out_csv.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["dataset", "horizon", "mse", "mae"])
         writer.writeheader()
