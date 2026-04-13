@@ -1,0 +1,66 @@
+experiment_name: "ts_byol_micro_icml"
+seed: 42
+device: "auto"
+
+# BYOL bimodal — MICRO size trained ONLY on ICML benchmark datasets.
+# Purpose: supervised-domain baseline — same data seen during linear probe evaluation.
+# Micro size: model_dim=64, embedding_dim=32, depth=6 (HPO best architecture).
+# ICML datasets: ett_h1, ett_h2, ett_m1, ett_m2, electricity_hourly,
+#                traffic_hourly, exchange_rate  (weather has no LOTSA equivalent).
+
+model:
+  model_name: "ts_byol_micro_icml"
+  rp_encoder: "upper_tri"
+  input_dim: 64            # patch_len
+  model_dim: 64            # micro
+  embedding_dim: 32        # micro
+  depth: 6                 # micro (HPO best)
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+  rp_mv_strategy: "mean"
+  proj_dim: 64             # projector output (2× embedding_dim)
+  pred_dim: 32             # predictor hidden (= embedding_dim)
+
+data:
+  dataset_type: "lotsa"
+  # Explicit list: exactly the ICML probe benchmark datasets
+  datasets:
+    - "ett_h1"
+    - "ett_h2"
+    - "ett_m1"
+    - "ett_m2"
+    - "electricity_hourly"
+    - "traffic_hourly"
+    - "exchange_rate"
+  batch_size: 128
+  val_batch_size: 64
+  num_workers: 4
+  pin_memory: true
+  val_ratio: 0.1
+
+  cronos_kwargs:
+    context_length: 512
+    cache_dir: "/lustre/nobackup/WUR/AIN/stiva001/hf_datasets"
+    normalize_per_series: true
+    force_offline: true
+    drop_last: true
+    two_views: false        # BYOL generates views via noise internally
+
+training:
+  epochs: 50
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  noise_std: 0.05
+  ema_tau: 0.996
+  optimizer: "adamw"
+  warmup_epochs: 5
+  max_grad_norm: 1.0
+  use_amp: true
+
+logging:
+  checkpoint_dir: "../../checkpoints/icml_byol_micro"
+  save_best_only: true
+  save_last: true

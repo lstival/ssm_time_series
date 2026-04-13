@@ -1,0 +1,93 @@
+\begin{table}[!ht]
+\centering
+\caption{Datasets used for CM-Mamba pre-training. All datasets are drawn from the
+Large Open Time Series Archive (LOTSA, \texttt{Salesforce/lotsa\_data}) or local
+Monash/GluonTS Arrow collections stored on the compute cluster. The seven ICML
+evaluation benchmarks (ETTh1/h2, ETTm1/m2, Electricity, Traffic, Exchange Rate)
+and Weather are \textbf{entirely excluded} from pre-training to ensure a clean
+zero-shot evaluation. We report the sampling frequency and number of time series.}
+\label{tab:training_datasets}
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{l l c r}
+\toprule
+\textbf{Dataset} & \textbf{Source} & \textbf{Freq.} & \textbf{\#Series} \\
+\midrule
+
+\multicolumn{4}{l}{\textit{M-Series Benchmarks}} \\
+\midrule
+M4 (Hourly)              & LOTSA & 1H    & 414 \\
+M4 (Daily)               & LOTSA & 1D    & 4{,}227 \\
+M4 (Weekly)              & LOTSA & 1W    & 359 \\
+M4 (Monthly)             & LOTSA & 1M    & 48{,}000 \\
+M4 (Quarterly)           & LOTSA & 3M    & 24{,}000 \\
+M4 (Yearly)              & LOTSA & 1Y    & 23{,}000 \\
+M3 (Monthly)             & LOTSA & 1M    & 1{,}428 \\
+M3 (Quarterly)           & LOTSA & 3M    & 756 \\
+M3 (Yearly)              & LOTSA & 1Y    & 645 \\
+\midrule
+
+\multicolumn{4}{l}{\textit{Energy}} \\
+\midrule
+Australian Electricity   & Local & 30min & 5 \\
+Electricity (15 Min.)    & Local & 15min & 370 \\
+Solar (10 Min.)          & LOTSA & 10min & 137 \\
+Solar (Weekly)           & LOTSA & 1W    & 137 \\
+Solar (Hourly)           & Local & 1H    & 1{,}166 \\
+ERCOT (Texas Grid)       & Local & 1H    & 8 \\
+Wind Farms (Daily)       & Local & 1D    & 337 \\
+Wind Farms (Hourly)      & Local & 1H    & 337 \\
+\midrule
+
+\multicolumn{4}{l}{\textit{Transport \& Mobility}} \\
+\midrule
+Traffic (Weekly)         & LOTSA & 1W    & 862 \\
+Taxi (30 Min.)           & LOTSA & 30min & 2{,}428 \\
+Pedestrian Counts        & LOTSA & 1H    & 66 \\
+KDD Cup 2018 (Air)       & LOTSA & 1H    & 270 \\
+Uber TLC (Daily)         & Local & 1D    & 262 \\
+Uber TLC (Hourly)        & Local & 1H    & 262 \\
+Mexico City Bikes        & Local & 1H    & 494 \\
+\midrule
+
+\multicolumn{4}{l}{\textit{Sales \& Retail}} \\
+\midrule
+M5 (Walmart)             & Local & 1D    & 30{,}490 \\
+Car Parts                & Local & 1M    & 2{,}674 \\
+\midrule
+
+\multicolumn{4}{l}{\textit{Economics \& Finance}} \\
+\midrule
+FRED-MD                  & Local & 1M    & 107 \\
+NN5 (Daily)              & LOTSA & 1D    & 111 \\
+NN5 (Weekly)             & LOTSA & 1W    & 111 \\
+\midrule
+
+\multicolumn{4}{l}{\textit{Weather \& Nature}} \\
+\midrule
+Oikolab Weather          & LOTSA & 1H    & 8 \\
+Saugeen River            & LOTSA & 1D    & 1 \\
+Sunspot                  & LOTSA & 1D    & 1 \\
+US Births                & LOTSA & 1D    & 1 \\
+\midrule
+
+\multicolumn{4}{l}{\textit{Healthcare}} \\
+\midrule
+Hospital                 & LOTSA & 1M    & 767 \\
+Covid Deaths             & LOTSA & 1D    & 266 \\
+\midrule
+
+\textbf{Total} & \textbf{LOTSA + Local} & \textbf{Mixed} & \textbf{$\sim$143{,}000} \\
+\bottomrule
+\end{tabular}
+
+\vspace{2pt}
+{\footnotesize
+\textit{Excluded (ICML probe benchmarks):}
+ETTh1, ETTh2, ETTm1, ETTm2 (LOTSA \texttt{ett\_*}),
+Electricity hourly (LOTSA \texttt{electricity\_hourly} \& local \texttt{monash\_electricity\_hourly}),
+Traffic hourly (LOTSA \texttt{traffic\_hourly}),
+Exchange Rate (LOTSA \texttt{exchange\_rate}),
+Weather (no LOTSA equivalent).
+}
+\end{table}

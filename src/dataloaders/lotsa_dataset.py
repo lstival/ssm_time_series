@@ -266,36 +266,41 @@ def load_lotsa_datasets(
 # ---------------------------------------------------------------------------
 
 LOTSA_DEFAULT_SUBSETS: List[str] = [
+    # M-series benchmarks
     "m4_daily",
     "m4_hourly",
     "m4_monthly",
     "m4_yearly",
     "m4_weekly",
     "m4_quarterly",
-    "ett_h1",
-    "ett_h2",
-    "ett_m1",
-    "ett_m2",
-    "exchange_rate",
-    "traffic_hourly",
-    "traffic_weekly",
-    "solar_10min",
-    "solar_weekly",
-    "electricity_hourly",
-    "hospital",
-    "covid_deaths",
-    "pedestrian_counts",
-    "nn5_daily_with_missing",
-    "nn5_weekly",
     "monash_m3_monthly",
     "monash_m3_quarterly",
     "monash_m3_yearly",
+    # Energy
+    "solar_10min",
+    "solar_weekly",
+    # Transport
+    "traffic_weekly",
     "taxi_30min",
+    "pedestrian_counts",
     "kdd_cup_2018_with_missing",
+    # Healthcare
+    "hospital",
+    "covid_deaths",
+    # Finance
+    "nn5_daily_with_missing",
+    "nn5_weekly",
+    # Weather & nature
     "oikolab_weather",
     "saugeenday",
     "us_births",
     "sunspot_with_missing",
+    # NOTE: the following are ICML probe benchmarks — excluded to prevent leakage:
+    #   "ett_h1", "ett_h2", "ett_m1", "ett_m2"  (ETT)
+    #   "exchange_rate"                           (Exchange Rate)
+    #   "traffic_hourly"                          (Traffic)
+    #   "electricity_hourly"                      (Electricity)
+    # weather.csv has no LOTSA equivalent and is already held out.
 ]
 
 
