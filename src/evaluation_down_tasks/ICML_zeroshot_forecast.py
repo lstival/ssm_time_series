@@ -74,6 +74,9 @@ def _infer_target_column(file_path: Path, fallback: str = "OT") -> str:
     if not header_line:
         return fallback
     columns = [col.strip() for col in header_line.split(",") if col.strip()]
+    # Prefer the canonical benchmark target column when present.
+    if fallback in columns:
+        return fallback
     for column in columns:
         lower = column.lower()
         if lower not in {"date", "datetime"}:
