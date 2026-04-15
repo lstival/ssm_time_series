@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --comment=icml_vl_jepa_micro_probe_solar
-#SBATCH --time=180
+#SBATCH --comment=icml_vl_jepa_micro_probe_weather_psn
+#SBATCH --time=60
 #SBATCH --mem=16000
 #SBATCH --cpus-per-task=4
-#SBATCH --output=logs/icml_vl_jepa_micro/probe_solar_%j.out
-#SBATCH --error=logs/icml_vl_jepa_micro/probe_solar_%j.err
-#SBATCH --job-name=vl_jepa_m_sol
+#SBATCH --output=logs/icml_vl_jepa_micro/probe_weather_psn_%j.out
+#SBATCH --error=logs/icml_vl_jepa_micro/probe_weather_psn_%j.err
+#SBATCH --job-name=vl_jepa_m_wx
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=leandro.stival@wur.nl
 #SBATCH --gres=gpu:1
@@ -23,20 +23,17 @@ CHECKPOINT_DIR=$(ls -td ${CHECKPOINTS}/ts_vl_jepa_micro_icml_* 2>/dev/null | hea
 if [ -z "${CHECKPOINT_DIR}" ]; then
     echo "ERROR: No vl_jepa micro ICML checkpoint found in ${CHECKPOINTS}"; exit 1
 fi
-echo "Probing [solar] vl_jepa micro: ${CHECKPOINT_DIR}"
-
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+echo "Probing [weather per-series-norm] vl_jepa micro: ${CHECKPOINT_DIR}"
 
 time python3 "${SRC}/experiments/probe_lotsa_checkpoint.py" \
     --checkpoint_dir "${CHECKPOINT_DIR}" \
     --config "${SRC}/configs/icml_vl_jepa_micro.yaml" \
     --data_dir /home/WUR/stiva001/WUR/ssm_time_series/ICML_datasets \
-    --datasets solar_AL.txt \
+    --datasets weather.csv \
     --probe_epochs 20 \
-    --batch_size 1 \
-    --results_dir /home/WUR/stiva001/WUR/ssm_time_series/results/icml_vl_jepa_micro_solar \
+    --results_dir /home/WUR/stiva001/WUR/ssm_time_series/results/icml_vl_jepa_micro_weather_psn \
     --scaler_type standard \
     --seq_len 336 \
-    --embed_batch_size 16 \
+    --per_series_norm \
     --no_comet \
     --seed 42

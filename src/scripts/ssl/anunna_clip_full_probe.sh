@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --comment=clip_full_probe
-#SBATCH --time=480
+#SBATCH --time=720
 #SBATCH --mem=32000
 #SBATCH --cpus-per-task=4
 #SBATCH --output=logs/clip_full/probe_%j.out
