@@ -37,4 +37,5 @@ time python3 "${SRC}/experiments/probe_lotsa_checkpoint.py" \
     --results_dir /home/WUR/stiva001/WUR/ssm_time_series/results/clip_full \
     --scaler_type standard \
     --seq_len 336 \
+    --embed_batch_size 8 \
     --seed 42
