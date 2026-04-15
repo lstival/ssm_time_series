@@ -97,12 +97,30 @@ def load_encoders(checkpoint_dir: Path, config, device: torch.device):
 
 # ── embedding helpers ─────────────────────────────────────────────────────────
 
-def _embed(encoder, visual, batch, device):
+def _per_series_normalize(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """Apply z-score normalization independently to each series in the batch.
+
+    Args:
+        x: (N, 1, L) — one univariate series per row
+    Returns:
+        (N, 1, L) — each series zero-mean, unit-variance
+    """
+    mean = x.mean(dim=-1, keepdim=True)
+    std  = x.std(dim=-1, keepdim=True).clamp(min=eps)
+    return (x - mean) / std
+
+
+def _embed(encoder, visual, batch, device, per_series_norm: bool = False):
     """Embed a batch keeping each channel as an independent sample.
 
     For multivariate input (B, L, C), reshape_multivariate_series produces
     (B*C, 1, L) — each channel treated as a separate univariate series,
     matching exactly how the encoder was pre-trained on univariate LOTSA data.
+
+    Args:
+        per_series_norm: if True, apply per-series z-score after reshaping.
+            Useful for datasets like exchange_rate where channels have very
+            different scales or non-stationary behaviour.
 
     Returns:
         z:  (B*C, 2D) embeddings — one per (sample, channel)
@@ -112,13 +130,15 @@ def _embed(encoder, visual, batch, device):
     seq = prepare_sequence(seq)           # (B, L, C)
     C = seq.shape[2]
     x = reshape_multivariate_series(seq)  # (B*C, 1, L)
+    if per_series_norm:
+        x = _per_series_normalize(x)
     with torch.no_grad():
         ze = encoder(x)   # (B*C, D)
         zv = visual(x)    # (B*C, D)
     return torch.cat([ze, zv], dim=1), C  # (B*C, 2D), C
 
 
-def _collect(encoder, visual, loader, device):
+def _collect(encoder, visual, loader, device, per_series_norm: bool = False):
     """Collect embeddings and targets, each channel as an independent sample.
 
     Returns:
@@ -127,7 +147,7 @@ def _collect(encoder, visual, loader, device):
     """
     zs, ys = [], []
     for batch in loader:
-        z, C = _embed(encoder, visual, batch, device)
+        z, C = _embed(encoder, visual, batch, device, per_series_norm=per_series_norm)
         zs.append(z)
         # y shape: (B, L, C) or (B, L) — expand channels to independent rows
         y = batch[1].to(device).float() if len(batch) > 1 else batch[0].to(device).float()
@@ -157,6 +177,7 @@ def probe_evaluate(
     few_shot_fraction: float = 1.0,
     rng: Optional[torch.Generator] = None,
     seq_len: int = 96,
+    per_series_norm: bool = False,
 ) -> Dict[int, Dict[str, float]]:
     # Resolve the actual directory containing this CSV (handles subdirectories
     # like ETT-small/, weather/, traffic/, etc.)
@@ -192,7 +213,9 @@ def probe_evaluate(
     train_loader = module.train_loaders[0]
     test_loader = module.test_loaders[0] if module.test_loaders else None
 
-    Z_tr, Y_tr = _collect(encoder, visual, train_loader, device)
+    if per_series_norm:
+        print(f"  Per-series normalisation: ON")
+    Z_tr, Y_tr = _collect(encoder, visual, train_loader, device, per_series_norm=per_series_norm)
     if Z_tr is None:
         print(f"  [SKIP] {dataset_csv} — train loader returned no batches")
         return {}
@@ -237,7 +260,7 @@ def probe_evaluate(
                 experiment.log_metric(step_key, ep_loss / n_batches, step=ep + 1)
 
         if test_loader is not None:
-            Z_test, Y_test = _collect(encoder, visual, test_loader, device)
+            Z_test, Y_test = _collect(encoder, visual, test_loader, device, per_series_norm=per_series_norm)
             if Z_test is None:
                 results[H] = {"mse": float("nan"), "mae": float("nan")}
                 continue
@@ -284,6 +307,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no_comet", action="store_true")
     p.add_argument("--seq_len", type=int, default=336,
                    help="Input context length for the linear probe (default: 336, matching paper baselines).")
+    p.add_argument("--per_series_norm", action="store_true",
+                   help="Apply per-series z-score normalisation inside the probe (after dataset scaler). "
+                        "Useful for non-stationary or multi-scale datasets like exchange_rate.")
     p.add_argument(
         "--few_shot_fraction", type=float, default=1.0,
         help="Fraction of training data to use for the linear head (e.g. 0.01 for 1%%). "
@@ -357,6 +383,7 @@ def main() -> None:
             few_shot_fraction=few_shot_fraction,
             rng=rng,
             seq_len=args.seq_len,
+            per_series_norm=args.per_series_norm,
         )
 
         for H, m in metrics.items():
