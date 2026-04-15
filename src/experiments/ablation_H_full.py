@@ -194,25 +194,55 @@ def pretrain(
 
 # ── probe evaluation ──────────────────────────────────────────────────────────
 
-def _embed_all(encoder, visual, loader, device) -> tuple:
-    """Collect embeddings and targets for a full loader."""
-    zs, ys = [], []
+def _embed_all(encoder, visual, loader, device,
+               per_series_norm: bool = False,
+               embed_batch_size: int = 0) -> tuple:
+    """Collect embeddings and targets for a full loader.
+
+    Args:
+        per_series_norm: z-score each input window independently before
+            encoding (fixes distribution shift for weather/exchange_rate).
+        embed_batch_size: if > 0, chunk B*C before encoding to avoid OOM
+            on high-channel datasets like solar_AL (137 channels).
+    """
+    zs, ys, means_list, stds_list = [], [], [], []
     for batch in loader:
         x = batch[0].to(device).float()
         x = reshape_multivariate_series(prepare_sequence(x))  # (B*C, 1, L)
+        mean, std = None, None
+        if per_series_norm:
+            mean = x.mean(dim=-1, keepdim=True)
+            std  = x.std(dim=-1, keepdim=True).clamp(min=1e-6)
+            x = (x - mean) / std
         with torch.no_grad():
-            ze = encoder(x)
-            rp = _compute_rp_for_visual(x, visual.patch_len)  # (B*C, W, l, l)
-            zv = visual(rp).mean(dim=1)                        # (B*C, d)
-        zs.append(torch.cat([ze, zv], dim=1))
+            if embed_batch_size > 0 and x.shape[0] > embed_batch_size:
+                ze_c, zv_c = [], []
+                for i in range(0, x.shape[0], embed_batch_size):
+                    xc = x[i: i + embed_batch_size]
+                    ze_c.append(encoder(xc))
+                    rpc = _compute_rp_for_visual(xc, visual.patch_len)
+                    zv_c.append(visual(rpc).mean(dim=1))
+                ze = torch.cat(ze_c, dim=0)
+                zv = torch.cat(zv_c, dim=0)
+            else:
+                ze = encoder(x)
+                rp = _compute_rp_for_visual(x, visual.patch_len)
+                zv = visual(rp).mean(dim=1)
+        zs.append(torch.cat([ze, zv], dim=1).cpu())
         y = batch[1].to(device).float() if len(batch) > 1 else batch[0].to(device).float()
         if y.ndim == 3:
             B, L, Cy = y.shape
             y = y.permute(0, 2, 1).reshape(B * Cy, L)
-        ys.append(y)
+        if per_series_norm and mean is not None:
+            y = (y - mean.squeeze(-1)) / std.squeeze(-1)
+            means_list.append(mean.squeeze(-1).cpu())
+            stds_list.append(std.squeeze(-1).cpu())
+        ys.append(y.cpu())
     if not zs:
-        return None, None
-    return torch.cat(zs), torch.cat(ys)
+        return None, None, None, None
+    m = torch.cat(means_list) if means_list else None
+    s = torch.cat(stds_list)  if stds_list  else None
+    return torch.cat(zs), torch.cat(ys), m, s
 
 
 def probe_one_dataset(
@@ -224,6 +254,9 @@ def probe_one_dataset(
     device: torch.device,
     probe_epochs: int = 20,
     batch_size: int = 64,
+    seq_len: int = 336,
+    per_series_norm: bool = True,
+    embed_batch_size: int = 16,
 ) -> Dict[int, Dict[str, float]]:
     """Linear probe for one dataset across all horizons."""
     resolved_dir = str(data_dir)
@@ -238,7 +271,7 @@ def probe_one_dataset(
             batch_size=batch_size, val_batch_size=batch_size,
             num_workers=0, pin_memory=False, normalize=True,
             train=True, val=False, test=True,
-            sample_size=(96, 0, max_horizon), scaler_type="standard",
+            sample_size=(seq_len, 0, max_horizon), scaler_type="standard",
         )
         module.setup()
     except Exception as exc:
@@ -253,7 +286,9 @@ def probe_one_dataset(
     for p in list(encoder.parameters()) + list(visual.parameters()):
         p.requires_grad_(False)
 
-    Z_tr, Y_tr = _embed_all(encoder, visual, module.train_loaders[0], device)
+    Z_tr, Y_tr, _, _ = _embed_all(encoder, visual, module.train_loaders[0], device,
+                                   per_series_norm=per_series_norm,
+                                   embed_batch_size=embed_batch_size)
     if Z_tr is None:
         return {}
 
@@ -267,28 +302,35 @@ def probe_one_dataset(
 
         for _ in range(probe_epochs):
             probe.train()
-            perm = torch.randperm(Z_tr.shape[0], device=device)
+            perm = torch.randperm(Z_tr.shape[0])
             for i in range(0, Z_tr.shape[0], batch_size):
                 idx = perm[i:i + batch_size]
-                z_b = Z_tr[idx]
-                y_b = Y_tr[idx, :H] if Y_tr.ndim == 2 else Y_tr[idx, :H, 0]
+                z_b = Z_tr[idx].to(device)
+                y_b = Y_tr[idx, :H].to(device) if Y_tr.ndim == 2 else Y_tr[idx, :H, 0].to(device)
                 if y_b.shape[-1] < H:
                     continue
                 loss = F.mse_loss(probe(z_b), y_b)
                 opt.zero_grad(set_to_none=True); loss.backward(); opt.step()
 
         if test_loader:
-            Z_te, Y_te = _embed_all(encoder, visual, test_loader, device)
+            Z_te, Y_te, te_means, te_stds = _embed_all(
+                encoder, visual, test_loader, device,
+                per_series_norm=per_series_norm,
+                embed_batch_size=embed_batch_size)
             if Z_te is None:
                 results[H] = {"mse": float("nan"), "mae": float("nan")}
                 continue
             probe.eval()
             with torch.no_grad():
-                y_eval = Y_te[:, :H] if Y_te.ndim == 2 else Y_te[:, :H, 0]
+                y_eval = Y_te[:, :H].to(device) if Y_te.ndim == 2 else Y_te[:, :H, 0].to(device)
                 if y_eval.shape[-1] < H:
                     results[H] = {"mse": float("nan"), "mae": float("nan")}
                     continue
-                pred = probe(Z_te)
+                pred = probe(Z_te.to(device))
+                if per_series_norm and te_means is not None:
+                    # te_means/te_stds: (N*C, 1) — broadcast over H dimension
+                    pred   = pred   * te_stds.to(device) + te_means.to(device)
+                    y_eval = y_eval * te_stds.to(device) + te_means.to(device)
                 results[H] = {
                     "mse": F.mse_loss(pred, y_eval).item(),
                     "mae": (pred - y_eval).abs().mean().item(),
@@ -322,6 +364,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--skip_pretrain", action="store_true",
                    help="Skip pre-training, load existing checkpoints")
+    p.add_argument("--seq_len", type=int, default=336,
+                   help="Input context length for the probe (default: 336).")
+    p.add_argument("--embed_batch_size", type=int, default=16,
+                   help="Chunk B*C before encoding to avoid OOM on high-channel datasets.")
+    p.add_argument("--per_series_norm", action="store_true", default=True,
+                   help="Apply per-series z-score normalisation (default: True).")
     return p.parse_args()
 
 
@@ -387,6 +435,9 @@ def main() -> None:
                 data_dir=args.data_dir, dataset_csv=ds_name,
                 horizons=args.horizons, device=device,
                 probe_epochs=args.probe_epochs, batch_size=args.batch_size,
+                seq_len=args.seq_len,
+                per_series_norm=args.per_series_norm,
+                embed_batch_size=args.embed_batch_size,
             )
             for H, m in results.items():
                 mse, mae = m["mse"], m["mae"]
