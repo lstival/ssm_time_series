@@ -119,9 +119,7 @@ def _clip_train_epoch(encoder, visual, proj, vproj, loader, optimizer, device,
 
         q = F.normalize(proj(encoder(x_q)), dim=1)
 
-        with torch.no_grad():
-            rp = _compute_rp_for_visual(x_k, visual.patch_len)       # (B, W, l, l)
-
+        rp = _compute_rp_for_visual(x_k, visual.patch_len)           # (B, W, l, l)
         k = F.normalize(vproj(visual(rp).mean(dim=1)), dim=1)
 
         loss = clip_contrastive_loss(q, k)
