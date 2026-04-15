@@ -10,6 +10,7 @@
 #SBATCH --mail-user=leandro.stival@wur.nl
 #SBATCH --gres=gpu:1
 #SBATCH --partition=gpu
+#SBATCH --constraint='nvidia&A100'
 
 # Few-shot linear probe for CLIP full (LOTSA pre-trained).
 # Runs 1% and 5% subsampling of the ICML training set — encoder stays frozen.
@@ -44,8 +45,10 @@ time python3 "${SRC}/experiments/probe_lotsa_checkpoint.py" \
     --config "${SRC}/configs/lotsa_clip_full.yaml" \
     --data_dir /home/WUR/stiva001/WUR/ssm_time_series/ICML_datasets \
     --probe_epochs 30 \
+    --batch_size 32 \
     --results_dir "${RESULTS}" \
     --scaler_type standard \
+    --seq_len 336 \
     --seed 42 \
     --few_shot_fraction 0.01
 
@@ -56,7 +59,9 @@ time python3 "${SRC}/experiments/probe_lotsa_checkpoint.py" \
     --config "${SRC}/configs/lotsa_clip_full.yaml" \
     --data_dir /home/WUR/stiva001/WUR/ssm_time_series/ICML_datasets \
     --probe_epochs 30 \
+    --batch_size 32 \
     --results_dir "${RESULTS}" \
     --scaler_type standard \
+    --seq_len 336 \
     --seed 42 \
     --few_shot_fraction 0.05

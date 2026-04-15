@@ -1,0 +1,59 @@
+experiment_name: "ts_simclr_visual_nano_lotsa"
+seed: 42
+device: "auto"
+
+# SimCLR visual-only (RP triangular) — NANO size with ablation-best settings:
+#   B: visual encoder = upper_tri (UpperTriDiagRPEncoder)
+#   D: visual representation = rp (triangular RP, no 1D CNN)
+#   E: patch_len = 64
+#   Lookback: context_length = 336 (ablation lookback best overall)
+#   Model size: nano (model_dim=128, depth=4, embedding_dim=64)
+#   Unimodal: visual RP branch only (UpperTriDiagRPEncoder), no temporal branch.
+
+model:
+  model_name: "ts_simclr_visual_nano"
+  rp_encoder: "upper_tri"         # simclr_training.py uses UpperTriDiagRPEncoder in visual mode
+  input_dim: 64                   # patch_len — Ablation E best
+  model_dim: 128                  # nano
+  embedding_dim: 64               # nano
+  depth: 4                        # nano
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+  rp_mv_strategy: "mean"          # Ablation A best
+
+data:
+  dataset_type: "lotsa"
+  batch_size: 256
+  val_batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  val_ratio: 0.1
+
+  cronos_kwargs:
+    context_length: 336           # ablation lookback best overall
+    cache_dir: "/lustre/nobackup/WUR/AIN/stiva001/hf_datasets"
+    normalize_per_series: true
+    force_offline: true
+    drop_last: true
+    two_views: true
+
+training:
+  epochs: 100
+  temperature: 0.2                # consistent with SimCLR-best nano
+  learning_rate: 0.0003           # lower — UpperTriDiag has larger grad norms
+  weight_decay: 0.0001
+  noise_std: 0.01
+  optimizer: "adamw"
+  scheduler: "cosine"
+  min_lr: 0.000001
+  warmup_epochs: 10               # longer warmup for visual encoder stability
+  max_grad_norm: 0.5              # tighter clip — visual grad norms ~5x temporal
+  use_amp: false                  # disabled — AMP can destabilize UpperTriDiag training
+
+logging:
+  checkpoint_dir: "../../checkpoints/simclr_visual_nano"
+  save_best_only: true
+  save_last: true

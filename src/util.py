@@ -319,6 +319,29 @@ def build_time_series_dataloaders(
         )
         return train_loader, val_loader
 
+    if kind == "combined":
+        from dataloaders.local_dataset_loader import build_combined_dataloaders
+
+        extra = dict(cronos_kwargs or {})
+        lotsa_names = _parse_datasets(datasets or dataset_name) or None
+        local_names = extra.pop("local_datasets", None)
+        context_length = int(extra.pop("context_length", 336))
+        split = val_split if val_split is not None else val_ratio
+        train_loader, val_loader = build_combined_dataloaders(
+            lotsa_names=lotsa_names,
+            local_names=local_names,
+            context_length=context_length,
+            val_split=split,
+            batch_size=batch_size,
+            val_batch_size=val_batch_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            seed=seed,
+            **{k: v for k, v in extra.items()
+               if k in ("two_views", "drop_last", "normalize_per_series")},
+        )
+        return train_loader, val_loader
+
     raise ValueError(f"Unsupported dataset_type: {dataset_type}")
 
 
@@ -498,6 +521,10 @@ def run_contrastive_training(
                     use_amp=amp_enabled,
                 )
 
+                loss_val = float(loss.item())
+                if not (loss_val == loss_val):  # NaN check
+                    continue
+
                 if train_mode:
                     optimizer.zero_grad(set_to_none=True)
                     if amp_enabled:
@@ -513,7 +540,7 @@ def run_contrastive_training(
                             clip_grad_norm_(model.parameters(), max_grad_norm)
                         optimizer.step()
 
-                running += float(loss.item())
+                running += loss_val
                 steps += 1
                 avg_loss = running / max(1, steps)
                 progress.set_postfix(loss=f"{avg_loss:.4f}")
@@ -653,6 +680,8 @@ def run_clip_training(
     best_loss: Optional[float] = None,
     experiment: Optional[Any] = None,  # comet_ml.Experiment
     alignment_strategy: str = "clip_symm",
+    max_grad_norm: Optional[float] = 1.0,
+    use_amp: bool = False,
 ) -> None:
     """Training loop that optimizes a CLIP-style contrastive objective."""
 
@@ -685,6 +714,10 @@ def run_clip_training(
     else:
         _loss_fn = clip_contrastive_loss
     print(f"Alignment strategy: {alignment_strategy}")
+
+    amp_enabled = use_amp and device.type == "cuda"
+    scaler = GradScaler(enabled=amp_enabled)
+    print(f"AMP: {amp_enabled}  |  max_grad_norm: {max_grad_norm}")
 
     for epoch in range(start_epoch, epochs):
         encoder.train()
@@ -753,12 +786,24 @@ def run_clip_training(
 
                     loss = _loss_fn(q_proj, k_proj)
 
-                optimizer.zero_grad(set_to_none=True)
-
-                loss.backward()
-                optimizer.step()
-
                 batch_loss = float(loss.item())
+                if not (batch_loss == batch_loss):  # NaN check — skip corrupted batch
+                    continue
+
+                optimizer.zero_grad(set_to_none=True)
+                if amp_enabled:
+                    scaler.scale(loss).backward()
+                    if max_grad_norm is not None:
+                        scaler.unscale_(optimizer)
+                        nn.utils.clip_grad_norm_(params, max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    if max_grad_norm is not None:
+                        nn.utils.clip_grad_norm_(params, max_grad_norm)
+                    optimizer.step()
+
                 epoch_loss += batch_loss
                 batches += 1
                 pbar.set_postfix(batch_loss=f"{batch_loss:.4f}", avg_loss=f"{(epoch_loss / batches):.4f}")

@@ -16,6 +16,7 @@ mkdir -p logs/ablation_B
 
 # Ablation B — Visual Encoder Architecture
 # Compares: no_visual, shared_1d, sep_cnn_only, sep_mamba_1d
+# Probes on: ETTh1, ETTm1, Weather, Traffic, Solar
 
 module load GPU
 source /home/WUR/stiva001/WUR/timeseries/bin/activate
@@ -23,14 +24,21 @@ source /home/WUR/stiva001/WUR/timeseries/bin/activate
 # Unique per-job HF cache to avoid race conditions when jobs run concurrently
 export HF_DATASETS_CACHE="/home/WUR/stiva001/.cache/hf_ablation_${SLURM_JOB_ID}"
 
-SRC=/home/WUR/stiva001/WUR/ssm_time_series/src
+REPO=/home/WUR/stiva001/WUR/ssm_time_series
+SRC="${REPO}/src"
+RESULTS="${REPO}/results/ablation_B"
+CKPT="${RESULTS}/checkpoints"
 
 time python3 "${SRC}/experiments/ablation_B_encoder_arch.py" \
     --config "${SRC}/configs/lotsa_clip.yaml" \
     --train_epochs 20 \
     --probe_epochs 20 \
-    --results_dir /home/WUR/stiva001/WUR/ssm_time_series/results/ablation_B \
-    --data_dir /home/WUR/stiva001/WUR/ssm_time_series/ICML_datasets \
+    --results_dir "${RESULTS}" \
+    --checkpoint_dir "${CKPT}" \
+    --data_dir "${REPO}/ICML_datasets" \
     --seed 42
 
-# sbatch src/scripts/anunna_ablations_B.sh
+# To re-run probes only (skip pre-training, reuse saved encoders):
+#   sbatch --job-name=ablation_B_probe_only src/scripts/ablations/anunna_ablations_B.sh
+# with the extra flag:
+#   python3 ... --probe_only --checkpoint_dir "${CKPT}"

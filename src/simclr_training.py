@@ -37,7 +37,7 @@ from tqdm import tqdm
 
 import training_utils as tu
 import util as u
-from moco_training import resolve_path, resolve_checkpoint_dir
+from path_utils import resolve_path, resolve_checkpoint_dir
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────

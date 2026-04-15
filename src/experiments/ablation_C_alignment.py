@@ -59,8 +59,12 @@ from models.mamba_visual_encoder import MambaVisualEncoder
 from time_series_loader import TimeSeriesDataModule
 
 VARIANTS: List[str] = ["clip_symm", "cosine_mse", "concat_supervised", "unimodal_temporal"]
-PROBE_DATASETS: List[str] = ["ETTm1.csv", "weather.csv", "exchange_rate.csv"]
+PROBE_DATASETS: List[str] = [
+    "ETTm1.csv", "ETTm2.csv", "ETTh1.csv", "ETTh2.csv",
+    "weather.csv", "traffic.csv", "electricity.csv", "exchange_rate.csv",
+]
 HORIZONS: List[int] = [96, 192, 336, 720]
+SEQ_LEN: int = 336  # match final models (simclr-best / clip-best-nano)
 
 
 # ── loss functions ────────────────────────────────────────────────────────────
@@ -212,7 +216,8 @@ def _probe_evaluate(
         pin_memory=False,
         normalize=True,
         train=True, val=False, test=True,
-        sample_size=(96, 0, max_horizon),
+        sample_size=(SEQ_LEN, 0, max_horizon),
+        scaler_type="standard",
     )
     module.setup()
     if not module.train_loaders:
@@ -289,9 +294,9 @@ def _probe_evaluate(
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config", type=Path,
-                   default=src_dir / "configs" / "lotsa_clip.yaml")
-    p.add_argument("--train_epochs", type=int, default=20)
-    p.add_argument("--probe_epochs", type=int, default=30)
+                   default=src_dir / "configs" / "lotsa_clip_nano.yaml")
+    p.add_argument("--train_epochs", type=int, default=100)
+    p.add_argument("--probe_epochs", type=int, default=20)
     p.add_argument("--results_dir", type=Path,
                    default=src_dir.parent / "results" / "ablation_C")
     p.add_argument("--data_dir", type=Path,

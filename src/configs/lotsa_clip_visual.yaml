@@ -1,0 +1,56 @@
+experiment_name: "ts_clip_visual_lotsa"
+seed: 42
+device: "auto"
+
+# CLIP visual-only unimodal — full size, HPO-best hyperparams, combined dataset.
+# Two augmented views via Gaussian noise on the raw TS before RP generation.
+# No temporal encoder — UpperTriDiagRPEncoder only.
+
+model:
+  model_name: "ts_clip_visual_lotsa"
+  rp_encoder: "upper_tri"          # simclr_training.py → UpperTriDiagRPEncoder (visual mode)
+  input_dim: 64                    # patch_len — Ablation E best
+  model_dim: 256                   # full
+  embedding_dim: 128               # full
+  depth: 8                         # full
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+  rp_mode: "correct"
+  # rp_mv_strategy forced to "mean" in simclr_training.py (Ablation A best)
+
+data:
+  dataset_type: "combined"         # LOTSA + local datasets
+  batch_size: 256
+  val_batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  val_ratio: 0.1
+
+  cronos_kwargs:
+    context_length: 512            # HPO best
+    cache_dir: "/lustre/nobackup/WUR/AIN/stiva001/hf_datasets"
+    normalize_per_series: true
+    force_offline: true
+    drop_last: true
+    two_views: true
+
+training:
+  epochs: 100
+  temperature: 0.20228698523800784   # HPO best
+  learning_rate: 0.0003              # lower LR — visual encoder has larger grad norms
+  weight_decay: 0.00023300971704415705
+  noise_std: 0.001519215433363163
+  optimizer: "adamw"
+  scheduler: "cosine"
+  min_lr: 1.0e-06
+  warmup_epochs: 20                  # longer warmup for visual encoder
+  max_grad_norm: 0.5                 # tighter clip — visual grad norms ~5x temporal
+  use_amp: false                     # disabled — AMP destabilizes visual encoder training
+
+logging:
+  checkpoint_dir: "../../checkpoints/clip_visual"
+  save_best_only: true
+  save_last: true

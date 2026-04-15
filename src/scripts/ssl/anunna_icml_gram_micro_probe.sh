@@ -34,4 +34,5 @@ time python3 "${SRC}/experiments/probe_lotsa_checkpoint.py" \
     --probe_epochs 20 \
     --results_dir /home/WUR/stiva001/WUR/ssm_time_series/results/icml_gram_micro \
     --scaler_type standard \
+    --seq_len 336 \
     --seed 42

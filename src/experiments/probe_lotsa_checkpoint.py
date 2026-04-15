@@ -49,6 +49,8 @@ from time_series_loader import TimeSeriesDataModule
 PROBE_DATASETS: List[str] = [
     "ETTm1.csv", "ETTm2.csv", "ETTh1.csv", "ETTh2.csv",
     "weather.csv", "traffic.csv", "electricity.csv", "exchange_rate.csv",
+    "solar_AL.txt",
+    "PEMS03.npz", "PEMS04.npz", "PEMS07.npz", "PEMS08.npz",
 ]
 HORIZONS: List[int] = [96, 192, 336, 720]
 
@@ -154,6 +156,7 @@ def probe_evaluate(
     scaler_type: str = "standard",
     few_shot_fraction: float = 1.0,
     rng: Optional[torch.Generator] = None,
+    seq_len: int = 96,
 ) -> Dict[int, Dict[str, float]]:
     # Resolve the actual directory containing this CSV (handles subdirectories
     # like ETT-small/, weather/, traffic/, etc.)
@@ -175,7 +178,7 @@ def probe_evaluate(
             train=True,
             val=False,
             test=True,
-            sample_size=(96, 0, max_horizon),
+            sample_size=(seq_len, 0, max_horizon),
             scaler_type=scaler_type,
         )
         module.setup()
@@ -279,6 +282,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--scaler_type", type=str, default="standard", choices=["standard", "minmax"])
     p.add_argument("--no_comet", action="store_true")
+    p.add_argument("--seq_len", type=int, default=336,
+                   help="Input context length for the linear probe (default: 336, matching paper baselines).")
     p.add_argument(
         "--few_shot_fraction", type=float, default=1.0,
         help="Fraction of training data to use for the linear head (e.g. 0.01 for 1%%). "
@@ -304,6 +309,7 @@ def main() -> None:
 
     fraction_tag = "full" if few_shot_fraction == 1.0 else f"{few_shot_fraction*100:.0f}pct"
     print(f"Few-shot mode: {fraction_tag}  (fraction={few_shot_fraction})")
+    print(f"Context length (seq_len): {args.seq_len}")
 
     # ── Comet ML ──────────────────────────────────────────────────────────────
     experiment: Optional[Any] = None
@@ -350,6 +356,7 @@ def main() -> None:
             scaler_type=args.scaler_type,
             few_shot_fraction=few_shot_fraction,
             rng=rng,
+            seq_len=args.seq_len,
         )
 
         for H, m in metrics.items():

@@ -18,7 +18,7 @@ from torch.cuda.amp import GradScaler, autocast
 import training_utils as tu
 import util as u
 from cosine_training import _build_time_series_loaders
-from moco_training import resolve_checkpoint_dir, resolve_path
+from path_utils import resolve_checkpoint_dir, resolve_path
 
 
 def gram_volume_loss(

@@ -22,7 +22,7 @@ from tqdm import tqdm
 import training_utils as tu
 import util as u
 from byol_training import MLPHead, _build_loaders, _update_ema
-from moco_training import resolve_checkpoint_dir, resolve_path
+from path_utils import resolve_checkpoint_dir, resolve_path
 from models.mamba_visual_encoder import UpperTriDiagRPEncoder
 
 

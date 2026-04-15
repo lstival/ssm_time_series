@@ -70,18 +70,23 @@ from models.mamba_visual_encoder import MambaVisualEncoder, _InputConv
 from time_series_loader import TimeSeriesDataModule
 
 VARIANTS: List[str] = ["no_visual", "shared_1d", "sep_cnn_only", "sep_mamba_1d"]
-PROBE_DATASETS: List[str] = ["ETTm1.csv", "ETTh1.csv", "weather.csv"]
+PROBE_DATASETS: List[str] = ["ETTh1.csv", "ETTm1.csv", "weather.csv", "traffic.csv", "solar_AL.txt"]
 HORIZONS: List[int] = [96, 192, 336, 720]
 
 
 # ── CNN-only visual encoder ───────────────────────────────────────────────────
 
 class CNNOnlyVisualEncoder(nn.Module):
-    """RP → single Conv2D projection → mean pool → output embedding.
+    """RP → 5-layer CNN backbone → global avg pool → linear projection.
 
-    No Mamba SSM blocks. Used to test whether the recurrent structure in the
-    visual branch is necessary.
+    Parameter-matched to the Mamba visual encoder (~3.54 M) via channels
+    (64, 128, 256, 448, 512).  No SSM blocks — tests whether standard
+    convolutional feature extraction is sufficient for recurrence plots when
+    model capacity is held constant.
     """
+
+    # Channel progression calibrated so total params ≈ MambaVisualEncoder
+    _CHANNELS: Tuple[int, ...] = (64, 128, 256, 448, 512)
 
     def __init__(
         self,
@@ -93,24 +98,37 @@ class CNNOnlyVisualEncoder(nn.Module):
         from models.mamba_visual_encoder import tokenize_sequence
         self._tokenize = lambda x: tokenize_sequence(x, token_size=input_dim)
         self.input_dim = input_dim
-        self.input_proj = _InputConv(token_len=input_dim, out_dim=model_dim)
-        self.norm = nn.LayerNorm(model_dim)
-        self.output_proj = nn.Linear(model_dim, embedding_dim, bias=False)
+
+        layers: List[nn.Module] = []
+        in_ch = 1
+        for out_ch in self._CHANNELS:
+            layers += [
+                nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(out_ch),
+                nn.ReLU(inplace=True),
+            ]
+            in_ch = out_ch
+        self.backbone = nn.Sequential(*layers)
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.norm = nn.LayerNorm(in_ch)
+        self.output_proj = nn.Linear(in_ch, embedding_dim, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         from models.utils import time_series_2_recurrence_plot
-        import numpy as np
 
-        tokens = self._tokenize(x)          # (B, windows, L, F)
+        tokens = self._tokenize(x)                          # (B, windows, L, F)
         B, windows, L, F = tokens.shape
         tokens_np = tokens.permute(0, 1, 3, 2).reshape(B * windows, F, L)
         tokens_np = tokens_np.detach().cpu().numpy()
-        imgs = time_series_2_recurrence_plot(tokens_np)  # (N, L, L) or (N, F, L, L)
+        imgs = time_series_2_recurrence_plot(tokens_np)     # (N, L, L) or (N, F, L, L)
         if imgs.ndim == 4:
             imgs = imgs.mean(axis=1)
-        imgs_t = torch.from_numpy(imgs).float().to(x.device).view(B, windows, L, L)
-        feat = self.input_proj(imgs_t)      # (B, windows, model_dim)
-        feat = feat.mean(dim=1)             # (B, model_dim)
+        # imgs: (B*windows, L, L) — process each window independently through CNN
+        imgs_t = torch.from_numpy(imgs).float().to(x.device)  # (B*windows, L, L)
+        imgs_t = imgs_t.unsqueeze(1)                           # (B*windows, 1, L, L)
+        feat = self.backbone(imgs_t)                           # (B*windows, 512, H', W')
+        feat = self.pool(feat).squeeze(-1).squeeze(-1)         # (B*windows, 512)
+        feat = feat.view(B, windows, -1).mean(dim=1)           # (B, 512) — pool over windows
         return self.output_proj(self.norm(feat))
 
 
@@ -320,8 +338,51 @@ def parse_args() -> argparse.Namespace:
                    help="Data dir for CLIP pre-training (override for smoke tests)")
     p.add_argument("--variants", nargs="+", default=VARIANTS,
                    choices=VARIANTS)
+    p.add_argument("--probe_datasets", nargs="+", default=PROBE_DATASETS,
+                   help="CSV/txt dataset filenames to probe (looked up under --data_dir)")
+    p.add_argument("--checkpoint_dir", type=Path, default=None,
+                   help="Directory to save/load per-variant encoder checkpoints. "
+                        "Defaults to results_dir/checkpoints.")
+    p.add_argument("--probe_only", action="store_true",
+                   help="Skip pre-training; load saved checkpoints from --checkpoint_dir "
+                        "and run linear probes only. Useful to extend probe datasets "
+                        "without re-training.")
     p.add_argument("--seed", type=int, default=42)
     return p.parse_args()
+
+
+def _ckpt_path(ckpt_dir: Path, variant: str, kind: str) -> Path:
+    return ckpt_dir / f"{variant}_{kind}.pt"
+
+
+def _save_checkpoint(ckpt_dir: Path, variant: str,
+                     encoder: nn.Module, visual: Optional[nn.Module]) -> None:
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    torch.save(encoder.state_dict(), _ckpt_path(ckpt_dir, variant, "encoder"))
+    if visual is not None and visual is not encoder:
+        torch.save(visual.state_dict(), _ckpt_path(ckpt_dir, variant, "visual"))
+    print(f"  Checkpoint saved → {ckpt_dir}/{variant}_*.pt")
+
+
+def _load_checkpoint(ckpt_dir: Path, variant: str,
+                     encoder: nn.Module, visual: Optional[nn.Module],
+                     device: torch.device) -> None:
+    enc_path = _ckpt_path(ckpt_dir, variant, "encoder")
+    if not enc_path.exists():
+        raise FileNotFoundError(
+            f"Encoder checkpoint not found: {enc_path}\n"
+            f"Run without --probe_only first to train and save checkpoints."
+        )
+    encoder.load_state_dict(torch.load(enc_path, map_location=device))
+    print(f"  Loaded encoder from {enc_path}")
+
+    if visual is not None and visual is not encoder:
+        vis_path = _ckpt_path(ckpt_dir, variant, "visual")
+        if vis_path.exists():
+            visual.load_state_dict(torch.load(vis_path, map_location=device))
+            print(f"  Loaded visual encoder from {vis_path}")
+        else:
+            print(f"  WARNING: no visual checkpoint at {vis_path}, using random weights")
 
 
 def main() -> None:
@@ -333,18 +394,25 @@ def main() -> None:
     config = tu.load_config(args.config)
     args.results_dir.mkdir(parents=True, exist_ok=True)
 
-    train_loader, _ = build_time_series_dataloaders(
-        data_dir=str(args.pretrain_data_dir),
-        dataset_name=config.data.get("dataset_name", ""),
-        dataset_type=config.data.get("dataset_type", "lotsa"),
-        batch_size=int(config.data.get("batch_size", 256)),
-        val_batch_size=int(config.data.get("val_batch_size", 128)),
-        num_workers=int(config.data.get("num_workers", 4)),
-        pin_memory=bool(config.data.get("pin_memory", True)),
-        val_ratio=float(config.data.get("val_ratio", 0.1)),
-        cronos_kwargs=dict(config.data.get("cronos_kwargs", {})),
-        seed=args.seed,
-    )
+    ckpt_dir = args.checkpoint_dir if args.checkpoint_dir else args.results_dir / "checkpoints"
+
+    # Only build the LOTSA train loader when pre-training is needed
+    train_loader = None
+    if not args.probe_only:
+        train_loader, _ = build_time_series_dataloaders(
+            data_dir=str(args.pretrain_data_dir),
+            dataset_name=config.data.get("dataset_name", ""),
+            dataset_type=config.data.get("dataset_type", "lotsa"),
+            batch_size=int(config.data.get("batch_size", 256)),
+            val_batch_size=int(config.data.get("val_batch_size", 128)),
+            num_workers=int(config.data.get("num_workers", 4)),
+            pin_memory=bool(config.data.get("pin_memory", True)),
+            val_ratio=float(config.data.get("val_ratio", 0.1)),
+            cronos_kwargs=dict(config.data.get("cronos_kwargs", {})),
+            seed=args.seed,
+        )
+
+    probe_datasets = args.probe_datasets
 
     rows: List[Dict] = []
 
@@ -356,20 +424,24 @@ def main() -> None:
             config.model, variant, device
         )
 
-        t0 = time.time()
-        for ep in range(args.train_epochs):
-            loss = _clip_train_epoch_variant(
-                encoder, visual, proj, vproj, train_loader, optimizer, device,
-                noise_std=float(config.training.get("noise_std", 0.01)),
-                variant=variant,
-            )
-            if (ep + 1) % 5 == 0 or ep == 0:
-                print(f"  epoch {ep+1}/{args.train_epochs}  loss={loss:.4f}")
-        elapsed = time.time() - t0
-        ms_per_batch = 1000 * elapsed / (args.train_epochs * max(1, len(train_loader)))
-        print(f"  Done — {elapsed:.0f}s ({ms_per_batch:.1f} ms/batch)")
+        if args.probe_only:
+            _load_checkpoint(ckpt_dir, variant, encoder, visual, device)
+        else:
+            t0 = time.time()
+            for ep in range(args.train_epochs):
+                loss = _clip_train_epoch_variant(
+                    encoder, visual, proj, vproj, train_loader, optimizer, device,
+                    noise_std=float(config.training.get("noise_std", 0.01)),
+                    variant=variant,
+                )
+                if (ep + 1) % 5 == 0 or ep == 0:
+                    print(f"  epoch {ep+1}/{args.train_epochs}  loss={loss:.4f}")
+            elapsed = time.time() - t0
+            ms_per_batch = 1000 * elapsed / (args.train_epochs * max(1, len(train_loader)))
+            print(f"  Done — {elapsed:.0f}s ({ms_per_batch:.1f} ms/batch)")
+            _save_checkpoint(ckpt_dir, variant, encoder, visual)
 
-        for ds in PROBE_DATASETS:
+        for ds in probe_datasets:
             metrics = _probe_evaluate(
                 encoder, visual,
                 data_dir=args.data_dir, dataset_csv=ds,
@@ -378,7 +450,7 @@ def main() -> None:
             )
             for H, m in metrics.items():
                 rows.append({
-                    "variant": variant, "dataset": ds.replace(".csv", ""),
+                    "variant": variant, "dataset": ds.replace(".csv", "").replace(".txt", ""),
                     "horizon": H,
                     "mse": f"{m['mse']:.4f}", "mae": f"{m['mae']:.4f}",
                 })

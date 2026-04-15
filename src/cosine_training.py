@@ -13,10 +13,7 @@ from torch.utils.data import DataLoader
 
 import training_utils as tu
 import util as u
-from moco_training import (
-    resolve_path,
-    resolve_checkpoint_dir,
-)
+from path_utils import resolve_path, resolve_checkpoint_dir
 
 
 def _resolve_data_root(config_path: Path, candidate: Optional[Path | str]) -> Path:
@@ -293,11 +290,14 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         resume_display_epoch = min(epochs, stored_epoch + 1)
         print(f"Resuming from checkpoint: {resume_dir.resolve()} (epoch {resume_display_epoch}).")
 
-    checkpoint_dir = (
-        resume_dir.resolve()
-        if resume_dir is not None
-        else resolve_checkpoint_dir(config, config_path, args.checkpoint_dir)
-    )
+    # If an explicit --checkpoint-dir is given, always use it (even when resuming).
+    # This lets finetune jobs save to a new directory without overwriting the source checkpoint.
+    if args.checkpoint_dir is not None:
+        checkpoint_dir = resolve_checkpoint_dir(config, config_path, args.checkpoint_dir)
+    elif resume_dir is not None:
+        checkpoint_dir = resume_dir.resolve()
+    else:
+        checkpoint_dir = resolve_checkpoint_dir(config, config_path, args.checkpoint_dir)
     print(f"Checkpoints: {checkpoint_dir}")
 
     if val_loader is not None and len(val_loader) == 0:
@@ -305,6 +305,10 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     alignment_strategy = str(training_cfg.get("alignment_strategy", "clip_symm"))
     experiment.log_parameter("alignment_strategy", alignment_strategy)
+
+    max_grad_norm_cfg = training_cfg.get("max_grad_norm", 1.0)
+    max_grad_norm = float(max_grad_norm_cfg) if max_grad_norm_cfg is not None else None
+    use_amp = bool(training_cfg.get("use_amp", False))
 
     u.run_clip_training(
         encoder=encoder,
@@ -322,6 +326,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         best_loss=best_loss,
         experiment=experiment,
         alignment_strategy=alignment_strategy,
+        max_grad_norm=max_grad_norm,
+        use_amp=use_amp,
     )
     
     # End Comet experiment

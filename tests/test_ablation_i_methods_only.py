@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 # Add src to path
-src_dir = Path(__file__).parent / "src"
+src_dir = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(src_dir))
 
 # Import the ablation script

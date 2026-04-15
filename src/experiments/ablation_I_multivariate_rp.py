@@ -50,6 +50,7 @@ import csv
 import sys
 import time
 from pathlib import Path
+from types import MethodType
 from typing import Any, Dict, List, Optional, Tuple
 import warnings
 
@@ -68,8 +69,6 @@ import training_utils as tu
 from util import (
     build_time_series_dataloaders,
     clip_contrastive_loss,
-    default_device,
-    extract_sequence,
     make_positive_view,
     prepare_sequence,
     reshape_multivariate_series,
@@ -353,6 +352,97 @@ def rp_ms_fusion_concat(x: np.ndarray,
     return result.astype(np.float32)
 
 
+def _resize_square_images(x: np.ndarray, target_len: int) -> np.ndarray:
+    """Resize a batch of square images to (N, target_len, target_len)."""
+    arr = np.asarray(x, dtype=np.float32)
+    if arr.ndim != 3:
+        raise ValueError(f"Expected (N, H, W), got {arr.shape}")
+    n, h, w = arr.shape
+    if h == target_len and w == target_len:
+        return arr
+
+    tensor = torch.from_numpy(arr).unsqueeze(1)
+    resized = torchF.interpolate(
+        tensor,
+        size=(target_len, target_len),
+        mode="bilinear",
+        align_corners=False,
+    )
+    return resized.squeeze(1).numpy().astype(np.float32)
+
+
+def _apply_rp_mode(img: np.ndarray, rp_mode: str) -> np.ndarray:
+    """Apply existing RP mode perturbations on top of method-specific images."""
+    x = np.asarray(img, dtype=np.float32)
+    if rp_mode == "shuffled":
+        n, l, _ = x.shape
+        flat = x.reshape(n, l * l)
+        idx = np.argsort(np.random.rand(n, l * l), axis=1)
+        flat = flat[np.arange(n)[:, None], idx]
+        return flat.reshape(n, l, l).astype(np.float32)
+    if rp_mode == "random":
+        return np.random.normal(0, 1, size=x.shape).astype(np.float32)
+    return x
+
+
+def _build_method_image_fn(method: str):
+    """Return a callable that maps (N, F, L) -> (N, L, L) for each Ablation I method."""
+
+    def _fn(arr: np.ndarray) -> np.ndarray:
+        x = np.asarray(arr, dtype=np.float32)
+        if x.ndim == 2:
+            x = x[None, :, :]
+        if x.ndim != 3:
+            raise ValueError(f"Expected (N, F, L) or (F, L), got {x.shape}")
+
+        target_len = x.shape[-1]
+        if method == "channel_stacking":
+            rep = rp_channel_stacking(x)  # (N, L, L, F)
+            rep = rep.mean(axis=-1)       # Keep method-specific RP generation, then fuse for encoder input
+        elif method == "global_l2":
+            rep = rp_global_l2(x)
+        elif method == "jrp_hadamard":
+            rep = rp_jrp_hadamard(x)
+        elif method == "crp_block":
+            rep = rp_crp_block(x)         # (N, F*L, F*L)
+            rep = _resize_square_images(rep, target_len)
+        elif method == "ms_fusion_concat":
+            rep = rp_ms_fusion_concat(x)  # (N, L, L, S)
+            rep = rep.mean(axis=-1)
+        else:
+            raise ValueError(f"Unknown Ablation I method: {method}")
+
+        rep = np.nan_to_num(rep, nan=0.0, posinf=1.0, neginf=0.0)
+        if rep.ndim != 3:
+            raise ValueError(f"Expected 3D output (N, L, L), got {rep.shape}")
+        if rep.shape[1] != target_len or rep.shape[2] != target_len:
+            rep = _resize_square_images(rep, target_len)
+        return rep.astype(np.float32)
+
+    return _fn
+
+
+def _patch_visual_encoder_for_method(visual: MambaVisualEncoder, method: str) -> None:
+    """Patch visual encoder RP conversion so Ablation I methods are truly executed."""
+    image_fn = _build_method_image_fn(method)
+    visual.use_gpu_rp = False
+
+    def _ts2img(self, ts):
+        if isinstance(ts, torch.Tensor):
+            arr = ts.detach().cpu().numpy()
+        else:
+            arr = np.asarray(ts, dtype=np.float32)
+        img = image_fn(arr)
+        return _apply_rp_mode(img, self.rp_mode)
+
+    def _ts2img_gpu(self, ts: torch.Tensor) -> torch.Tensor:
+        img = _ts2img(self, ts)
+        return torch.from_numpy(img).float().to(ts.device)
+
+    visual._time_series_2_image = MethodType(_ts2img, visual)
+    visual._time_series_2_image_gpu = MethodType(_ts2img_gpu, visual)
+
+
 # ── adapter for mamba_visual_encoder ─────────────────────────────────────────
 
 def _build_encoders_with_mv_method(
@@ -365,23 +455,13 @@ def _build_encoders_with_mv_method(
     """
     encoder = tu.build_encoder_from_config(model_cfg)
 
-    # Map ablation method names to internal strategy names
-    method_to_strategy = {
-        "channel_stacking": "per_channel",    # Use existing per_channel
-        "global_l2": "mean",                  # Fall back to mean (global)
-        "jrp_hadamard": "joint",              # Use existing joint
-        "crp_block": "pca",                   # Use PCA as placeholder
-        "ms_fusion_concat": "per_channel",    # Stack-based, use per_channel
-    }
-
-    strategy = method_to_strategy.get(mv_method, "per_channel")
-
     visual = tu.build_visual_encoder_from_config(
         model_cfg,
         rp_mode="correct",
-        rp_mv_strategy=strategy,
+        rp_mv_strategy="per_channel",
         repr_type="rp",
     )
+    _patch_visual_encoder_for_method(visual, mv_method)
     return encoder, visual
 
 
@@ -391,6 +471,185 @@ def _get_device(cfg_device: str) -> torch.device:
     return torch.device(cfg_device)
 
 
+def _clip_train_epoch(
+    encoder: nn.Module,
+    visual: nn.Module,
+    proj: nn.Module,
+    vproj: nn.Module,
+    loader,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    noise_std: float = 0.01,
+) -> float:
+    encoder.train(); visual.train(); proj.train(); vproj.train()
+    total, n = 0.0, 0
+    for batch in loader:
+        if isinstance(batch, dict) and "target" in batch:
+            seq = batch["target"].to(device).float()
+            if "lengths" in batch:
+                seq = seq[:, : int(batch["lengths"].max().item())]
+        elif isinstance(batch, (tuple, list)):
+            seq = batch[0].to(device).float()
+        else:
+            seq = batch.to(device).float()
+
+        seq = prepare_sequence(seq)
+        x_q = reshape_multivariate_series(seq)
+        x_k = make_positive_view(x_q + noise_std * torch.randn_like(x_q))
+
+        q = torchF.normalize(proj(encoder(x_q)), dim=1)
+        k = torchF.normalize(vproj(visual(x_k)), dim=1)
+        loss = clip_contrastive_loss(q, k)
+
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+        total += float(loss.item()); n += 1
+
+    return total / max(1, n)
+
+
+@torch.no_grad()
+def _clip_val_epoch(
+    encoder: nn.Module,
+    visual: nn.Module,
+    proj: nn.Module,
+    vproj: nn.Module,
+    loader,
+    device: torch.device,
+    noise_std: float = 0.01,
+) -> float:
+    encoder.eval(); visual.eval(); proj.eval(); vproj.eval()
+    total, n = 0.0, 0
+    for batch in loader:
+        if isinstance(batch, dict) and "target" in batch:
+            seq = batch["target"].to(device).float()
+            if "lengths" in batch:
+                seq = seq[:, : int(batch["lengths"].max().item())]
+        elif isinstance(batch, (tuple, list)):
+            seq = batch[0].to(device).float()
+        else:
+            seq = batch.to(device).float()
+        seq = prepare_sequence(seq)
+        x_q = reshape_multivariate_series(seq)
+        x_k = make_positive_view(x_q + noise_std * torch.randn_like(x_q))
+        q = torchF.normalize(proj(encoder(x_q)), dim=1)
+        k = torchF.normalize(vproj(visual(x_k)), dim=1)
+        total += float(clip_contrastive_loss(q, k).item()); n += 1
+    encoder.train(); visual.train(); proj.train(); vproj.train()
+    return total / max(1, n)
+
+
+class _LinearProbe(nn.Module):
+    def __init__(self, feat_dim: int, horizon: int):
+        super().__init__()
+        self.fc = nn.Linear(feat_dim, horizon)
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        return self.fc(z)
+
+
+def _probe_evaluate(
+    encoder: nn.Module,
+    visual: nn.Module,
+    data_dir: Path,
+    dataset_csv: str,
+    horizons: List[int],
+    device: torch.device,
+    probe_epochs: int = 30,
+    batch_size: int = 64,
+) -> Dict[int, Dict[str, float]]:
+    """Train linear probes and return {horizon: {mse, mae}}."""
+    max_horizon = max(horizons)
+    module = TimeSeriesDataModule(
+        dataset_name=dataset_csv,
+        data_dir=str(data_dir),
+        batch_size=batch_size,
+        val_batch_size=batch_size,
+        num_workers=0,
+        pin_memory=False,
+        normalize=True,
+        train=True,
+        val=False,
+        test=True,
+        sample_size=(96, 0, max_horizon),
+    )
+    module.setup()
+    if not module.train_loaders:
+        return {}
+    train_loader = module.train_loaders[0]
+    test_loader = module.test_loaders[0] if module.test_loaders else None
+
+    encoder.eval(); visual.eval()
+    for p in list(encoder.parameters()) + list(visual.parameters()):
+        p.requires_grad_(False)
+
+    def _embed(batch):
+        seq = batch[0].to(device).float()
+        seq = prepare_sequence(seq)
+        x = reshape_multivariate_series(seq)
+        with torch.no_grad():
+            ze = encoder(x)
+            zv = visual(x)
+        return torch.cat([ze, zv], dim=1)
+
+    def _collect(loader):
+        zs, ys = [], []
+        for batch in loader:
+            z = _embed(batch)
+            y = batch[1].to(device).float() if len(batch) > 1 else batch[0].to(device).float()
+            zs.append(z); ys.append(y)
+        return torch.cat(zs), torch.cat(ys)
+
+    Z_tr, Y_tr = _collect(train_loader)
+    feat_dim = Z_tr.shape[1]
+
+    results: Dict[int, Dict[str, float]] = {}
+    for H in horizons:
+        probe = _LinearProbe(feat_dim, H).to(device)
+        opt = torch.optim.Adam(probe.parameters(), lr=1e-3)
+        for _ in range(probe_epochs):
+            probe.train()
+            perm = torch.randperm(Z_tr.shape[0], device=device)
+            for i in range(0, Z_tr.shape[0], 64):
+                idx = perm[i: i + 64]
+                z_b = Z_tr[idx]; y_b = Y_tr[idx]
+                if y_b.ndim == 3:
+                    y_b = y_b[:, :H, 0]
+                elif y_b.ndim == 2:
+                    y_b = y_b[:, :H]
+                if y_b.shape[1] < H:
+                    continue
+                pred = probe(z_b)
+                loss = torchF.mse_loss(pred, y_b)
+                opt.zero_grad(set_to_none=True)
+                loss.backward()
+                opt.step()
+
+        if test_loader is not None:
+            Z_test, Y_test = _collect(test_loader)
+            probe.eval()
+            with torch.no_grad():
+                pred = probe(Z_test)
+                if Y_test.ndim == 3:
+                    Y_test = Y_test[:, :H, 0]
+                elif Y_test.ndim == 2:
+                    Y_test = Y_test[:, :H]
+                if Y_test.shape[1] < H:
+                    results[H] = {"MSE": float("nan"), "MAE": float("nan")}
+                    continue
+                mse = torchF.mse_loss(pred, Y_test).item()
+                mae = (pred - Y_test).abs().mean().item()
+            results[H] = {"MSE": mse, "MAE": mae}
+        else:
+            results[H] = {"MSE": float("nan"), "MAE": float("nan")}
+
+    for p in list(encoder.parameters()) + list(visual.parameters()):
+        p.requires_grad_(True)
+
+    return results
+
+
 # ── main workflow ────────────────────────────────────────────────────────────
 
 def train_and_probe(
@@ -398,6 +657,9 @@ def train_and_probe(
     methods: List[str],
     train_epochs: int,
     probe_epochs: int,
+    data_dir: Path,
+    pretrain_data_dir: Path,
+    results_dir: Path,
     batch_size: int = 64,
     device: Optional[torch.device] = None,
     seed: int = 42,
@@ -419,7 +681,20 @@ def train_and_probe(
     model_cfg = cfg.model  # dict
     training_cfg = cfg.training  # dict
 
-    results = {}
+    train_loader, val_loader = build_time_series_dataloaders(
+        data_dir=str(pretrain_data_dir),
+        dataset_name=cfg.data.get("dataset_name", ""),
+        dataset_type=cfg.data.get("dataset_type", "icml"),
+        batch_size=int(cfg.data.get("batch_size", 128)),
+        val_batch_size=int(cfg.data.get("val_batch_size", 64)),
+        num_workers=int(cfg.data.get("num_workers", 4)),
+        pin_memory=bool(cfg.data.get("pin_memory", True)),
+        val_ratio=float(cfg.data.get("val_ratio", 0.1)),
+        cronos_kwargs=dict(cfg.data.get("cronos_kwargs", {})),
+        seed=seed,
+    )
+
+    results: Dict[str, Dict[str, Dict[int, Dict[str, float]]]] = {}
 
     for method in methods:
         print(f"\n{'='*70}")
@@ -432,40 +707,77 @@ def train_and_probe(
             encoder = encoder.to(device)
             visual = visual.to(device)
 
-            # Build optimizer and projection head
+            # Build optimizer and projection heads
             proj_head = build_projection_head(
-                visual,
-                output_dim=model_cfg.get("projection_dim", 128),
+                encoder,
             ).to(device)
+            vproj_head = build_projection_head(visual).to(device)
 
             optimizer = torch.optim.AdamW(
                 list(encoder.parameters()) +
                 list(visual.parameters()) +
-                list(proj_head.parameters()),
+                list(proj_head.parameters()) +
+                list(vproj_head.parameters()),
                 lr=float(training_cfg.get("learning_rate", 1e-3)),
-                weight_decay=float(training_cfg.get("weight_decay", 1e-5)),
+                weight_decay=float(training_cfg.get("weight_decay", 1e-4)),
             )
+            noise_std = float(training_cfg.get("noise_std", 0.01))
 
-            # TODO: Load LOTSA training data and train for train_epochs
-            print(f"  [Training phase] Would train for {train_epochs} epochs")
-            print(f"  [Note: Full training loop requires LOTSA DataModule integration]")
+            start = time.time()
+            for ep in range(train_epochs):
+                train_loss = _clip_train_epoch(
+                    encoder,
+                    visual,
+                    proj_head,
+                    vproj_head,
+                    train_loader,
+                    optimizer,
+                    device,
+                    noise_std=noise_std,
+                )
+                val_loss = None
+                if val_loader is not None:
+                    val_loss = _clip_val_epoch(
+                        encoder,
+                        visual,
+                        proj_head,
+                        vproj_head,
+                        val_loader,
+                        device,
+                        noise_std=noise_std,
+                    )
+
+                val_text = f"  val={val_loss:.4f}" if val_loss is not None else ""
+                print(
+                    f"  epoch {ep+1:02d}/{train_epochs}  train={train_loss:.4f}{val_text}"
+                )
+
+            elapsed = time.time() - start
+            print(f"  [Training phase] Completed in {elapsed:.1f}s")
+
+            ckpt_dir = results_dir / f"method_{method}"
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
+            torch.save({"model_state": encoder.state_dict()}, ckpt_dir / "encoder.pt")
+            torch.save({"model_state": visual.state_dict()}, ckpt_dir / "visual_encoder.pt")
 
             # Linear probe on downstream datasets
-            method_results = {}
+            method_results: Dict[str, Dict[int, Dict[str, float]]] = {}
             for dataset in PROBE_DATASETS:
                 print(f"\n  Probing on {dataset}...")
-                dataset_results = {}
-
-                for horizon in HORIZONS:
-                    print(f"    Horizon {horizon}...", end=" ", flush=True)
-
-                    # Placeholder: would load data, freeze encoders, train linear head
-                    mse = np.random.rand() * 0.1  # Dummy MSE
-                    mae = np.random.rand() * 0.05  # Dummy MAE
-
-                    dataset_results[horizon] = {"MSE": mse, "MAE": mae}
-                    print(f"MSE={mse:.4f}")
-
+                dataset_results = _probe_evaluate(
+                    encoder,
+                    visual,
+                    data_dir=data_dir,
+                    dataset_csv=dataset,
+                    horizons=HORIZONS,
+                    device=device,
+                    probe_epochs=probe_epochs,
+                    batch_size=batch_size,
+                )
+                for horizon, metrics in dataset_results.items():
+                    print(
+                        f"    H={horizon}: MSE={metrics['MSE']:.4f} MAE={metrics['MAE']:.4f}"
+                    )
                 method_results[dataset] = dataset_results
 
             results[method] = method_results
@@ -546,6 +858,18 @@ def main():
         help="Output directory for results",
     )
     parser.add_argument(
+        "--data_dir",
+        type=Path,
+        default=Path("ICML_datasets"),
+        help="Downstream probe dataset directory",
+    )
+    parser.add_argument(
+        "--pretrain_data_dir",
+        type=Path,
+        default=Path("data"),
+        help="Pretraining dataset directory (LOTSA)",
+    )
+    parser.add_argument(
         "--methods",
         nargs="+",
         default=MV_STRATEGIES,
@@ -572,6 +896,8 @@ def main():
     print(f"📍 Methods: {args.methods}")
     print(f"📍 Train epochs: {args.train_epochs}")
     print(f"📍 Probe epochs: {args.probe_epochs}")
+    print(f"📍 Pretrain data: {args.pretrain_data_dir}")
+    print(f"📍 Probe data: {args.data_dir}")
 
     # Run ablation
     results = train_and_probe(
@@ -579,6 +905,9 @@ def main():
         methods=args.methods,
         train_epochs=args.train_epochs,
         probe_epochs=args.probe_epochs,
+        data_dir=args.data_dir,
+        pretrain_data_dir=args.pretrain_data_dir,
+        results_dir=args.results_dir,
         device=device,
         seed=args.seed,
     )

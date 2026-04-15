@@ -1,0 +1,62 @@
+experiment_name: "ts_clip_micro_finetune_lotsa"
+seed: 42
+device: "auto"
+
+# CLIP micro — finetune from HPO best checkpoint with combined dataset corpus.
+#
+# Base model: HPO best trial #28 (model_dim=64, emb=32, depth=6, ctx=512)
+# Resume from: checkpoints/hpo_best/ts_hpo_best_lotsa_20260411_193513/
+# Change vs HPO:
+#   - dataset_type: combined  (LOTSA + 13 local datasets)
+#   - learning_rate: 1e-4     (10x lower — finetune, not train from scratch)
+#   - warmup_epochs: 2        (shorter — already converged)
+#   - epochs: 50              (additional epochs on top of the 100 already done)
+#   - min_lr: 1e-7            (lower floor for cosine decay)
+
+model:
+  model_name: "ts_clip_micro_finetune_lotsa"
+  rp_encoder: "upper_tri"
+  input_dim: 64
+  model_dim: 64              # micro — same as HPO best
+  embedding_dim: 32          # micro — same as HPO best
+  depth: 6                   # same as HPO best
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+  rp_mv_strategy: "mean"
+
+data:
+  dataset_type: "combined"   # LOTSA + local datasets (financial, energy, mobility)
+  batch_size: 256
+  val_batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  val_ratio: 0.1
+
+  cronos_kwargs:
+    context_length: 512        # same as HPO best
+    normalize_per_series: true
+    drop_last: true
+    two_views: true
+    # local_datasets: null → defaults to ALL_LOCAL_DATASETS
+
+training:
+  epochs: 50                   # additional epochs (resume from epoch 100)
+  temperature: 0.20228698523800784   # same as HPO best
+  learning_rate: 0.0001        # 10x lower than HPO lr=0.00119 — finetune regime
+  weight_decay: 0.00023300971704415705  # same as HPO best
+  noise_std: 0.001519215433363163       # same as HPO best
+  optimizer: "adamw"
+  scheduler: "cosine"
+  min_lr: 1.0e-07              # lower floor for the finetune cosine decay
+  warmup_epochs: 2
+  max_grad_norm: 1.0
+  use_amp: true
+  alignment_strategy: "clip_symm"
+
+logging:
+  checkpoint_dir: "../../checkpoints/clip_micro_finetune"
+  save_best_only: true
+  save_last: true

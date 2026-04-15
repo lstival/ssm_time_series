@@ -1,0 +1,60 @@
+experiment_name: "ts_byol_nano_best_lotsa"
+seed: 42
+device: "auto"
+
+# BYOL bimodal nano with ablation-best settings:
+#   A: rp_mv_strategy = mean
+#   B: visual encoder = upper_tri (UpperTriDiagRPEncoder)
+#   D: visual representation = rp
+#   E: patch_len = 64
+#   Lookback: context_length = 336 (best overall)
+#   SSL method: BYOL bimodal (temporal + visual)
+#   Model size: nano (model_dim=128, depth=4, embedding_dim=64)
+#   Dataset: combined (LOTSA + local datasets)
+
+model:
+  model_name: "ts_byol_nano_best_lotsa"
+  rp_encoder: "upper_tri"
+  input_dim: 64          # patch_len — Ablation E best
+  model_dim: 128         # nano
+  embedding_dim: 64      # nano
+  depth: 4               # nano
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+  rp_mv_strategy: "mean" # Ablation A best
+  proj_dim: 128          # projector output (2× embedding_dim, with BN)
+  pred_dim: 64           # predictor hidden (= embedding_dim)
+
+data:
+  dataset_type: "combined"   # LOTSA + local datasets
+  batch_size: 256
+  val_batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  val_ratio: 0.1
+
+  cronos_kwargs:
+    context_length: 336    # Ablation lookback best overall
+    cache_dir: "/lustre/nobackup/WUR/AIN/stiva001/hf_datasets"
+    normalize_per_series: true
+    force_offline: true
+    drop_last: true
+    two_views: false       # BYOL generates views via noise augmentation internally
+
+training:
+  epochs: 100
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  noise_std: 0.05          # stronger augmentation — BYOL best practice
+  ema_tau: 0.996           # EMA momentum for target network
+  optimizer: "adamw"
+  warmup_epochs: 10
+  use_amp: true
+
+logging:
+  checkpoint_dir: "../../checkpoints/byol_nano_best"
+  save_best_only: true
+  save_last: true
