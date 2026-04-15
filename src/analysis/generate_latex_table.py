@@ -9,7 +9,7 @@ Data merging logic:
   - Base CSV: probe_results_full.csv or probe_lotsa_results.csv in the main folder
   - Solar supplement: *_solar/ folder — merged in for solar_AL dataset
   - PSN supplement:   *_psn/   folder — overrides exchange_rate rows when present
-    (per-series normalisation gives better exchange_rate results)
+    (currently disabled: old PSN had Y/X scale mismatch; fix implemented, new jobs needed)
 
 Colour rules (applied per row / per metric independently):
   - Best value   → red bold       \\textcolor{red}{\\textbf{x}}
@@ -55,7 +55,7 @@ NANO_METHODS: Dict[str, str] = {
 # e.g. "icml_simclr_micro" + "_solar" → "icml_simclr_micro_solar"
 SUPPLEMENTS: Dict[str, str] = {
     "solar_AL":      "_solar",   # solar_AL probe saved under *_solar/
-    "exchange_rate": "_psn",     # per-series-norm results override base exchange_rate
+    "exchange_rate": "_psn",     # symmetric PSN (X and Y normalised together) — much better than base
 }
 
 DATASET_ORDER: List[str] = [

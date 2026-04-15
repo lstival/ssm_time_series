@@ -97,20 +97,23 @@ def load_encoders(checkpoint_dir: Path, config, device: torch.device):
 
 # ── embedding helpers ─────────────────────────────────────────────────────────
 
-def _per_series_normalize(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+def _per_series_normalize(x: torch.Tensor, eps: float = 1e-6):
     """Apply z-score normalization independently to each series in the batch.
 
     Args:
         x: (N, 1, L) — one univariate series per row
     Returns:
-        (N, 1, L) — each series zero-mean, unit-variance
+        x_norm: (N, 1, L) — each series zero-mean, unit-variance
+        mean:   (N, 1, 1)
+        std:    (N, 1, 1)
     """
     mean = x.mean(dim=-1, keepdim=True)
     std  = x.std(dim=-1, keepdim=True).clamp(min=eps)
-    return (x - mean) / std
+    return (x - mean) / std, mean, std
 
 
-def _embed(encoder, visual, batch, device, per_series_norm: bool = False):
+def _embed(encoder, visual, batch, device, per_series_norm: bool = False,
+           embed_batch_size: int = 0):
     """Embed a batch keeping each channel as an independent sample.
 
     For multivariate input (B, L, C), reshape_multivariate_series produces
@@ -121,43 +124,75 @@ def _embed(encoder, visual, batch, device, per_series_norm: bool = False):
         per_series_norm: if True, apply per-series z-score after reshaping.
             Useful for datasets like exchange_rate where channels have very
             different scales or non-stationary behaviour.
+        embed_batch_size: if > 0, chunk the (B*C) dimension into sub-batches
+            of this size before passing to the encoder. Reduces peak GPU memory
+            for high-channel datasets like solar_AL (137 channels). 0 = no chunking.
 
     Returns:
-        z:  (B*C, 2D) embeddings — one per (sample, channel)
-        C:  number of channels (1 for univariate)
+        z:    (B*C, 2D) embeddings — one per (sample, channel)
+        C:    number of channels (1 for univariate)
+        mean: (B*C, 1, 1) input mean per series, or None
+        std:  (B*C, 1, 1) input std per series, or None
     """
     seq = batch[0].to(device).float()
     seq = prepare_sequence(seq)           # (B, L, C)
     C = seq.shape[2]
     x = reshape_multivariate_series(seq)  # (B*C, 1, L)
+    mean, std = None, None
     if per_series_norm:
-        x = _per_series_normalize(x)
+        x, mean, std = _per_series_normalize(x)
     with torch.no_grad():
-        ze = encoder(x)   # (B*C, D)
-        zv = visual(x)    # (B*C, D)
-    return torch.cat([ze, zv], dim=1), C  # (B*C, 2D), C
+        if embed_batch_size > 0 and x.shape[0] > embed_batch_size:
+            ze_chunks, zv_chunks = [], []
+            for i in range(0, x.shape[0], embed_batch_size):
+                xc = x[i: i + embed_batch_size]
+                ze_chunks.append(encoder(xc))
+                zv_chunks.append(visual(xc))
+            ze = torch.cat(ze_chunks, dim=0)
+            zv = torch.cat(zv_chunks, dim=0)
+        else:
+            ze = encoder(x)   # (B*C, D)
+            zv = visual(x)    # (B*C, D)
+    return torch.cat([ze, zv], dim=1), C, mean, std  # (B*C, 2D), C, stats
 
 
-def _collect(encoder, visual, loader, device, per_series_norm: bool = False):
+def _collect(encoder, visual, loader, device, per_series_norm: bool = False,
+             embed_batch_size: int = 0):
     """Collect embeddings and targets, each channel as an independent sample.
 
+    When per_series_norm=True, Y is normalised with the same (mean, std) used
+    to normalise the corresponding input X before encoding. This ensures the
+    probe head trains in a consistent normalised space. The returned stats
+    allow de-normalisation of predictions at eval time.
+
     Returns:
-        Z: (N*C, 2D) — one embedding per (sample, channel)
-        Y: (N*C, L)  — corresponding univariate target sequence
+        Z:     (N*C, 2D) — one embedding per (sample, channel)
+        Y:     (N*C, L)  — target sequence (normalised if per_series_norm)
+        means: (N*C, 1) input means per series, or None
+        stds:  (N*C, 1) input stds per series, or None
     """
-    zs, ys = [], []
+    zs, ys, means, stds = [], [], [], []
     for batch in loader:
-        z, C = _embed(encoder, visual, batch, device, per_series_norm=per_series_norm)
-        zs.append(z)
+        z, C, mean, std = _embed(encoder, visual, batch, device,
+                                 per_series_norm=per_series_norm,
+                                 embed_batch_size=embed_batch_size)
+        zs.append(z.cpu())  # move to CPU immediately to avoid GPU OOM on large datasets
         # y shape: (B, L, C) or (B, L) — expand channels to independent rows
         y = batch[1].to(device).float() if len(batch) > 1 else batch[0].to(device).float()
         if y.ndim == 3:
             B, L, Cy = y.shape
             y = y.permute(0, 2, 1).reshape(B * Cy, L)  # (B*C, L)
-        ys.append(y)
+        if per_series_norm and mean is not None:
+            # Normalise Y with the same stats as X (mean/std shape: B*C, 1, 1)
+            y = (y - mean.squeeze(-1)) / std.squeeze(-1)  # (B*C, L)
+            means.append(mean.squeeze(-1).cpu())
+            stds.append(std.squeeze(-1).cpu())
+        ys.append(y.cpu())
     if not zs:
-        return None, None
-    return torch.cat(zs), torch.cat(ys)
+        return None, None, None, None
+    m = torch.cat(means) if means else None
+    s = torch.cat(stds)  if stds  else None
+    return torch.cat(zs), torch.cat(ys), m, s
 
 
 # ── linear probe ──────────────────────────────────────────────────────────────
@@ -178,6 +213,7 @@ def probe_evaluate(
     rng: Optional[torch.Generator] = None,
     seq_len: int = 96,
     per_series_norm: bool = False,
+    embed_batch_size: int = 0,
 ) -> Dict[int, Dict[str, float]]:
     # Resolve the actual directory containing this CSV (handles subdirectories
     # like ETT-small/, weather/, traffic/, etc.)
@@ -214,8 +250,10 @@ def probe_evaluate(
     test_loader = module.test_loaders[0] if module.test_loaders else None
 
     if per_series_norm:
-        print(f"  Per-series normalisation: ON")
-    Z_tr, Y_tr = _collect(encoder, visual, train_loader, device, per_series_norm=per_series_norm)
+        print(f"  Per-series normalisation: ON (symmetric — Y normalised with same stats as X)")
+    Z_tr, Y_tr, _, _ = _collect(encoder, visual, train_loader, device,
+                                per_series_norm=per_series_norm,
+                                embed_batch_size=embed_batch_size)
     if Z_tr is None:
         print(f"  [SKIP] {dataset_csv} — train loader returned no batches")
         return {}
@@ -241,12 +279,12 @@ def probe_evaluate(
 
         for ep in range(probe_epochs):
             probe.train()
-            perm = torch.randperm(Z_tr.shape[0], device=device)
+            perm = torch.randperm(Z_tr.shape[0])  # CPU — Z_tr lives on CPU
             ep_loss, n_batches = 0.0, 0
             for i in range(0, Z_tr.shape[0], batch_size):
                 idx = perm[i: i + batch_size]
-                z_b = Z_tr[idx]
-                y_b = Y_tr[idx, :H]  # (batch, H) — univariate per channel
+                z_b = Z_tr[idx].to(device)
+                y_b = Y_tr[idx, :H].to(device)  # (batch, H) — univariate per channel
                 if y_b.shape[1] < H:
                     continue
                 loss = torchF.mse_loss(probe(z_b), y_b)
@@ -260,17 +298,25 @@ def probe_evaluate(
                 experiment.log_metric(step_key, ep_loss / n_batches, step=ep + 1)
 
         if test_loader is not None:
-            Z_test, Y_test = _collect(encoder, visual, test_loader, device, per_series_norm=per_series_norm)
+            Z_test, Y_test, test_means, test_stds = _collect(
+                encoder, visual, test_loader, device,
+                per_series_norm=per_series_norm,
+                embed_batch_size=embed_batch_size)
             if Z_test is None:
                 results[H] = {"mse": float("nan"), "mae": float("nan")}
                 continue
             probe.eval()
             with torch.no_grad():
-                y_eval = Y_test[:, :H]   # (N*C, H)
+                y_eval = Y_test[:, :H].to(device)   # (N*C, H) — normalised if per_series_norm
                 if y_eval.shape[1] < H:
                     results[H] = {"mse": float("nan"), "mae": float("nan")}
                     continue
-                pred = probe(Z_test)     # (N*C, H)
+                pred = probe(Z_test.to(device))      # (N*C, H) — normalised space
+                if per_series_norm and test_means is not None:
+                    # De-normalise predictions and targets back to original scale.
+                    # test_means/stds: (N*C, 1) — broadcasts over H automatically.
+                    pred   = pred   * test_stds.to(device) + test_means.to(device)
+                    y_eval = y_eval * test_stds.to(device) + test_means.to(device)
                 mse = torchF.mse_loss(pred, y_eval).item()
                 mae = (pred - y_eval).abs().mean().item()
             results[H] = {"mse": mse, "mae": mae}
@@ -310,6 +356,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--per_series_norm", action="store_true",
                    help="Apply per-series z-score normalisation inside the probe (after dataset scaler). "
                         "Useful for non-stationary or multi-scale datasets like exchange_rate.")
+    p.add_argument("--embed_batch_size", type=int, default=0,
+                   help="If > 0, chunk the B*C series dimension into sub-batches of this size "
+                        "before passing to the encoder. Reduces peak GPU memory for high-channel "
+                        "datasets like solar_AL (137 channels). 0 = no chunking (default).")
     p.add_argument(
         "--few_shot_fraction", type=float, default=1.0,
         help="Fraction of training data to use for the linear head (e.g. 0.01 for 1%%). "
@@ -384,6 +434,7 @@ def main() -> None:
             rng=rng,
             seq_len=args.seq_len,
             per_series_norm=args.per_series_norm,
+            embed_batch_size=args.embed_batch_size,
         )
 
         for H, m in metrics.items():
