@@ -33,6 +33,9 @@ time python3 "${SRC}/experiments/ablation_G_encoder_modes.py" \
     --probe_epochs 20 \
     --encoder_modes temporal_only visual_only multimodal multimodal_mean \
     --results_dir /home/WUR/stiva001/WUR/ssm_time_series/results/ablation_G \
+    --seq_len 336 \
+    --embed_batch_size 16 \
+    --no_comet \
     --seed 42
 
 echo "End: $(date)"

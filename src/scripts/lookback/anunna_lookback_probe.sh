@@ -40,4 +40,7 @@ time python3 "${SRC}/experiments/probe_lotsa_checkpoint.py" \
     --probe_epochs 20 \
     --results_dir /home/WUR/stiva001/WUR/ssm_time_series/results/lookback_${CTX} \
     --scaler_type standard \
+    --per_series_norm \
+    --embed_batch_size 16 \
+    --seq_len ${CTX} \
     --seed 42

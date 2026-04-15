@@ -81,8 +81,13 @@ def _collect_both(
     visual: nn.Module,
     loader,
     device: torch.device,
+    embed_batch_size: int = 0,
 ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
     """Collect ze, zv, and labels from a loader in a single pass.
+
+    Args:
+        embed_batch_size: if > 0, chunk the B*C dimension before passing to
+            encoders to avoid CUDA OOM on high-channel datasets (e.g. solar_AL).
 
     Returns (Z_temporal, Z_visual, Y) tensors, or (None, None, None) if empty.
     """
@@ -90,12 +95,22 @@ def _collect_both(
     for batch in loader:
         x = batch[0].to(device).float()
         x = reshape_multivariate_series(prepare_sequence(x))
-        ze = encoder(x)
-        zv = visual(x)
-        zts.append(ze)
-        zvs.append(zv)
+        with torch.no_grad():
+            if embed_batch_size > 0 and x.shape[0] > embed_batch_size:
+                ze_chunks, zv_chunks = [], []
+                for i in range(0, x.shape[0], embed_batch_size):
+                    xc = x[i: i + embed_batch_size]
+                    ze_chunks.append(encoder(xc))
+                    zv_chunks.append(visual(xc))
+                ze = torch.cat(ze_chunks, dim=0)
+                zv = torch.cat(zv_chunks, dim=0)
+            else:
+                ze = encoder(x)
+                zv = visual(x)
+        zts.append(ze.cpu())
+        zvs.append(zv.cpu())
         y = batch[1].to(device).float() if len(batch) > 1 else batch[0].to(device).float()
-        ys.append(y)
+        ys.append(y.cpu())
     if not zts:
         return None, None, None
     return torch.cat(zts), torch.cat(zvs), torch.cat(ys)
@@ -174,6 +189,8 @@ def probe_dataset(
     batch_size: int,
     experiment=None,
     ds_tag: str = "",
+    seq_len: int = 96,
+    embed_batch_size: int = 0,
 ) -> Dict[str, Dict[int, Dict[str, float]]]:
     """Returns {mode: {horizon: {mse, mae}}} for one dataset."""
     max_horizon = max(horizons)
@@ -188,7 +205,7 @@ def probe_dataset(
         train=True,
         val=False,
         test=True,
-        sample_size=(96, 0, max_horizon),
+        sample_size=(seq_len, 0, max_horizon),
     )
     module.setup()
     if not module.train_loaders:
@@ -203,14 +220,16 @@ def probe_dataset(
         p.requires_grad_(False)
 
     # Single forward pass for both encoders
-    Zt_tr, Zv_tr, Y_tr = _collect_both(encoder, visual, train_loader, device)
+    Zt_tr, Zv_tr, Y_tr = _collect_both(encoder, visual, train_loader, device,
+                                        embed_batch_size=embed_batch_size)
     if Zt_tr is None:
         print(f"    [SKIP] {dataset_csv} — train loader returned no batches")
         return {m: {} for m in modes}
 
     Zt_te, Zv_te, Y_te = (None, None, None)
     if test_loader is not None:
-        Zt_te, Zv_te, Y_te = _collect_both(encoder, visual, test_loader, device)
+        Zt_te, Zv_te, Y_te = _collect_both(encoder, visual, test_loader, device,
+                                            embed_batch_size=embed_batch_size)
 
     results: Dict[str, Dict[int, Dict[str, float]]] = {}
     for mode in modes:
@@ -253,6 +272,11 @@ def parse_args() -> argparse.Namespace:
                    choices=ENCODER_MODES)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--no_comet", action="store_true")
+    p.add_argument("--seq_len", type=int, default=336,
+                   help="Input context length for the probe (default: 336).")
+    p.add_argument("--embed_batch_size", type=int, default=16,
+                   help="Chunk B*C before encoding to avoid OOM on high-channel datasets. "
+                        "Default 16 (safe for solar_AL with 137 channels).")
     return p.parse_args()
 
 
@@ -340,6 +364,8 @@ def main() -> None:
             batch_size=args.batch_size,
             experiment=experiment,
             ds_tag=ds_tag,
+            seq_len=args.seq_len,
+            embed_batch_size=args.embed_batch_size,
         )
 
         for mode, horizon_metrics in ds_results.items():

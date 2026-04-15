@@ -31,6 +31,9 @@ time python3 "${SRC}/experiments/ablation_G2_complementarity.py" \
     --data_dir /home/WUR/stiva001/WUR/ssm_time_series/ICML_datasets \
     --probe_epochs 20 \
     --results_dir /home/WUR/stiva001/WUR/ssm_time_series/results/ablation_G2 \
+    --seq_len 336 \
+    --embed_batch_size 16 \
+    --no_comet \
     --seed 42
 
 echo "End: $(date)"

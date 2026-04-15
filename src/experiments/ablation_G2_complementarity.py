@@ -92,6 +92,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--horizons", nargs="+", type=int, default=HORIZONS)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--no_comet", action="store_true")
+    p.add_argument("--seq_len", type=int, default=336,
+                   help="Input context length for the probe (default: 336).")
+    p.add_argument("--embed_batch_size", type=int, default=16,
+                   help="Chunk B*C before encoding to avoid OOM on high-channel datasets.")
     return p.parse_args()
 
 
@@ -178,6 +182,8 @@ def main() -> None:
             batch_size=args.batch_size,
             experiment=None,  # log complementarity separately below
             ds_tag=ds_tag,
+            seq_len=args.seq_len,
+            embed_batch_size=args.embed_batch_size,
         )
 
         for H in args.horizons:
