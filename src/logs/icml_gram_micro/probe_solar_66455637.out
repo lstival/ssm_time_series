@@ -1,0 +1,12 @@
+Probing [solar] gram micro: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_gram_micro/ts_gram_micro_icml_20260413_192724
+Device: cuda
+Few-shot mode: full  (fraction=1.0)
+Context length (seq_len): 336
+  Loaded encoder       : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_gram_micro/ts_gram_micro_icml_20260413_192724/time_series_best.pt
+  Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_gram_micro/ts_gram_micro_icml_20260413_192724/visual_encoder_best.pt
+Loaded encoder from  : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_gram_micro/ts_gram_micro_icml_20260413_192724/time_series_best.pt
+Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_gram_micro/ts_gram_micro_icml_20260413_192724/visual_encoder_best.pt
+
+============================================================
+Dataset: solar_AL
+============================================================

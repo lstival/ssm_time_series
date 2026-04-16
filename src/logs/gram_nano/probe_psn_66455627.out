@@ -1,0 +1,20 @@
+Probing [per-series-norm] gram nano: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/gram_nano/ts_gram_nano_lotsa_20260409_181020
+Device: cuda
+Few-shot mode: full  (fraction=1.0)
+Context length (seq_len): 336
+  Loaded encoder       : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/gram_nano/ts_gram_nano_lotsa_20260409_181020/time_series_best.pt
+  Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/gram_nano/ts_gram_nano_lotsa_20260409_181020/visual_encoder_best.pt
+Loaded encoder from  : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/gram_nano/ts_gram_nano_lotsa_20260409_181020/time_series_best.pt
+Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/gram_nano/ts_gram_nano_lotsa_20260409_181020/visual_encoder_best.pt
+
+============================================================
+Dataset: exchange_rate
+============================================================
+  Per-series normalisation: ON
+  H= 96  MSE=5.7902  MAE=2.3222
+  H=192  MSE=5.1883  MAE=2.1623
+  H=336  MSE=4.9417  MAE=2.0731
+  H=720  MSE=3.3572  MAE=1.5684
+
+Total elapsed: 0.1 min
+Results saved to /home/WUR/stiva001/WUR/ssm_time_series/results/probe_gram_nano_psn/probe_results_full.csv

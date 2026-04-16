@@ -34,12 +34,12 @@
 
 | Model | Description |
 |-------|-------------|
-| BYOL-T | BYOL temporal-only, nano, new lotsa dataset |
-| SimCLR-T-nano | SimCLR temporal-only, nano, new lotsa dataset |
-| SimCLR-V-nano | SimCLR visual-only, nano, new lotsa dataset |
+| BYOL-T | BYOL temporal-only, micro, new lotsa dataset |
+| SimCLR-T-micro | SimCLR temporal-only, micro, new lotsa dataset |
+| SimCLR-V-micro | SimCLR visual-only, micro, new lotsa dataset |
 | SimCLR-T-old | SimCLR temporal-only, old dataset |
 
-| Dataset | BYOL-T | SimCLR-T-nano | SimCLR-V-nano | SimCLR-T-old |
+| Dataset | BYOL-T | SimCLR-T-micro | SimCLR-V-micro | SimCLR-T-old |
 | --- | --- | --- | --- | --- |
 | ETTm1 | **0.1438** | 0.3130 | 0.2685 | 0.2890 |
 | ETTm2 | **0.1616** | 0.2301 | 0.2199 | 0.2224 |

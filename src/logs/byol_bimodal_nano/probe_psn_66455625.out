@@ -1,0 +1,20 @@
+Probing [per-series-norm] byol_bi nano: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_bimodal_nano/ts_byol_bimodal_nano_lotsa_20260410_225606
+Device: cuda
+Few-shot mode: full  (fraction=1.0)
+Context length (seq_len): 336
+  Loaded encoder       : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_bimodal_nano/ts_byol_bimodal_nano_lotsa_20260410_225606/time_series_best.pt
+  Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_bimodal_nano/ts_byol_bimodal_nano_lotsa_20260410_225606/visual_encoder_best.pt
+Loaded encoder from  : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_bimodal_nano/ts_byol_bimodal_nano_lotsa_20260410_225606/time_series_best.pt
+Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_bimodal_nano/ts_byol_bimodal_nano_lotsa_20260410_225606/visual_encoder_best.pt
+
+============================================================
+Dataset: exchange_rate
+============================================================
+  Per-series normalisation: ON
+  H= 96  MSE=6.0351  MAE=2.3668
+  H=192  MSE=5.8057  MAE=2.3024
+  H=336  MSE=5.7751  MAE=2.2638
+  H=720  MSE=4.4620  MAE=1.8748
+
+Total elapsed: 0.1 min
+Results saved to /home/WUR/stiva001/WUR/ssm_time_series/results/probe_byol_bimodal_nano_psn/probe_results_full.csv

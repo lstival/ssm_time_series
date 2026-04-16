@@ -1,0 +1,20 @@
+Probing [per-series-norm] clip micro: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_clip_micro/ts_clip_micro_icml_20260413_192746
+Device: cuda
+Few-shot mode: full  (fraction=1.0)
+Context length (seq_len): 336
+  Loaded encoder       : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_clip_micro/ts_clip_micro_icml_20260413_192746/time_series_best.pt
+  Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_clip_micro/ts_clip_micro_icml_20260413_192746/visual_encoder_best.pt
+Loaded encoder from  : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_clip_micro/ts_clip_micro_icml_20260413_192746/time_series_best.pt
+Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_clip_micro/ts_clip_micro_icml_20260413_192746/visual_encoder_best.pt
+
+============================================================
+Dataset: exchange_rate
+============================================================
+  Per-series normalisation: ON
+  H= 96  MSE=4.9705  MAE=2.1973
+  H=192  MSE=4.8703  MAE=2.1587
+  H=336  MSE=4.6529  MAE=2.0756
+  H=720  MSE=3.3693  MAE=1.6608
+
+Total elapsed: 0.1 min
+Results saved to /home/WUR/stiva001/WUR/ssm_time_series/results/icml_clip_micro_psn/probe_results_full.csv

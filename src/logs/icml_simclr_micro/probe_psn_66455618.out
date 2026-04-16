@@ -1,0 +1,20 @@
+Probing [per-series-norm] SimCLR micro: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_simclr_micro/ts_simclr_micro_icml_20260413_192653
+Device: cuda
+Few-shot mode: full  (fraction=1.0)
+Context length (seq_len): 336
+  Loaded encoder       : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_simclr_micro/ts_simclr_micro_icml_20260413_192653/time_series_best.pt
+  Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_simclr_micro/ts_simclr_micro_icml_20260413_192653/visual_encoder_best.pt
+Loaded encoder from  : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_simclr_micro/ts_simclr_micro_icml_20260413_192653/time_series_best.pt
+Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_simclr_micro/ts_simclr_micro_icml_20260413_192653/visual_encoder_best.pt
+
+============================================================
+Dataset: exchange_rate
+============================================================
+  Per-series normalisation: ON
+  H= 96  MSE=4.8393  MAE=2.1503
+  H=192  MSE=4.7584  MAE=2.1194
+  H=336  MSE=4.5503  MAE=2.0428
+  H=720  MSE=3.5493  MAE=1.7114
+
+Total elapsed: 0.1 min
+Results saved to /home/WUR/stiva001/WUR/ssm_time_series/results/icml_simclr_micro_psn/probe_results_full.csv

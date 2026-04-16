@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --comment=gram_nano_probe_solar
 #SBATCH --time=180
-#SBATCH --mem=16000
+#SBATCH --mem=64000
 #SBATCH --cpus-per-task=4
 #SBATCH --output=logs/gram_nano/probe_solar_%j.out
 #SBATCH --error=logs/gram_nano/probe_solar_%j.err
@@ -37,6 +37,6 @@ time python3 "${SRC}/experiments/probe_lotsa_checkpoint.py" \
     --results_dir /home/WUR/stiva001/WUR/ssm_time_series/results/gram_nano_solar \
     --scaler_type standard \
     --seq_len 336 \
-    --embed_batch_size 16 \
+    --embed_batch_size 4 \
     --no_comet \
     --seed 42

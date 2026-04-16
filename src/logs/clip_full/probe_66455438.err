@@ -1,0 +1,9 @@
+COMET WARNING: To get all data logged automatically, import comet_ml before the following modules: sklearn, torch.
+COMET INFO: Experiment is live on comet.com https://www.comet.com/lstival/ssm-mamba/9d741041fa094ce88ea387c57cbeb5d3
+
+/shared/apps/slurm/var/spool/gpun201/job66455438/slurm_script: line 40: 201561 Killed                  python3 "${SRC}/experiments/probe_lotsa_checkpoint.py" --checkpoint_dir "${CHECKPOINT_DIR}" --config "${SRC}/configs/lotsa_clip_full.yaml" --data_dir /home/WUR/stiva001/WUR/ssm_time_series/ICML_datasets --probe_epochs 20 --batch_size 16 --results_dir /home/WUR/stiva001/WUR/ssm_time_series/results/clip_full --scaler_type standard --seq_len 336 --seed 42
+
+real	46m25.431s
+user	68m43.597s
+sys	0m45.200s
+slurmstepd: error: Detected 1 oom_kill event in StepId=66455438.batch. Some of the step tasks have been OOM Killed.

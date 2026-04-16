@@ -1,0 +1,20 @@
+Probing [per-series-norm] vl_jepa nano: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/vl_jepa_nano/ts_vl_jepa_nano_lotsa_20260409_181014
+Device: cuda
+Few-shot mode: full  (fraction=1.0)
+Context length (seq_len): 336
+  Loaded encoder       : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/vl_jepa_nano/ts_vl_jepa_nano_lotsa_20260409_181014/time_series_best.pt
+  Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/vl_jepa_nano/ts_vl_jepa_nano_lotsa_20260409_181014/visual_encoder_best.pt
+Loaded encoder from  : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/vl_jepa_nano/ts_vl_jepa_nano_lotsa_20260409_181014/time_series_best.pt
+Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/vl_jepa_nano/ts_vl_jepa_nano_lotsa_20260409_181014/visual_encoder_best.pt
+
+============================================================
+Dataset: exchange_rate
+============================================================
+  Per-series normalisation: ON
+  H= 96  MSE=5.4300  MAE=2.2555
+  H=192  MSE=5.2929  MAE=2.2091
+  H=336  MSE=5.4717  MAE=2.2143
+  H=720  MSE=4.4788  MAE=1.9002
+
+Total elapsed: 0.1 min
+Results saved to /home/WUR/stiva001/WUR/ssm_time_series/results/probe_vl_jepa_nano_psn/probe_results_full.csv

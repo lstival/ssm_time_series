@@ -1,0 +1,20 @@
+Probing [per-series-norm] byol micro: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_byol_micro/ts_byol_micro_icml_20260413_192722
+Device: cuda
+Few-shot mode: full  (fraction=1.0)
+Context length (seq_len): 336
+  Loaded encoder       : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_byol_micro/ts_byol_micro_icml_20260413_192722/time_series_best.pt
+  Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_byol_micro/ts_byol_micro_icml_20260413_192722/visual_encoder_best.pt
+Loaded encoder from  : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_byol_micro/ts_byol_micro_icml_20260413_192722/time_series_best.pt
+Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/icml_byol_micro/ts_byol_micro_icml_20260413_192722/visual_encoder_best.pt
+
+============================================================
+Dataset: exchange_rate
+============================================================
+  Per-series normalisation: ON
+  H= 96  MSE=4.8066  MAE=2.1523
+  H=192  MSE=4.5386  MAE=2.0793
+  H=336  MSE=4.2168  MAE=1.9730
+  H=720  MSE=3.2507  MAE=1.6351
+
+Total elapsed: 0.1 min
+Results saved to /home/WUR/stiva001/WUR/ssm_time_series/results/icml_byol_micro_psn/probe_results_full.csv

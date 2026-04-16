@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --comment=simclr_full_probe
 #SBATCH --time=720
-#SBATCH --mem=32000
+#SBATCH --mem=64000
 #SBATCH --cpus-per-task=4
 #SBATCH --output=logs/simclr_full/probe_%j.out
 #SBATCH --error=logs/simclr_full/probe_%j.err

@@ -1,0 +1,68 @@
+Traceback (most recent call last):
+  File "/home/WUR/stiva001/WUR/ssm_time_series/src/experiments/probe_lotsa_checkpoint.py", line 414, in <module>
+    main()
+  File "/home/WUR/stiva001/WUR/ssm_time_series/src/experiments/probe_lotsa_checkpoint.py", line 372, in main
+    metrics = probe_evaluate(
+              ^^^^^^^^^^^^^^^
+  File "/home/WUR/stiva001/WUR/ssm_time_series/src/experiments/probe_lotsa_checkpoint.py", line 218, in probe_evaluate
+    Z_tr, Y_tr = _collect(encoder, visual, train_loader, device, per_series_norm=per_series_norm)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/WUR/stiva001/WUR/ssm_time_series/src/experiments/probe_lotsa_checkpoint.py", line 150, in _collect
+    z, C = _embed(encoder, visual, batch, device, per_series_norm=per_series_norm)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/WUR/stiva001/WUR/ssm_time_series/src/experiments/probe_lotsa_checkpoint.py", line 137, in _embed
+    zv = visual(x)    # (B*C, D)
+         ^^^^^^^^^
+  File "/lustre/nobackup/WUR/AIN/stiva001/timeseries/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/lustre/nobackup/WUR/AIN/stiva001/timeseries/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/WUR/stiva001/WUR/ssm_time_series/src/models/mamba_visual_encoder.py", line 924, in forward
+    out = self.encoder(rp)                                   # (B, P, d_model)
+          ^^^^^^^^^^^^^^^^
+  File "/lustre/nobackup/WUR/AIN/stiva001/timeseries/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/lustre/nobackup/WUR/AIN/stiva001/timeseries/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/WUR/stiva001/WUR/ssm_time_series/src/models/mamba_visual_encoder.py", line 828, in forward
+    tokens = block(tokens)
+             ^^^^^^^^^^^^^
+  File "/lustre/nobackup/WUR/AIN/stiva001/timeseries/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/lustre/nobackup/WUR/AIN/stiva001/timeseries/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/WUR/stiva001/WUR/ssm_time_series/src/models/mamba_block.py", line 72, in forward
+    x = self.ssm(x)
+        ^^^^^^^^^^^
+  File "/lustre/nobackup/WUR/AIN/stiva001/timeseries/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/lustre/nobackup/WUR/AIN/stiva001/timeseries/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/lustre/nobackup/WUR/AIN/stiva001/timeseries/lib/python3.12/site-packages/mamba_ssm/modules/mamba_simple.py", line 146, in forward
+    out = mamba_inner_fn(
+          ^^^^^^^^^^^^^^^
+  File "/lustre/nobackup/WUR/AIN/stiva001/timeseries/lib/python3.12/site-packages/mamba_ssm/ops/selective_scan_interface.py", line 379, in mamba_inner_fn
+    return MambaInnerFn.apply(xz, conv1d_weight, conv1d_bias, x_proj_weight, delta_proj_weight,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/lustre/nobackup/WUR/AIN/stiva001/timeseries/lib/python3.12/site-packages/torch/autograd/function.py", line 575, in apply
+    return super().apply(*args, **kwargs)  # type: ignore[misc]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/lustre/nobackup/WUR/AIN/stiva001/timeseries/lib/python3.12/site-packages/torch/amp/autocast_mode.py", line 465, in decorate_fwd
+    return fwd(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/lustre/nobackup/WUR/AIN/stiva001/timeseries/lib/python3.12/site-packages/mamba_ssm/ops/selective_scan_interface.py", line 263, in forward
+    out, scan_intermediates, out_z = selective_scan_cuda.fwd(
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.63 GiB. GPU 0 has a total capacity of 15.77 GiB of which 656.75 MiB is free. Including non-PyTorch memory, this process has 15.12 GiB memory in use. Of the allocated memory 14.64 GiB is allocated by PyTorch, and 116.05 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+real	0m26.196s
+user	0m23.501s
+sys	0m2.711s

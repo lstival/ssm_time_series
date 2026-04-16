@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --comment=lookback_probe
 #SBATCH --time=240
-#SBATCH --mem=32000
+#SBATCH --mem=64000
 #SBATCH --cpus-per-task=4
 #SBATCH --output=logs/lookback/probe_%a_%j.out
 #SBATCH --error=logs/lookback/probe_%a_%j.err

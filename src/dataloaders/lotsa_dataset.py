@@ -295,7 +295,7 @@ LOTSA_DEFAULT_SUBSETS: List[str] = [
     "saugeenday",
     "us_births",
     "sunspot_with_missing",
-    "exchange_rate"
+    # "exchange_rate"
     # NOTE: the following are ICML probe benchmarks — excluded to prevent leakage:
     #   "ett_h1", "ett_h2", "ett_m1", "ett_m2"  (ETT)
     #   "exchange_rate"                           (Exchange Rate)

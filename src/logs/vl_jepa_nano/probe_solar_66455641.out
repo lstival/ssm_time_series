@@ -1,0 +1,12 @@
+Probing [solar] vl_jepa nano: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/vl_jepa_nano/ts_vl_jepa_nano_lotsa_20260409_181014
+Device: cuda
+Few-shot mode: full  (fraction=1.0)
+Context length (seq_len): 336
+  Loaded encoder       : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/vl_jepa_nano/ts_vl_jepa_nano_lotsa_20260409_181014/time_series_best.pt
+  Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/vl_jepa_nano/ts_vl_jepa_nano_lotsa_20260409_181014/visual_encoder_best.pt
+Loaded encoder from  : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/vl_jepa_nano/ts_vl_jepa_nano_lotsa_20260409_181014/time_series_best.pt
+Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/vl_jepa_nano/ts_vl_jepa_nano_lotsa_20260409_181014/visual_encoder_best.pt
+
+============================================================
+Dataset: solar_AL
+============================================================

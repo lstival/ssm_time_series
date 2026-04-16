@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --comment=icml_vl_jepa_micro_probe_solar
 #SBATCH --time=180
-#SBATCH --mem=16000
+#SBATCH --mem=64000
 #SBATCH --cpus-per-task=4
 #SBATCH --output=logs/icml_vl_jepa_micro/probe_solar_%j.out
 #SBATCH --error=logs/icml_vl_jepa_micro/probe_solar_%j.err

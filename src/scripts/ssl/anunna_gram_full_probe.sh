@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --comment=gram_full_probe
 #SBATCH --time=480
-#SBATCH --mem=32000
+#SBATCH --mem=64000
 #SBATCH --cpus-per-task=4
 #SBATCH --output=logs/gram_full/probe_%j.out
 #SBATCH --error=logs/gram_full/probe_%j.err

@@ -1,0 +1,12 @@
+Probing [solar] byol_bi nano: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_bimodal_nano/ts_byol_bimodal_nano_lotsa_20260410_225606
+Device: cuda
+Few-shot mode: full  (fraction=1.0)
+Context length (seq_len): 336
+  Loaded encoder       : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_bimodal_nano/ts_byol_bimodal_nano_lotsa_20260410_225606/time_series_best.pt
+  Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_bimodal_nano/ts_byol_bimodal_nano_lotsa_20260410_225606/visual_encoder_best.pt
+Loaded encoder from  : /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_bimodal_nano/ts_byol_bimodal_nano_lotsa_20260410_225606/time_series_best.pt
+Loaded visual encoder: /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series/checkpoints/byol_bimodal_nano/ts_byol_bimodal_nano_lotsa_20260410_225606/visual_encoder_best.pt
+
+============================================================
+Dataset: solar_AL
+============================================================

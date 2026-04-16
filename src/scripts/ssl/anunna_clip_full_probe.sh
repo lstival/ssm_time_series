@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --comment=clip_full_probe
 #SBATCH --time=720
-#SBATCH --mem=32000
+#SBATCH --mem=64000
 #SBATCH --cpus-per-task=4
 #SBATCH --output=logs/clip_full/probe_%j.out
 #SBATCH --error=logs/clip_full/probe_%j.err
