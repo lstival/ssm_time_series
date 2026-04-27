@@ -61,6 +61,7 @@ import datasets as hf_datasets
 from torch.utils.data import DataLoader
 
 from dataloaders.lotsa_loader import LotsaWindowDataset, _lotsa_collate_fn, _worker_init_fn
+from dataloaders.cronos_dataset import load_chronos_datasets
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,10 @@ ENERGY_DATASETS = [
 ]
 MOBILITY_DATASETS = ["uber_tlc_daily", "uber_tlc_hourly", "mexico_city_bikes", "m5"]
 ALL_LOCAL_DATASETS = FINANCIAL_DATASETS + ENERGY_DATASETS + MOBILITY_DATASETS
+
+CHRONOS_CACHE_DIR = "/lustre/nobackup/WUR/AIN/stiva001/hf_cache/datasets"
+# Only subsets confirmed present in the offline cache (exchange_rate excluded — ICML probe leakage)
+CHRONOS_DEFAULT_SUBSETS = ["m4_yearly", "taxi_30min", "electricity_15min", "taxi_30min", "monash_traffic"]
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +329,10 @@ def build_local_dataloaders(
 def build_combined_dataloaders(
     lotsa_names: Optional[Sequence[str]] = None,
     local_names: Optional[Sequence[str]] = None,
+    chronos_names: Optional[Sequence[str]] = None,
+    gift_names: Optional[Sequence[str]] = None,
     *,
+    chronos_cache_dir: str = CHRONOS_CACHE_DIR,
     context_length: int = 336,
     val_split: SplitSpec = 0.1,
     batch_size: int = 256,
@@ -336,11 +344,11 @@ def build_combined_dataloaders(
     normalize_per_series: bool = True,
     seed: int = 42,
 ) -> Tuple[DataLoader, DataLoader]:
-    """Build train/val DataLoaders combining LOTSA + local Arrow datasets.
+    """Build train/val DataLoaders combining LOTSA + local Arrow + Chronos datasets.
 
     This is the recommended entry point for training with the augmented corpus.
     LOTSA datasets are loaded via ``load_lotsa_datasets``; local datasets via
-    ``load_local_datasets``; both are concatenated before splitting.
+    ``load_local_datasets``; Chronos datasets via ``load_chronos_datasets``.
 
     Parameters
     ----------
@@ -348,6 +356,14 @@ def build_combined_dataloaders(
         LOTSA subset names.  Defaults to ``LOTSA_DEFAULT_SUBSETS``.
     local_names:
         Local dataset names.  Defaults to ``ALL_LOCAL_DATASETS``.
+    chronos_names:
+        Chronos subset names.  Defaults to ``CHRONOS_DEFAULT_SUBSETS``.
+        Pass an empty list ``[]`` to skip Chronos entirely.
+    gift_names:
+        GIFT-Eval train subsets for SSL pre-training (``history_value`` only).
+        Defaults to ``None`` (GIFT not included).  Pass a list to include.
+    chronos_cache_dir:
+        Path to the offline HF datasets cache.  Defaults to ``CHRONOS_CACHE_DIR``.
     """
     from dataloaders.lotsa_dataset import load_lotsa_datasets, LOTSA_DEFAULT_SUBSETS
 
@@ -355,6 +371,8 @@ def build_combined_dataloaders(
         lotsa_names = LOTSA_DEFAULT_SUBSETS
     if local_names is None:
         local_names = ALL_LOCAL_DATASETS
+    if chronos_names is None:
+        chronos_names = CHRONOS_DEFAULT_SUBSETS
 
     lotsa_ds = load_lotsa_datasets(lotsa_names, normalize_per_series=normalize_per_series)
     local_ds = load_local_datasets(local_names, normalize_per_series=normalize_per_series)
@@ -366,7 +384,45 @@ def build_combined_dataloaders(
         [c for c in keep_cols if c in local_ds.column_names]
     )
 
-    merged = hf_datasets.concatenate_datasets([lotsa_ds, local_ds])
+    parts = [lotsa_ds, local_ds]
+
+    if chronos_names:
+        try:
+            chronos_ds = load_chronos_datasets(
+                chronos_names,
+                offline_cache_dir=chronos_cache_dir,
+                force_offline=True,
+                normalize_per_series=normalize_per_series,
+            )
+            chronos_ds = chronos_ds.select_columns(
+                [c for c in keep_cols if c in chronos_ds.column_names]
+            )
+            parts.append(chronos_ds)
+            logger.info("Chronos corpus: %d series", len(chronos_ds))
+            print(f"Loaded Chronos ({', '.join(chronos_names)}): {len(chronos_ds):,} rows")
+        except Exception as exc:
+            logger.warning("Chronos load failed, skipping: %s", exc)
+            print(f"[WARN] Chronos datasets skipped: {exc}")
+
+    if gift_names:
+        try:
+            from dataloaders.gift_eval_loader import load_gift_for_ssl
+            gift_ds = load_gift_for_ssl(
+                gift_names,
+                force_offline=True,
+                normalize_per_series=normalize_per_series,
+            )
+            gift_ds = gift_ds.select_columns(
+                [c for c in keep_cols if c in gift_ds.column_names]
+            )
+            parts.append(gift_ds)
+            logger.info("GIFT-SSL corpus: %d series", len(gift_ds))
+            print(f"Loaded GIFT-SSL ({len(gift_names)} subsets): {len(gift_ds):,} rows")
+        except Exception as exc:
+            logger.warning("GIFT-SSL load failed, skipping: %s", exc)
+            print(f"[WARN] GIFT-SSL datasets skipped: {exc}")
+
+    merged = hf_datasets.concatenate_datasets(parts)
     merged.set_format("numpy")
     total = len(merged)
     logger.info("Combined corpus: %d series total", total)
@@ -417,6 +473,8 @@ __all__ = [
     "FINANCIAL_DATASETS",
     "ENERGY_DATASETS",
     "MOBILITY_DATASETS",
+    "CHRONOS_DEFAULT_SUBSETS",
+    "CHRONOS_CACHE_DIR",
     "_DATASET_CATALOGUE",
 ]
 

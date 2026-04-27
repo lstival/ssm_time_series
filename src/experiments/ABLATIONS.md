@@ -226,6 +226,40 @@ python src/experiments/ablation_H_visual_encoder_arch.py \
 
 ---
 
+## Ablation J — SSM Hyperparameters (`d_SSM`, `k`)
+
+**Script:** `ablation_J_ssm_hparams.py`
+**SLURM:** `src/scripts/ablations/anunna_ablations_J.sh`
+**Results:** `results/ablation_J/ablation_J_results.csv`
+
+Validates the default SSM hyperparameters used across tiers:
+
+- `d_SSM = 16` (`state_dim`)
+- `k = 4` (`conv_kernel`)
+
+by testing smaller and larger values on the smallest model (`lotsa_nano`).
+
+Default sweep:
+
+- `state_dim ∈ {8, 16, 32}`
+- `conv_kernel ∈ {2, 4, 8}`
+
+This runs a full grid (`3 × 3 = 9` variants), each with CLIP-style pre-training
+followed by frozen linear probing on ETTm1, Weather, and Traffic for horizons
+`96 / 192 / 336 / 720`.
+
+```bash
+python src/experiments/ablation_J_ssm_hparams.py \
+    --config src/configs/lotsa_nano.yaml \
+    --train_epochs 20 \
+    --probe_epochs 20 \
+    --state_dims 8 16 32 \
+    --conv_kernels 2 4 8 \
+    --results_dir results/ablation_J
+```
+
+---
+
 ## Findings Summary (April 2026)
 
 Results for completed ablations. See `ABLATION_RESULTS.md` for full analysis and `ABLATION_LATEX_APPENDIX.md` for paper-ready LaTeX tables.
@@ -257,9 +291,10 @@ sbatch src/scripts/anunna_ablations_E.sh
 sbatch src/scripts/anunna_ablations_F.sh
 sbatch src/scripts/anunna_ablations_G.sh
 sbatch src/scripts/anunna_ablations_H.sh
+sbatch src/scripts/ablations/anunna_ablations_J.sh
 ```
 
-> A–E, G, H are independent and can run in parallel.
+> A–E, G, H, J are independent and can run in parallel.
 > F requires `--checkpoint_dir` pointing to a finished LOTSA checkpoint.
 
 ## Common Arguments

@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --comment=simclr_nano_probe_5pct
 #SBATCH --time=360
-#SBATCH --mem=32000
+#SBATCH --mem=64000
 #SBATCH --cpus-per-task=4
 #SBATCH --output=logs/simclr_bimodal_nano/probe_5pct_%j.out
 #SBATCH --error=logs/simclr_bimodal_nano/probe_5pct_%j.err

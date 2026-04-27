@@ -1,0 +1,69 @@
+experiment_name: "ts_clip_full_gift_ssl"
+seed: 42
+device: "auto"
+
+# CLIP bimodal — FULL size, trained on LOTSA + LOCAL + Chronos + GIFT-Eval train splits.
+# GIFT-Eval train data is included in SSL pre-training so the encoder learns domain
+# representations from the benchmark's own temporal distribution.  The MoMS head is
+# evaluated zero-shot / few-shot on ICML datasets to check whether domain-aware
+# pre-training transfers to held-out benchmarks.
+
+model:
+  model_name: "ts_clip_full_gift_ssl"
+  rp_encoder: "upper_tri"
+  input_dim: 64
+  model_dim: 256
+  embedding_dim: 128
+  depth: 8
+  state_dim: 16
+  conv_kernel: 4
+  expand_factor: 1.5
+  dropout: 0.05
+  pooling: "mean"
+  rp_mv_strategy: "mean"
+  proj_out_dim: 256        # match checkpoint projection head output dim
+
+data:
+  dataset_type: "combined"
+  batch_size: 256
+  val_batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  val_ratio: 0.1
+
+  cronos_kwargs:
+    context_length: 512
+    cache_dir: "/lustre/nobackup/WUR/AIN/stiva001/hf_datasets"
+    normalize_per_series: true
+    force_offline: true
+    drop_last: true
+    two_views: true
+    gift_ssl_subsets:
+      - "m_dense_H_long"
+      - "loop_seattle_H_long"
+      - "sz_taxi_H_short"
+      - "solar_H_long"
+      - "bizitobs_application_10S_long"
+      - "bizitobs_l2c_H_long"
+      - "bizitobs_service_10S_long"
+      - "car_parts_M_short"
+      - "jena_weather_H_long"
+
+training:
+  epochs: 50
+  temperature: 0.20228698523800784
+  learning_rate: 0.00005        # fine-tune lr (resume from best CLIP-Full checkpoint)
+  weight_decay: 0.00023300971704415705
+  noise_std: 0.001519215433363163
+  optimizer: "adamw"
+  scheduler: "cosine"
+  min_lr: 1.0e-06
+  warmup_epochs: 2
+  max_grad_norm: 1.0
+  use_amp: true
+  alignment_strategy: "clip_symm"
+
+logging:
+  checkpoint_dir: "../../checkpoints/clip_full_gift_ssl"
+  save_best_only: true
+  save_last: true

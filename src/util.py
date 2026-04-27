@@ -325,11 +325,13 @@ def build_time_series_dataloaders(
         extra = dict(cronos_kwargs or {})
         lotsa_names = _parse_datasets(datasets or dataset_name) or None
         local_names = extra.pop("local_datasets", None)
+        gift_names  = extra.pop("gift_ssl_subsets", None)
         context_length = int(extra.pop("context_length", 336))
         split = val_split if val_split is not None else val_ratio
         train_loader, val_loader = build_combined_dataloaders(
             lotsa_names=lotsa_names,
             local_names=local_names,
+            gift_names=gift_names,
             context_length=context_length,
             val_split=split,
             batch_size=batch_size,

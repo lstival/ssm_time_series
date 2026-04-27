@@ -24,7 +24,7 @@ except:
     from .mamba_block import MambaBlock
 
 Pooling = Literal["mean", "last", "cls"]
-RpMvStrategy = Literal["per_channel", "mean", "pca", "joint"]
+RpMvStrategy = Literal["per_channel", "mean", "pca", "joint", "delay_embed"]
 ReprType = Literal["rp", "gasf", "mtf", "stft"]
 
 
@@ -252,6 +252,25 @@ class MambaVisualEncoder(nn.Module):
                     dists = dists / dists_max
                 imgs[n] = dists
             return imgs  # (N, L, L) — continuous RP with values in [0,1]
+
+        if self.rp_mv_strategy == "delay_embed":
+            # Takens-style multivariate delay embedding:
+            # state vector at t = [x_t^0, x_{t-tau}^1, x_{t-2*tau}^2, ...]
+            # Constructs a composite univariate series whose RP captures the
+            # attractor geometry of the joint dynamical system.
+            tau = max(1, L // (F + 1))  # delay so all channels fit in window
+            # Build delay-embedded series: scalar per timestep combining all channels
+            arr_t = arr.transpose(0, 2, 1)  # (N, L, F)
+            delay_series = np.zeros((N, 1, L), dtype=np.float32)
+            for f in range(F):
+                shift = f * tau
+                if shift < L:
+                    delay_series[:, 0, shift:] += arr_t[:, :L - shift, f]
+            # Normalize to zero mean unit std per sample
+            mu = delay_series.mean(axis=2, keepdims=True)
+            sigma = delay_series.std(axis=2, keepdims=True) + 1e-8
+            delay_series = (delay_series - mu) / sigma
+            return delay_series  # (N, 1, L) — treated as univariate for RP
 
         raise ValueError(f"Unknown rp_mv_strategy: {self.rp_mv_strategy}")
 

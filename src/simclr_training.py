@@ -441,7 +441,11 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             raise FileNotFoundError(f"Missing checkpoint: {last_path}")
         state = torch.load(last_path, map_location="cpu")
         encoder.load_state_dict(state["model_state_dict"])
-        optimizer.load_state_dict(state["optimizer_state_dict"])
+        try:
+            optimizer.load_state_dict(state["optimizer_state_dict"])
+            print(f"Resumed model AND optimizer from {last_path}")
+        except Exception as e:
+            print(f"Warning: Could not resume optimizer state ({e}). Initializing fresh optimizer.")
         initial_epoch = min(epochs, int(state.get("epoch", 0)) + 1)
         best_loss = state.get("loss")
         print(f"Resumed from {last_path} (epoch {initial_epoch})")

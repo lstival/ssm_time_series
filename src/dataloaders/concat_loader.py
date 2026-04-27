@@ -156,7 +156,7 @@ def _collect_dataset_splits(
     """Create dataset splits for each discovered dataset prior to building loaders."""
     # assert abs(train_ratio + val_ratio - 1.0) < 1e-6, "train_ratio + val_ratio must equal 1.0"
 
-    discovered_files = dataset_files or discover_dataset_files(root_path, filename=filename)
+    discovered_files = dataset_files if dataset_files is not None else discover_dataset_files(root_path, filename=filename)
     if not discovered_files:
         raise FileNotFoundError(f"No dataset files discovered under '{root_path}'.")
 

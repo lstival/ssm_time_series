@@ -367,9 +367,10 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     emb_dim = int(config.model.get("embedding_dim", 64))
     proj_hidden = int(config.model.get("model_dim", 128))
+    proj_out_dim = int(config.model.get("proj_out_dim", emb_dim))
 
-    ts_proj = ProjectionHead(emb_dim, proj_hidden, emb_dim)
-    rp_proj = ProjectionHead(emb_dim, proj_hidden, emb_dim)
+    ts_proj = ProjectionHead(emb_dim, proj_hidden, proj_out_dim)
+    rp_proj = ProjectionHead(emb_dim, proj_hidden, proj_out_dim)
 
     print(f"Temporal encoder params: {sum(p.numel() for p in ts_encoder.parameters()):,}")
     print(f"Visual encoder params:   {sum(p.numel() for p in rp_enc.parameters()):,}")
@@ -409,12 +410,20 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         resume_dir = Path(args.resume_checkpoint).resolve()
         if not resume_dir.exists():
             raise FileNotFoundError(f"Resume dir not found: {resume_dir}")
+        def _load_with_remap(model, state_dict):
+            # Remap legacy key prefix 'projection.' → 'net.' for ProjectionHead
+            remapped = {
+                k.replace("projection.", "net.", 1) if k.startswith("projection.") else k: v
+                for k, v in state_dict.items()
+            }
+            model.load_state_dict(remapped)
+
         for name, model in [("time_series", ts_encoder), ("visual_encoder", rp_enc),
                              ("time_series_projection", ts_proj), ("visual_projection", rp_proj)]:
             p = resume_dir / f"{name}_last.pt"
             if p.exists():
                 state = torch.load(p, map_location="cpu")
-                model.load_state_dict(state["model_state_dict"])
+                _load_with_remap(model, state["model_state_dict"])
         ts_state = torch.load(resume_dir / "time_series_last.pt", map_location="cpu")
         optimizer.load_state_dict(ts_state["optimizer_state_dict"])
         initial_epoch = int(ts_state.get("epoch", 0)) + 1

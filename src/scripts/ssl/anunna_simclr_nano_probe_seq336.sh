@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --comment=simclr_nano_probe_seq336
 #SBATCH --time=480
-#SBATCH --mem=32000
+#SBATCH --mem=64000
 #SBATCH --cpus-per-task=4
 #SBATCH --output=logs/probe_lotsa/simclr_nano_seq336_%j.out
 #SBATCH --error=logs/probe_lotsa/simclr_nano_seq336_%j.err
