@@ -25,6 +25,8 @@ class TimeSeriesDataModule:
         train: bool = True,
         val: bool = True,
         test: bool = False,
+        scaler_type: str = 'minmax',
+        features: Optional[str] = None,
     ):
         # assert abs(train_ratio + val_ratio - 1.0) < 1e-6, "train_ratio + val_ratio must equal 1.0"
         self.dataset_name = dataset_name
@@ -35,6 +37,11 @@ class TimeSeriesDataModule:
         self.num_workers = num_workers
         self.pin_memory = pin_memory
         self.normalize = normalize
+        self.scaler_type = scaler_type
+        # `features` is accepted for API compatibility with callers written for
+        # the other repo's DataModule; split selection here is per-dataset, so it
+        # is stored but not otherwise used.
+        self.features = features
         # self.train_ratio = train_ratio
         # self.val_ratio = val_ratio
         self.sample_size = self._normalize_sample_size(sample_size)
@@ -91,6 +98,7 @@ class TimeSeriesDataModule:
             dataset_files=dataset_files,
             filename=self.filename,
             sample_size=self.sample_size,
+            scaler_type=self.scaler_type,
         )
 
         self.dataset_loaders = dataset_loaders
