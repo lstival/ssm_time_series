@@ -215,20 +215,30 @@ class MambaVisualEncoder(nn.Module):
         x = time_series_2_recurrence_plot(ts) 
         
         if self.rp_mode == "shuffled":
-            # Flatten everything except the last two dimensions (L, L) to iterate over all images/channels
-            orig_shape = x.shape
-            L = orig_shape[-1]
-            x_flat = x.reshape(-1, L, L)
-            for i in range(x_flat.shape[0]):
-                patch = x_flat[i].flatten()
-                np.random.shuffle(patch)
-                x_flat[i] = patch.reshape(L, L)
-            x = x_flat.reshape(orig_shape)
-        
+            # Per-image random permutation of all L*L pixels (vectorized, on-device).
+            if isinstance(x, torch.Tensor):
+                orig_shape = x.shape
+                L = orig_shape[-1]
+                x_flat = x.reshape(-1, L * L)
+                perm = torch.argsort(torch.rand_like(x_flat), dim=1)
+                x = torch.gather(x_flat, 1, perm).reshape(orig_shape)
+            else:
+                orig_shape = x.shape
+                L = orig_shape[-1]
+                x_flat = x.reshape(-1, L, L)
+                for i in range(x_flat.shape[0]):
+                    patch = x_flat[i].flatten()
+                    np.random.shuffle(patch)
+                    x_flat[i] = patch.reshape(L, L)
+                x = x_flat.reshape(orig_shape)
+
         elif self.rp_mode == "random":
             # Replace RP with Gaussian noise preserving same shape
-            x = np.random.normal(0, 1, size=x.shape).astype(np.float32)
-            
+            if isinstance(x, torch.Tensor):
+                x = torch.randn_like(x)
+            else:
+                x = np.random.normal(0, 1, size=x.shape).astype(np.float32)
+
         return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

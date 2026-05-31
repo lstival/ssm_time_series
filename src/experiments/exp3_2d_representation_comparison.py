@@ -111,7 +111,12 @@ class EXP3VisualEncoder(MambaVisualEncoder):
         
         if self.mode == "RP":
             from models.utils import time_series_2_recurrence_plot
-            return time_series_2_recurrence_plot(ts)
+            rp = time_series_2_recurrence_plot(ts)
+            # time_series_2_recurrence_plot now returns a torch tensor for tensor
+            # input; the other branches here return numpy, so keep this consistent.
+            if isinstance(rp, torch.Tensor):
+                rp = rp.detach().cpu().numpy()
+            return rp
         
         elif self.mode == "GASF":
             ts_np = ts.detach().cpu().numpy()

@@ -8,13 +8,47 @@ from typing import Dict, List, Optional, Iterable
 from dataclasses import dataclass
 import datasets
 
+def _recurrence_plot_torch(x: torch.Tensor) -> torch.Tensor:
+    """Vectorized recurrence plot on the input device (no CPU/numpy round-trip).
+
+    Numerically equivalent to ``pyts.image.RecurrencePlot`` with its defaults
+    (dimension=1, time_delay=1, threshold=None): the unbinarized pairwise
+    distance matrix RP[i, j] = |x_i - x_j| for each (sample, channel) series.
+
+    Shapes mirror the numpy path:
+        (L,)            -> (1, L, L)
+        (N, L)          -> (N, L, L)
+        (N, 1, L)       -> (N, L, L)
+        (N, C, L) C>1   -> (N, C, L, L)
+    """
+    if x.dim() == 1:
+        x = x[None, :]                       # (1, L)
+        d = (x[:, :, None] - x[:, None, :]).abs()
+        return d.to(torch.float32)           # (1, L, L)
+    if x.dim() == 2:                         # (N, L)
+        d = (x[:, :, None] - x[:, None, :]).abs()
+        return d.to(torch.float32)           # (N, L, L)
+    if x.dim() == 3:
+        n, c, length = x.shape
+        if c == 1:
+            xs = x[:, 0, :]                   # (N, L)
+            d = (xs[:, :, None] - xs[:, None, :]).abs()
+            return d.to(torch.float32)       # (N, L, L)
+        xs = x.reshape(n * c, length)
+        d = (xs[:, :, None] - xs[:, None, :]).abs()
+        return d.reshape(n, c, length, length).to(torch.float32)
+    raise ValueError(f"Unsupported input shape: {tuple(x.shape)}")
+
+
 def time_series_2_recurrence_plot(x):
-    # normalize input to numpy array (handle torch tensors if provided)
+    # Fast path: tensor input stays on-device (GPU) via a vectorized RP, avoiding
+    # the pyts CPU round-trip that dominated training time (~7 s/batch forward).
+    if isinstance(x, torch.Tensor):
+        return _recurrence_plot_torch(x)
+
+    # numpy / list input: keep the original pyts-based behaviour for compatibility.
     try:
-        if isinstance(x, torch.Tensor):
-            arr = x.detach().cpu().numpy()
-        else:
-            arr = np.asarray(x)
+        arr = np.asarray(x)
     except Exception:
         arr = np.asarray(x)
 
