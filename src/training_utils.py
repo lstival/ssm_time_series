@@ -125,6 +125,7 @@ def build_visual_encoder_from_config(model_cfg: Dict[str, Any], rp_mode: str = "
         pooling=pooling,
         dropout=dropout,
         rp_mode=rp_mode,
+        patch_stride=cfg_get("patch_stride", None),
     )
 
 def build_optimizer(model: torch.nn.Module, training_cfg: Dict[str, Any]) -> Optimizer:

@@ -20,6 +20,8 @@ mkdir -p results/gift_eval_official
 
 export HF_HOME="/lustre/nobackup/WUR/AIN/stiva001/hf_cache"
 export HF_DATASETS_CACHE="/lustre/nobackup/WUR/AIN/stiva001/hf_cache/datasets"
+# Point LOTSA loader to the same HF cache (lotsa_dataset.py uses this env var)
+export LOTSA_CACHE_DIR="/lustre/nobackup/WUR/AIN/stiva001/hf_cache/datasets"
 export HF_DATASETS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 export TMPDIR="/lustre/nobackup/WUR/AIN/stiva001/tmp"
@@ -29,7 +31,7 @@ mkdir -p "${TMPDIR}"
 module load GPU
 source /home/WUR/stiva001/WUR/timeseries/bin/activate
 
-cd /home/WUR/stiva001/WUR/ssm_time_series
+cd /lustre/nobackup/WUR/AIN/stiva001/ssm_time_series
 
 SRC=src
 ENCODER="clip_mini_alldata"

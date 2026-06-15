@@ -12,18 +12,51 @@ Usage:
 """
 
 from __future__ import annotations
+import glob
 import os
 import torch
 import datasets
 import numpy as np
 import logging
+import pyarrow.ipc as _pa_ipc
 from torch.utils.data import Dataset, DataLoader
 from typing import Sequence, Optional, Dict, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
-GIFT_EVAL_REPO_ID = "Salesforce/GiftEvalParquet"
+GIFT_EVAL_REPO_ID = "Salesforce/gift_eval_parquet"
 DEFAULT_CACHE_DIR = "/lustre/nobackup/WUR/AIN/stiva001/hf_cache/datasets"
+
+# HF cache dir prefix for each repo (triple-underscore convention)
+_REPO_DIR_MAP = {
+    "Salesforce/gift_eval_parquet": "Salesforce___gift_eval_parquet",
+    "Salesforce/GiftEvalParquet":   "Salesforce___gift_eval_parquet",  # legacy alias
+}
+
+
+def _load_arrow_direct(
+    repo_id: str,
+    subset: str,
+    split: str = "train",
+    cache_dir: str = DEFAULT_CACHE_DIR,
+) -> datasets.Dataset:
+    """Load a cached HF dataset from its Arrow stream file directly.
+
+    Bypasses datasets.load_dataset() which has a Python-3.12 / datasets-2.17
+    dataclass incompatibility that raises TypeError on cache reads.
+    """
+    repo_dir = _REPO_DIR_MAP.get(repo_id, repo_id.replace("/", "___"))
+    pattern = os.path.join(cache_dir, repo_dir, subset, "*", "*", f"*-{split}.arrow")
+    matches = glob.glob(pattern)
+    if not matches:
+        raise FileNotFoundError(
+            f"No arrow file for {repo_id}/{subset} ({split}) in {cache_dir}. "
+            f"Pattern: {pattern}"
+        )
+    arrow_path = sorted(matches)[-1]
+    reader = _pa_ipc.open_stream(arrow_path)
+    table = reader.read_all()
+    return datasets.Dataset.from_dict(table.to_pydict())
 
 class GiftEvalDataset(Dataset):
     """
@@ -189,7 +222,7 @@ def load_gift_eval_hf(
         logger.info(f"Offline mode — loading {subset_name} from: {cache_dir}")
 
     try:
-        ds = datasets.load_dataset(repo_id, subset_name, split=split)
+        ds = _load_arrow_direct(repo_id, subset_name, split=split, cache_dir=cache_dir or DEFAULT_CACHE_DIR)
         logger.info(f"Loaded GIFT-Eval subset '{subset_name}': {len(ds):,} rows")
         return ds
     finally:
@@ -252,8 +285,10 @@ def load_gift_for_ssl(
                     if normalize_per_series:
                         sigma = arr.std() + 1e-8
                         arr = (arr - arr.mean()) / sigma
-                    # Wrap as (T, 1) list-of-lists to match LOTSA/local schema
-                    targets.append([[float(v)] for v in arr])
+                    # LOTSA/local 'target' is a flat 1D list of float32 (shape (T,)).
+                    # Emit the same: flat list, not (T,1), so concatenate_datasets
+                    # can align schemas across the corpus.
+                    targets.append(arr.astype(np.float32).tolist())
                 return {"target": targets}
 
             remapped = raw.map(_remap, batched=True, remove_columns=raw.column_names)

@@ -174,14 +174,21 @@ class MambaVisualEncoder(nn.Module):
         pooling: Pooling = "mean",
         dropout: float = 0.05,
         rp_mode: str = "correct",
+        patch_stride: Optional[int] = None,
     ) -> None:
         super().__init__()
         if depth <= 0:
             raise ValueError("depth must be positive")
         if input_dim <= 0:
             raise ValueError("input_dim must be positive")
+        if patch_stride is not None and patch_stride <= 0:
+            raise ValueError("patch_stride must be positive")
 
         self.input_dim = input_dim
+        # None => stride defaults to input_dim (non-overlapping patches, baseline).
+        # Set < input_dim to overlap patches — helps periodic signals (e.g. solar
+        # day/night, period-24) keep phase continuity across patch boundaries.
+        self.patch_stride = patch_stride
         self.model_dim = model_dim
         self.embedding_dim = embedding_dim
         self.pooling: Pooling = pooling
@@ -275,7 +282,7 @@ class MambaVisualEncoder(nn.Module):
         return self.final_norm(x)
     
     def tokenizer(self, x):
-        tokens = tokenize_sequence(x, token_size=self.input_dim)
+        tokens = tokenize_sequence(x, token_size=self.input_dim, stride=self.patch_stride)
         return tokens
 
     def _pool_sequence(self, hidden: torch.Tensor, original: torch.Tensor) -> torch.Tensor:

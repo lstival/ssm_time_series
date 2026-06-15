@@ -35,6 +35,7 @@ for p in (src_dir, root_dir):
 
 import training_utils as tu
 from models.mop_forecast import MoPForecastModel
+from models.mop_crossattn import MoPCrossAttnModel
 from time_series_loader import TimeSeriesDataModule
 
 
@@ -87,6 +88,9 @@ def parse_args():
     p.add_argument("--output_suffix",      type=str, default="",
                    help="Suffix appended to result CSV filename")
     p.add_argument("--seed",               type=int, default=42)
+    p.add_argument("--mop_crossattn",     action="store_true",
+                   help="Use MoPCrossAttnModel: cross-attention over token sequence")
+    p.add_argument("--crossattn_heads",   type=int, default=4)
     p.add_argument("--save_predictions",  action="store_true",
                    help="Save per-dataset predictions/targets to .npz")
     p.add_argument("--predictions_dir",   type=Path, default=None,
@@ -127,25 +131,34 @@ def load_encoders(ckpt_dir: Path, config, device, unimodal: bool = False):
 
 
 def build_mop(encoder, visual, enc_dim: int, args, device,
-              mop_checkpoint: Optional[Path] = None) -> MoPForecastModel:
-    fusion_mode = getattr(args, "fusion_mode", "concat")
-    # film fusion: MoP receives enc_dim (z_e only, gated by z_v)
-    # concat fusion: MoP receives enc_dim*2
-    if args.unimodal:
-        input_dim = enc_dim
-    elif fusion_mode == "film":
-        input_dim = enc_dim
+              mop_checkpoint: Optional[Path] = None):
+    if getattr(args, "mop_crossattn", False):
+        mop = MoPCrossAttnModel(
+            encoder=encoder, visual_encoder=visual,
+            emb_dim=enc_dim,
+            num_prompts=args.num_prompts, horizons=HORIZONS,
+            target_features=1, freeze_encoders=True,
+            n_heads=getattr(args, "crossattn_heads", 4),
+            norm_mode="revin",
+            mop_hidden_dim=args.hidden_dim,
+        ).to(device)
     else:
-        input_dim = enc_dim * 2
-    mop = MoPForecastModel(
-        encoder=encoder, visual_encoder=visual,
-        input_dim=input_dim, hidden_dim=args.hidden_dim,
-        num_prompts=args.num_prompts, horizons=HORIZONS,
-        target_features=1, freeze_encoders=True,
-        norm_mode="revin",
-        scale_cond=False,
-        fusion_mode=fusion_mode,
-    ).to(device)
+        fusion_mode = getattr(args, "fusion_mode", "concat")
+        if args.unimodal:
+            input_dim = enc_dim
+        elif fusion_mode == "film":
+            input_dim = enc_dim
+        else:
+            input_dim = enc_dim * 2
+        mop = MoPForecastModel(
+            encoder=encoder, visual_encoder=visual,
+            input_dim=input_dim, hidden_dim=args.hidden_dim,
+            num_prompts=args.num_prompts, horizons=HORIZONS,
+            target_features=1, freeze_encoders=True,
+            norm_mode="revin",
+            scale_cond=False,
+            fusion_mode=fusion_mode,
+        ).to(device)
     if mop_checkpoint and mop_checkpoint.exists():
         ckpt = torch.load(mop_checkpoint, map_location=device)
         missing, unexpected = mop.load_state_dict(ckpt["mop_model"], strict=False)

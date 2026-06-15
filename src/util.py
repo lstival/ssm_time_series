@@ -293,6 +293,54 @@ def build_time_series_dataloaders(
         )
         return train_loader, val_loader
 
+    if kind == "combined":
+        # Ported from the /home repo so the .mamba LUSTRE tree can train on the
+        # full corpus (LOTSA + local + Chronos + GIFT-SSL + ICML). Wires config
+        # `cronos_kwargs` keys to the LUSTRE build_combined_dataloaders signature.
+        from dataloaders.local_dataset_loader import build_combined_dataloaders
+
+        extra = dict(cronos_kwargs or {})
+        lotsa_names = _parse_datasets(datasets or dataset_name) or None
+        local_names = extra.pop("local_datasets", None)
+        gift_names  = extra.pop("gift_ssl_subsets", None)
+        chronos_names = extra.pop("chronos_datasets", None)
+        context_length = int(extra.pop("context_length", 336))
+        split = val_split if val_split is not None else val_ratio
+
+        # icml_ssl: true → point the loader at the ICML corpus dir
+        icml_data_dir = extra.pop("icml_data_dir", None)
+        if extra.pop("icml_ssl", False) and icml_data_dir is None:
+            icml_data_dir = "ICML_datasets"
+
+        # chronos_dedup: true → use CHRONOS_DEDUP_SUBSETS (monash_traffic only),
+        # removing taxi_30min/m4_yearly/electricity_15min already present in LOTSA/local.
+        if extra.pop("chronos_dedup", False) and chronos_names is None:
+            from dataloaders.local_dataset_loader import CHRONOS_DEDUP_SUBSETS
+            chronos_names = CHRONOS_DEDUP_SUBSETS
+
+        max_series_per_source = int(extra.pop("max_series_per_source", 0))
+
+        train_loader, val_loader = build_combined_dataloaders(
+            lotsa_names=lotsa_names,
+            local_names=local_names,
+            chronos_names=chronos_names,
+            gift_names=gift_names,
+            icml_data_dir=icml_data_dir,
+            context_length=context_length,
+            val_split=split,
+            batch_size=batch_size,
+            val_batch_size=val_batch_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            max_series_per_source=max_series_per_source,
+            seed=seed,
+            **{k: v for k, v in extra.items()
+               if k in ("two_views", "drop_last", "normalize_per_series",
+                        "chronos_cache_dir", "synthetic_n_series",
+                        "synthetic_series_length", "synthetic_seed")},
+        )
+        return train_loader, val_loader
+
     raise ValueError(f"Unsupported dataset_type: {dataset_type}")
 
 

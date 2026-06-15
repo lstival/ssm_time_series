@@ -39,6 +39,7 @@ for p in (src_dir, root_dir):
 
 import training_utils as tu
 from models.mop_forecast import MoPForecastModel
+from models.mop_crossattn import MoPCrossAttnModel
 from dataloaders.gift_eval_loader import (
     load_gift_eval_hf, GiftEvalDataset, ALL_GIFT_SSL_SUBSETS,
 )
@@ -60,17 +61,35 @@ def load_model(args, device: torch.device):
     visual  = tu.build_visual_encoder_from_config(config.model).to(device)
 
     ckpt_dir = Path(args.checkpoint_dir)
+
+    def _load_strict(module: torch.nn.Module, path: Path, tag: str):
+        """Load a checkpoint and fail loudly on a naming mismatch.
+
+        strict=False used to silently leave the encoder at random init when the
+        checkpoint key names diverged (.ssm. vs .mamba.), producing huge NRMSE.
+        We tolerate non-architectural extras (buffers, projection heads) but
+        require that the architectural weights actually matched.
+        """
+        state = torch.load(path, map_location=device)
+        sd = state.get("model_state_dict", state)
+        result = module.load_state_dict(sd, strict=False)
+        if result.missing_keys:
+            raise RuntimeError(
+                f"{tag}: {len(result.missing_keys)} weights NOT loaded from {path} — "
+                f"checkpoint key names don't match the model "
+                f"(e.g. {result.missing_keys[:3]}). Re-train with the current code "
+                f"or remap keys; refusing to run on a partly-random encoder."
+            )
+
     for name in ("time_series_best.pt", "time_series_encoder.pt", "time_series_last.pt"):
         p = ckpt_dir / name
         if p.exists():
-            state = torch.load(p, map_location=device)
-            encoder.load_state_dict(state.get("model_state_dict", state), strict=False)
+            _load_strict(encoder, p, "time-series encoder")
             break
     for name in ("visual_encoder_best.pt", "visual_encoder.pt", "visual_encoder_last.pt"):
         p = ckpt_dir / name
         if p.exists():
-            state = torch.load(p, map_location=device)
-            visual.load_state_dict(state.get("model_state_dict", state), strict=False)
+            _load_strict(visual, p, "visual encoder")
             break
 
     ckpt     = torch.load(args.mop_checkpoint, map_location=device)
@@ -80,25 +99,43 @@ def load_model(args, device: torch.device):
     fusion  = getattr(mop_args, "fusion_mode", "concat")
     in_dim  = enc_dim * 2 if fusion == "concat" else enc_dim
 
-    model = MoPForecastModel(
-        encoder=encoder,
-        visual_encoder=visual,
-        input_dim=in_dim,
-        hidden_dim=getattr(mop_args, "hidden_dim", 512),
-        num_prompts=getattr(mop_args, "num_prompts", 16),
-        horizons=HORIZONS,
-        target_features=1,
-        freeze_encoders=True,
-        norm_mode=getattr(mop_args, "norm_mode", "revin"),
-        head_type=getattr(mop_args, "head_type", "linear"),
-        use_ln_head=getattr(mop_args, "use_ln_head", False),
-        residual_head=getattr(mop_args, "residual_head", False),
-        temperature=getattr(mop_args, "temperature", 1.0),
-        scale_cond=getattr(mop_args, "scale_cond", False),
-        learnable_scale=getattr(mop_args, "learnable_scale", False),
-        dropout=0.0,
-        fusion_mode=fusion,
-    ).to(device)
+    ctx_len = getattr(mop_args, "context_length", 336)
+    if getattr(mop_args, "mop_crossattn", False):
+        model = MoPCrossAttnModel(
+            encoder=encoder,
+            visual_encoder=visual,
+            emb_dim=enc_dim,
+            num_prompts=getattr(mop_args, "num_prompts", 16),
+            horizons=HORIZONS,
+            target_features=1,
+            freeze_encoders=True,
+            n_heads=getattr(mop_args, "crossattn_heads", 4),
+            norm_mode=getattr(mop_args, "norm_mode", "revin"),
+            mop_hidden_dim=getattr(mop_args, "hidden_dim", 512),
+        ).to(device)
+    else:
+        model = MoPForecastModel(
+            encoder=encoder,
+            visual_encoder=visual,
+            input_dim=in_dim,
+            hidden_dim=getattr(mop_args, "hidden_dim", 512),
+            num_prompts=getattr(mop_args, "num_prompts", 16),
+            horizons=HORIZONS,
+            target_features=1,
+            freeze_encoders=True,
+            norm_mode=getattr(mop_args, "norm_mode", "revin"),
+            head_type=getattr(mop_args, "head_type", "linear"),
+            use_ln_head=getattr(mop_args, "use_ln_head", False),
+            residual_head=getattr(mop_args, "residual_head", False),
+            temperature=getattr(mop_args, "temperature", 1.0),
+            scale_cond=getattr(mop_args, "scale_cond", False),
+            learnable_scale=getattr(mop_args, "learnable_scale", False),
+            dropout=0.0,
+            fusion_mode=fusion,
+            skip_linear=getattr(mop_args, "skip_linear", False),
+            skip_only=getattr(mop_args, "skip_only", False),
+            context_length=ctx_len,
+        ).to(device)
     model.load_state_dict(ckpt["mop_model"])
     model.eval()
     return model

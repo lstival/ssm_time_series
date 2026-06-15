@@ -157,32 +157,219 @@ class ProjectionHead(nn.Module):
 # ── batch helpers ─────────────────────────────────────────────────────────────
 
 
+def _augment_view(
+    x: torch.Tensor,
+    *,
+    noise_std: float,
+    scale_std: float = 0.0,
+    mask_ratio: float = 0.0,
+) -> torch.Tensor:
+    """Stronger time-series augmentation for contrastive SSL.
+
+    In contrastive SSL the augmentation IS the main regularizer — weak views make
+    the task trivial and the encoder memorizes (the overfit we measured). Applies,
+    per call (so the two views differ):
+      - jitter:    additive Gaussian noise (noise_std)
+      - scaling:   per-series magnitude scale ~ N(1, scale_std)  (amplitude invariance)
+      - masking:   randomly zero a fraction of timesteps (temporal dropout)
+    x: (N, F, T). All ops are no-ops when their strength is 0 (backward-compatible).
+    """
+    out = x
+    if scale_std > 0.0:
+        # one scale per (sample, channel), broadcast over time
+        scale = 1.0 + scale_std * torch.randn(out.shape[0], out.shape[1], 1, device=out.device)
+        out = out * scale
+    if noise_std > 0.0:
+        out = out + noise_std * torch.randn_like(out)
+    if mask_ratio > 0.0:
+        keep = (torch.rand(out.shape[0], 1, out.shape[2], device=out.device) >= mask_ratio).float()
+        out = out * keep
+    return out
+
+
 def _extract_views(
     batch,
     device: torch.device,
     noise_std: float,
+    *,
+    scale_std: float = 0.0,
+    mask_ratio: float = 0.0,
+    temporal_positive: bool = False,
 ) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
-    """Return (view1, view2) tensors of shape (N, F, T), or None if batch is skipped."""
+    """Return (view1, view2) tensors of shape (N, F, T), or None if batch is skipped.
+
+    temporal_positive=True (variants A/G): view1=context window, view2=adjacent future
+    window. The two windows come from the same series but different positions, forcing
+    the encoder to align representations of temporally adjacent patches — a much stronger
+    forecast signal than augmentation of the same window.
+    """
+    aug = dict(noise_std=noise_std, scale_std=scale_std, mask_ratio=mask_ratio)
     if isinstance(batch, dict) and "target" in batch and "lengths" in batch:
         padded = batch["target"].to(device).float()
         lengths = batch["lengths"].to(device)
         if not (lengths == lengths[0]).all():
             return None
         L = int(lengths[0].item())
-        x1 = u.reshape_multivariate_series(u.prepare_sequence(padded[:, :L]))
-        if "target2" in batch:
-            padded2 = batch["target2"].to(device).float()
-            x2 = u.reshape_multivariate_series(u.prepare_sequence(padded2[:, :L]))
+        full = u.reshape_multivariate_series(u.prepare_sequence(padded[:, :L]))
+        if temporal_positive and full.shape[-1] >= 2:
+            # split in half: first half = context view, second half = future view
+            half = full.shape[-1] // 2
+            base1 = full[..., :half]
+            base2 = full[..., half:half * 2]
         else:
-            x2 = x1 + noise_std * torch.randn_like(x1)
+            base1 = full
+            if "target2" in batch:
+                padded2 = batch["target2"].to(device).float()
+                base2 = u.reshape_multivariate_series(u.prepare_sequence(padded2[:, :L]))
+            else:
+                base2 = base1
     else:
         seq = u.prepare_sequence(u.extract_sequence(batch)).to(device).float()
-        x1 = u.reshape_multivariate_series(seq)
-        x2 = x1 + noise_std * torch.randn_like(x1)
+        full = u.reshape_multivariate_series(seq)
+        if temporal_positive and full.shape[-1] >= 2:
+            half = full.shape[-1] // 2
+            base1 = full[..., :half]
+            base2 = full[..., half:half * 2]
+        else:
+            base1 = full
+            base2 = full
+    x1 = _augment_view(base1, **aug)
+    x2 = _augment_view(base2, **aug)
     return x1, x2
 
 
+def _forecast_reg_loss(
+    ts_encoder: nn.Module,
+    x: torch.Tensor,
+    forecast_reg_head: nn.Module,
+    horizon: int = 96,
+) -> torch.Tensor:
+    """Forecast regularization (variant C): MSE between Linear(z_ctx) and x_fut.
+
+    x: (N, 1, T) where T >= 2*horizon. Splits x into context and target, embeds
+    the context, predicts the target with a frozen-during-SSL linear head.
+    The head and this loss are trained jointly with the contrastive loss.
+    """
+    T = x.shape[-1]
+    ctx_len = T - horizon
+    if ctx_len < horizon:
+        return torch.tensor(0.0, device=x.device)
+    x_ctx = x[..., :ctx_len]   # (N, 1, ctx_len)
+    x_fut = x[..., ctx_len:ctx_len + horizon].squeeze(1)   # (N, horizon)
+    z = ts_encoder(x_ctx)      # (N, D) — uses current pooling
+    pred = forecast_reg_head(z)  # (N, horizon)
+    return F.mse_loss(pred, x_fut)
+
+
+def _masked_recon_loss(
+    ts_encoder: nn.Module,
+    x: torch.Tensor,
+    recon_head: nn.Module,
+    mask_ratio: float = 0.25,
+) -> torch.Tensor:
+    """Masked reconstruction auxiliary loss — temporal branch only (SimMTM-style).
+
+    Zeroes a random fraction of timesteps, embeds the masked series with the
+    temporal encoder, and reconstructs the series via Linear(emb_dim → T).
+    MSE is computed ONLY on masked positions, forcing the embedding to retain
+    local dynamics that NT-Xent alone can discard. The visual/RP branch is
+    untouched, keeping it fully dedicated to cross-modal alignment.
+    x: (N, F, T); reconstruction targets channel 0, matching the probe.
+    """
+    T = x.shape[-1]
+    if T > recon_head.out_features:
+        return torch.tensor(0.0, device=x.device)
+    mask = torch.rand(x.shape[0], 1, T, device=x.device) < mask_ratio  # True = masked
+    if not mask.any():
+        return torch.tensor(0.0, device=x.device)
+    x_masked = x * (~mask).float()
+    z = ts_encoder(x_masked)                 # (N, D)
+    pred = recon_head(z)[:, :T]              # (N, T)
+    target = x[:, 0, :]                      # (N, T)
+    m = mask[:, 0, :]
+    return F.mse_loss(pred[m], target[m])
+
+
 # ── training loop ─────────────────────────────────────────────────────────────
+
+
+def _build_forecast_probe(
+    ts_encoder: nn.Module,
+    rp_encoder: nn.Module,
+    val_loader: DataLoader,
+    device: torch.device,
+    horizons: Tuple[int, ...] = (96, 192, 336, 720),
+    probe_epochs: int = 5,
+    use_amp: bool = True,
+) -> Optional[float]:
+    """Train a lightweight linear probe on val embeddings and return avg NRMSE.
+
+    Embeds all val batches with the frozen encoders, trains a Linear(emb→H)
+    per horizon for probe_epochs, then evaluates MSE. Returns avg NRMSE across
+    horizons (lower = better encoder for forecast). Used as an alternative
+    checkpoint criterion to the contrastive val loss.
+    """
+    ts_encoder.eval(); rp_encoder.eval()
+    emb_dim_t = None
+    emb_dim_v = None
+    Zs, Xs = [], []
+
+    with torch.no_grad():
+        for batch in val_loader:
+            views = _extract_views(batch, device, noise_std=0.0)
+            if views is None:
+                continue
+            x, _ = views
+            with autocast(enabled=use_amp):
+                zt = ts_encoder(x)
+                zv = rp_encoder(x)
+            z = torch.cat([zt, zv], dim=-1)
+            Zs.append(z.cpu())
+            # raw series for target: take last max(horizons) steps of x (B, 1, T)
+            raw = x[:, 0, :].cpu()   # (B, T)
+            Xs.append(raw)
+            if emb_dim_t is None:
+                emb_dim_t = zt.shape[-1]
+                emb_dim_v = zv.shape[-1]
+
+    if not Zs:
+        return None
+
+    Z_all = torch.cat(Zs, dim=0).float()   # (N, D) — cast to fp32 (AMP may produce fp16)
+    X_all = torch.cat(Xs, dim=0)           # (N, T)
+    T = X_all.shape[1]
+    emb_dim = Z_all.shape[1]
+
+    nrmse_list = []
+    for H in horizons:
+        if H >= T:
+            continue
+        ctx_len = T - H
+        X_ctx = X_all[:, :ctx_len]   # (N, ctx_len) — not used directly (emb is used)
+        Y = X_all[:, ctx_len:]       # (N, H) — target
+
+        head = nn.Linear(emb_dim, H).to(device)
+        opt = torch.optim.Adam(head.parameters(), lr=1e-3)
+        Z_dev = Z_all.to(device)
+        Y_dev = Y.to(device)
+
+        for _ in range(probe_epochs):
+            pred = head(Z_dev)
+            loss = F.mse_loss(pred, Y_dev)
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+
+        with torch.no_grad():
+            pred = head(Z_dev)
+            rmse = ((pred - Y_dev) ** 2).mean().sqrt()
+            scale = Y_dev.abs().mean().clamp(min=1e-8)
+            nrmse_list.append((rmse / scale).item())
+
+        del head, Z_dev, Y_dev
+
+    ts_encoder.train(); rp_encoder.train()
+    return float(sum(nrmse_list) / len(nrmse_list)) if nrmse_list else None
 
 
 def run_bimodal_simclr(
@@ -198,6 +385,9 @@ def run_bimodal_simclr(
     epochs: int,
     noise_std: float,
     temperature: float,
+    max_grad_norm: float = 1.0,
+    aug_scale_std: float = 0.0,
+    aug_mask_ratio: float = 0.0,
     optimizer: torch.optim.Optimizer,
     scheduler,
     warmup_sched=None,
@@ -206,14 +396,39 @@ def run_bimodal_simclr(
     use_amp: bool = True,
     initial_epoch: int = 0,
     best_loss: Optional[float] = None,
+    early_stopping_patience: int = 0,
+    forecast_probe_epochs: int = 0,
     save_best_only: bool = True,
     experiment=None,
     smoke: bool = False,
+    # Encoder improvement variants
+    forecast_reg_lambda: float = 0.0,   # C: weight of forecast MSE regularization in SSL loss
+    temporal_positive: bool = False,    # A/G: use adjacent windows as positives
+    recon_lambda: float = 0.0,          # masked reconstruction aux loss (temporal branch only)
+    recon_mask_ratio: float = 0.25,     # fraction of timesteps masked for reconstruction
+    recon_len: int = 512,               # max series length the recon head can output
 ) -> None:
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     for m in (ts_encoder, rp_encoder, ts_proj, rp_proj):
         m.to(device)
+
+    # Variant C: forecast regularization head — Linear(emb_dim → 96), trained jointly
+    forecast_reg_head: Optional[nn.Module] = None
+    if forecast_reg_lambda > 0.0:
+        emb_dim = getattr(ts_encoder, "embedding_dim", 96)
+        forecast_reg_head = nn.Linear(emb_dim, 96).to(device)
+        optimizer.add_param_group({"params": forecast_reg_head.parameters()})
+        print(f"Forecast reg: lambda={forecast_reg_lambda}, Linear({emb_dim}→96) added to optimizer")
+
+    # Masked reconstruction head — temporal branch only, discarded after SSL.
+    recon_head: Optional[nn.Module] = None
+    if recon_lambda > 0.0:
+        emb_dim = getattr(ts_encoder, "embedding_dim", 96)
+        recon_head = nn.Linear(emb_dim, recon_len).to(device)
+        optimizer.add_param_group({"params": recon_head.parameters()})
+        print(f"Masked recon: lambda={recon_lambda}, mask_ratio={recon_mask_ratio}, "
+              f"Linear({emb_dim}→{recon_len}) added to optimizer")
 
     # When resuming, optimizer state (exp_avg/exp_avg_sq) was loaded on CPU while
     # params are now on `device`. Move the optimizer state to match, otherwise the
@@ -225,6 +440,7 @@ def run_bimodal_simclr(
 
     scaler = GradScaler(enabled=use_amp)
     best_metric = float("inf") if best_loss is None else float(best_loss)
+    _no_improve = 0
 
     def _save(suffix: str, epoch: int, loss: float) -> None:
         save_dict = {
@@ -249,12 +465,14 @@ def run_bimodal_simclr(
         grad_norm_sum = 0.0      # accumulates pre-clip global grad norm
         grad_norm_max = 0.0
         grad_clip_hits = 0       # batches where pre-clip norm exceeded max_norm
-        GRAD_CLIP_MAX = 1.0
+        GRAD_CLIP_MAX = max_grad_norm
         total = len(train_loader) if hasattr(train_loader, "__len__") else None
 
         with tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}", total=total) as pbar:
             for batch_idx, batch in enumerate(pbar):
-                views = _extract_views(batch, device, noise_std)
+                views = _extract_views(batch, device, noise_std,
+                                       scale_std=aug_scale_std, mask_ratio=aug_mask_ratio,
+                                       temporal_positive=temporal_positive)
                 if views is None:
                     continue
                 x1, x2 = views
@@ -265,6 +483,19 @@ def run_bimodal_simclr(
                     z_v1 = rp_proj(rp_encoder(x1))
                     z_v2 = rp_proj(rp_encoder(x2))
                     loss, parts = bimodal_simclr_loss(z_t1, z_t2, z_v1, z_v2, temperature)
+
+                    # Variant C: add forecast regularization to SSL loss
+                    if forecast_reg_lambda > 0.0 and forecast_reg_head is not None:
+                        freg = _forecast_reg_loss(ts_encoder, x1, forecast_reg_head, horizon=96)
+                        loss = loss + forecast_reg_lambda * freg
+                        parts["loss_freg"] = float(freg.item())
+
+                    # Masked reconstruction aux loss — temporal branch only.
+                    if recon_lambda > 0.0 and recon_head is not None:
+                        lrec = _masked_recon_loss(ts_encoder, x1, recon_head,
+                                                  mask_ratio=recon_mask_ratio)
+                        loss = loss + recon_lambda * lrec
+                        parts["loss_recon"] = float(lrec.item())
 
                 if not torch.isfinite(loss):
                     optimizer.zero_grad(set_to_none=True)
@@ -315,7 +546,8 @@ def run_bimodal_simclr(
             vtotal, vn = 0.0, 0
             with torch.no_grad():
                 for vbatch in val_loader:
-                    vviews = _extract_views(vbatch, device, noise_std)
+                    vviews = _extract_views(vbatch, device, noise_std,
+                                            scale_std=aug_scale_std, mask_ratio=aug_mask_ratio)
                     if vviews is None:
                         continue
                     vx1, vx2 = vviews
@@ -330,27 +562,56 @@ def run_bimodal_simclr(
             val_loss = vtotal / vn if vn > 0 else None
             ts_encoder.train(); rp_encoder.train(); ts_proj.train(); rp_proj.train()
 
+        # Optional forecast probe — linear head trained on val embeddings.
+        # Tracks a forecast-relevant signal independently of contrastive val loss.
+        probe_nrmse = None
+        if forecast_probe_epochs > 0 and val_loader is not None:
+            probe_nrmse = _build_forecast_probe(
+                ts_encoder, rp_encoder, val_loader, device,
+                probe_epochs=forecast_probe_epochs, use_amp=use_amp,
+            )
+
         monitor = val_loss if val_loss is not None else train_loss
         is_best = monitor < best_metric
         if is_best:
             best_metric = monitor
+            _no_improve = 0
+        else:
+            _no_improve += 1
+
+        # Separately track best checkpoint by probe NRMSE (saved as *_best_probe.pt)
+        if probe_nrmse is not None:
+            if not hasattr(run_bimodal_simclr, "_best_probe_nrmse"):
+                run_bimodal_simclr._best_probe_nrmse = float("inf")
+            if probe_nrmse < run_bimodal_simclr._best_probe_nrmse:
+                run_bimodal_simclr._best_probe_nrmse = probe_nrmse
+                _save("best_probe", epoch, probe_nrmse)
 
         if experiment is not None:
             experiment.log_metric("train_loss", train_loss, step=epoch + 1)
             if val_loss is not None:
                 experiment.log_metric("val_loss", val_loss, step=epoch + 1)
+            if probe_nrmse is not None:
+                experiment.log_metric("probe_nrmse", probe_nrmse, step=epoch + 1)
             experiment.log_metric("lr", optimizer.param_groups[0]["lr"], step=epoch + 1)
             experiment.log_metric("grad_norm_mean", grad_norm_mean, step=epoch + 1)
             experiment.log_metric("grad_norm_max", grad_norm_max, step=epoch + 1)
             experiment.log_metric("grad_clip_rate", grad_clip_rate, step=epoch + 1)
+            experiment.log_metric("no_improve_epochs", _no_improve, step=epoch + 1)
 
         _save("last", epoch, monitor)
         if is_best:
             _save("best", epoch, monitor)
 
         val_str = f"  val={val_loss:.4f}" if val_loss is not None else ""
+        probe_str = f"  probe_nrmse={probe_nrmse:.4f}" if probe_nrmse is not None else ""
         best_tag = " [best]" if is_best else ""
-        print(f"Epoch {epoch+1}/{epochs}  train={train_loss:.4f}{val_str}{best_tag}")
+        es_str = f"  [no-improve {_no_improve}/{early_stopping_patience}]" if early_stopping_patience > 0 and not is_best else ""
+        print(f"Epoch {epoch+1}/{epochs}  train={train_loss:.4f}{val_str}{probe_str}{best_tag}{es_str}")
+
+        if early_stopping_patience > 0 and _no_improve >= early_stopping_patience:
+            print(f"Early stopping: val did not improve for {early_stopping_patience} epochs.")
+            break
 
     print(f"Training complete. Best loss: {best_metric:.4f}  Checkpoints: {checkpoint_dir}")
 
@@ -394,6 +655,15 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     weight_decay = float(training_cfg.get("weight_decay", 1e-4))
     warmup_epochs = int(training_cfg.get("warmup_epochs", 5))
     use_amp = bool(training_cfg.get("use_amp", True))
+    max_grad_norm = float(training_cfg.get("max_grad_norm", 1.0))
+    aug_scale_std = float(training_cfg.get("aug_scale_std", 0.0))
+    aug_mask_ratio = float(training_cfg.get("aug_mask_ratio", 0.0))
+    early_stopping_patience = int(training_cfg.get("early_stopping_patience", 0))
+    forecast_probe_epochs = int(training_cfg.get("forecast_probe_epochs", 0))
+    forecast_reg_lambda = float(training_cfg.get("forecast_reg_lambda", 0.0))
+    temporal_positive = bool(training_cfg.get("temporal_positive", False))
+    recon_lambda = float(training_cfg.get("recon_lambda", 0.0))
+    recon_mask_ratio = float(training_cfg.get("recon_mask_ratio", 0.25))
 
     experiment.log_parameters({
         "epochs": epochs, "noise_std": noise_std, "temperature": temperature,
@@ -412,8 +682,20 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     proj_hidden = int(config.model.get("model_dim", 128))
     proj_out_dim = int(config.model.get("proj_out_dim", emb_dim))
 
-    ts_proj = ProjectionHead(emb_dim, proj_hidden, proj_out_dim)
-    rp_proj = ProjectionHead(emb_dim, proj_hidden, proj_out_dim)
+    # Ablation: use_projection=false applies the contrastive loss DIRECTLY on the
+    # encoder features instead of through a projection head. The projection head
+    # normally shields the encoder from the contrastive loss (SimCLR/CLIP design);
+    # the forecast (MoP) already consumes raw encoder features, so aligning on them
+    # directly may help downstream. Identity keeps the ts_proj(ts_encoder(x)) call
+    # unchanged. Default true = baseline.
+    use_projection = bool(config.model.get("use_projection", True))
+    if use_projection:
+        ts_proj = ProjectionHead(emb_dim, proj_hidden, proj_out_dim)
+        rp_proj = ProjectionHead(emb_dim, proj_hidden, proj_out_dim)
+    else:
+        print("Ablation: use_projection=False — contrastive loss on raw encoder features")
+        ts_proj = nn.Identity()
+        rp_proj = nn.Identity()
 
     print(f"Temporal encoder params: {sum(p.numel() for p in ts_encoder.parameters()):,}")
     print(f"Visual encoder params:   {sum(p.numel() for p in rp_enc.parameters()):,}")
@@ -503,6 +785,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         epochs=epochs,
         noise_std=noise_std,
         temperature=temperature,
+        max_grad_norm=max_grad_norm,
+        aug_scale_std=aug_scale_std,
+        aug_mask_ratio=aug_mask_ratio,
         optimizer=optimizer,
         scheduler=scheduler,
         warmup_sched=warmup_sched,
@@ -511,6 +796,12 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         use_amp=use_amp,
         initial_epoch=initial_epoch,
         best_loss=best_loss,
+        early_stopping_patience=early_stopping_patience,
+        forecast_probe_epochs=forecast_probe_epochs,
+        forecast_reg_lambda=forecast_reg_lambda,
+        temporal_positive=temporal_positive,
+        recon_lambda=recon_lambda,
+        recon_mask_ratio=recon_mask_ratio,
         experiment=experiment,
         smoke=args.smoke,
     )
