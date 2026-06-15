@@ -39,7 +39,12 @@ for p in (src_dir, root_dir):
 
 import training_utils as tu
 from models.mop_forecast import MoPForecastModel
-from models.mop_crossattn import MoPCrossAttnModel
+from models.mop_crossattn import (
+    MoPCrossAttnModel,
+    MoPCrossAttnModelA,
+    MoPCrossAttnModelB,
+    MoPCrossAttnModelC,
+)
 from dataloaders.gift_eval_loader import (
     load_gift_eval_hf, GiftEvalDataset, ALL_GIFT_SSL_SUBSETS,
 )
@@ -101,9 +106,9 @@ def load_model(args, device: torch.device):
 
     ctx_len = getattr(mop_args, "context_length", 336)
     if getattr(mop_args, "mop_crossattn", False):
-        model = MoPCrossAttnModel(
-            encoder=encoder,
-            visual_encoder=visual,
+        variant = getattr(mop_args, "crossattn_variant", "D")
+        _xa_kwargs = dict(
+            encoder=encoder, visual_encoder=visual,
             emb_dim=enc_dim,
             num_prompts=getattr(mop_args, "num_prompts", 16),
             horizons=HORIZONS,
@@ -112,7 +117,18 @@ def load_model(args, device: torch.device):
             n_heads=getattr(mop_args, "crossattn_heads", 4),
             norm_mode=getattr(mop_args, "norm_mode", "revin"),
             mop_hidden_dim=getattr(mop_args, "hidden_dim", 512),
-        ).to(device)
+        )
+        if variant == "A":
+            model = MoPCrossAttnModelA(**_xa_kwargs).to(device)
+        elif variant == "B":
+            model = MoPCrossAttnModelB(**_xa_kwargs).to(device)
+        elif variant == "C":
+            model = MoPCrossAttnModelC(
+                **_xa_kwargs,
+                align_alpha=getattr(mop_args, "align_alpha", 0.1),
+            ).to(device)
+        else:
+            model = MoPCrossAttnModel(**_xa_kwargs).to(device)
     else:
         model = MoPForecastModel(
             encoder=encoder,
