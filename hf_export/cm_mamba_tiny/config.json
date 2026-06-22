@@ -1,34 +1,31 @@
 {
   "architectures": [
-    "CM_MambaForecastModel"
+    "CM_MambaMoPModel"
   ],
   "auto_map": {
-    "AutoConfig": "forecasting.CM_MambaForecastConfig",
-    "AutoModel": "forecasting.CM_MambaForecastModel"
+    "AutoConfig": "mop_model.CM_MambaMoPConfig",
+    "AutoModel": "mop_model.CM_MambaMoPModel"
   },
-  "conv_kernel": 4,
-  "depth": 8,
-  "dropout": 0.05,
-  "dtype": "float32",
-  "embedding_dim": 128,
-  "encoder_type": "temporal",
-  "expand_factor": 1.5,
-  "freeze_encoder": true,
-  "head_dropout": 0.1,
-  "horizons": [
-    96,
-    192,
-    336,
-    720
-  ],
-  "input_dim": 32,
-  "mlp_hidden_dim": 512,
-  "model_dim": 128,
-  "model_type": "cm_mamba_forecast",
-  "pooling": "mean",
+  "model_type": "cm_mamba_mop",
+  "input_dim": 64,
+  "model_dim": 192,
+  "embedding_dim": 96,
+  "depth": 5,
   "state_dim": 16,
+  "conv_kernel": 4,
+  "expand_factor": 1.5,
+  "dropout": 0.05,
+  "pooling": "last",
+  "num_prompts": 16,
+  "hidden_dim": 512,
+  "horizons": [96, 192, 336, 720],
   "target_features": 1,
-  "token_size": 32,
+  "context_length": 336,
+  "norm_mode": "revin",
+  "dtype": "float32",
   "transformers_version": "4.57.3",
-  "use_dual_encoder": true
+  "encoder_checkpoint": "simclr_enc_F_lasttoken",
+  "ssl_loss": "SimCLR (symmetric CLIP)",
+  "gift_eval_nrmse": 0.4075,
+  "tslib_nrmse": 0.4743
 }
