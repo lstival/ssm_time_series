@@ -9,7 +9,7 @@ that mixes information along the sequence using inexpensive operations.
 Example
 -------
 >>> import torch
->>> from .mamba_encoder import MambaEncoder, tokenize_sequence
+>>> from mamba_encoder import MambaEncoder, tokenize_sequence
 >>> encoder = MambaEncoder()
 >>> x = torch.randn(8, 128, 384)  # (batch, time, features)
 >>> # create non-overlapping tokens of length 16 (result: 8 tokens)
@@ -69,9 +69,10 @@ class Tokenizer:
         self.pad = pad
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        # Standard input: (batch, time, features)
+        # Swap axes from (B, F, T) to (B, T, F) as default of tokenizes (preserve original behavior)
+        x = x.swapaxes(1, 2)
         if x.ndim != 3:
-            raise ValueError("Tokenizer expects input of shape (batch, time, features)")
+            raise ValueError("tokenize_sequence expects input of shape (batch, time, features)")
 
         B, T, F = x.shape
         token_size = self.token_size
@@ -97,11 +98,8 @@ class Tokenizer:
         else:
             x_padded = x
 
-        # Create the patches: (B, n_tokens, F, token_size)
-        # We permute to (B, n_tokens, token_size, F) so that aggregation/reshape works as expected
-        patches = x_padded.unfold(dimension=1, size=token_size, step=stride).contiguous()
-        patches = patches.permute(0, 1, 3, 2)
-        # patches is (B, n_tokens, token_size, F)
+        # Create the patches for the number of tokens: (B, n_tokens, token_size, F)
+        patches = x_padded.unfold(dimension=1, size=token_size, step=stride).contiguous().squeeze(2)
 
         if self.method == "mean":
             tokens = patches.mean(dim=2)
@@ -135,8 +133,7 @@ class MambaEncoder(nn.Module):
     def __init__(
         self,
         *,
-        input_dim: int = 128,  # Feature dimension (F)
-        token_size: int = 32,  # Window size (T_token)
+        input_dim: int = 32, #Token size default as 16
         model_dim: int = 768,
         depth: int = 6,
         state_dim: int = 16,
@@ -151,11 +148,8 @@ class MambaEncoder(nn.Module):
             raise ValueError("depth must be positive")
         if input_dim <= 0:
             raise ValueError("input_dim must be positive")
-        if token_size <= 0:
-            raise ValueError("token_size must be positive")
 
         self.input_dim = input_dim
-        self.token_size = token_size
         self.model_dim = model_dim
         self.embedding_dim = embedding_dim
         self.pooling: Pooling = pooling
@@ -180,10 +174,10 @@ class MambaEncoder(nn.Module):
         """Return a fixed-size embedding for a `(batch, seq, features)` tensor."""
         if x.ndim != 3:
             raise ValueError("Expected input of shape (batch, seq, features)")
-        seq_len = x.size(1)
-        if seq_len < self.token_size:
+        seq_len = x.size(2)
+        if seq_len < self.input_dim:
             raise ValueError(
-                f"Sequence length ({seq_len}) must be at least as large as the encoder token size ({self.token_size})."
+                f"Sequence length ({seq_len}) must be at least as large as the encoder token size ({self.input_dim})."
             )
         # if x.size(-1) != self.input_dim:
         #     raise ValueError(f"Expected final dimension {self.input_dim}, got {x.size(-1)}")
@@ -197,16 +191,14 @@ class MambaEncoder(nn.Module):
         tokens = self.tokenizer(x)
         if tokens.ndim == 4:
             batch, windows, window_len, feat_dim = tokens.shape
-            # Map patches to features: (batch, windows, window_len * feat_dim)
-            tokens = tokens.reshape(batch, windows, window_len * feat_dim)
-        x = self.input_proj(tokens)
+            tokens = tokens.reshape(batch, windows * window_len, feat_dim)
+        x = self.input_proj(tokens) # Change here to use pre_trained model to feature exctration
         for block in self.blocks:
             x = block(x)
         return self.final_norm(x)
     
     def tokenizer(self, x):
-        # We switch to 'mean' aggregation to match the trained weights which expect input_dim features per token
-        tokens = tokenize_sequence(x, token_size=self.token_size, method="mean")
+        tokens = tokenize_sequence(x, token_size=self.input_dim)
         return tokens
 
     def _pool_sequence(self, hidden: torch.Tensor, original: torch.Tensor) -> torch.Tensor:
@@ -232,12 +224,10 @@ def create_default_encoder(**overrides: object) -> MambaEncoder:
 
 
 if __name__ == "__main__":
-    feat_dim = 384
     tokens_dim = 32
     encoder = MambaEncoder(
         depth=6,
-        input_dim=feat_dim,
-        token_size=tokens_dim,
+        input_dim=tokens_dim,
         pooling="mean",
         model_dim=128,
         embedding_dim=128,
@@ -245,8 +235,9 @@ if __name__ == "__main__":
     )
     
     print(f"Trainable parameters: {encoder.count_parameters():,}")
-    dummy = torch.randn(4, 96, 384)
+    dummy = torch.randn(4, 1, 384)
     out = encoder(dummy)
     print("Output embedding shape:", out.shape)
     tokens = tokenize_sequence(dummy, token_size=tokens_dim)
     print("Output tokens shape:", tokens.shape)
+
